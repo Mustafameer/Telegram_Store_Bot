@@ -825,10 +825,24 @@ def get_all_customers_with_balance(seller_id):
 def add_user(telegram_id, username, usertype, phone_number=None, full_name=None):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-        INSERT OR REPLACE INTO Users (TelegramID, UserName, UserType, PhoneNumber, FullName) 
-        VALUES (?, ?, ?, ?, ?)
-    """, (telegram_id, username, usertype, phone_number, full_name))
+    if IS_POSTGRES:
+        # PostgreSQL syntax
+        cursor.execute("""
+            INSERT INTO Users (TelegramID, UserName, UserType, PhoneNumber, FullName) 
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (TelegramID) 
+            DO UPDATE SET 
+                UserName = EXCLUDED.UserName, 
+                UserType = EXCLUDED.UserType, 
+                PhoneNumber = COALESCE(EXCLUDED.PhoneNumber, Users.PhoneNumber), 
+                FullName = COALESCE(EXCLUDED.FullName, Users.FullName)
+        """, (telegram_id, username, usertype, phone_number, full_name))
+    else:
+        # SQLite syntax
+        cursor.execute("""
+            INSERT OR REPLACE INTO Users (TelegramID, UserName, UserType, PhoneNumber, FullName) 
+            VALUES (?, ?, ?, ?, ?)
+        """, (telegram_id, username, usertype, phone_number, full_name))
     conn.commit()
     conn.close()
 
