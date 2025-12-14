@@ -4396,91 +4396,96 @@ def view_cart(message):
 
 @bot.callback_query_handler(func=lambda call: call.data == "checkout_cart")
 def handle_checkout_cart(call):
-    telegram_id = call.from_user.id
-    cart_items = get_cart_items_db(telegram_id)
-    
-    if not cart_items:
-        bot.answer_callback_query(call.id, "السلة فارغة")
-        return
+    try:
+        telegram_id = call.from_user.id
+        cart_items = get_cart_items_db(telegram_id)
+        
+        if not cart_items:
+            bot.answer_callback_query(call.id, "السلة فارغة")
+            return
 
-    # إزالة منتجات متجر الأدمن من السلة إن وُجدت
-    cleaned_cart = []
-    removed_any = False
-    for item in cart_items:
-        pid = item[0]
-        prod = get_product_by_id(pid)
-        if not prod:
-            continue
-        prod_seller_id = prod[1]
-        seller = get_seller_by_id(prod_seller_id)
-        if seller and seller[1] == BOT_ADMIN_ID:
-            # حذف من السلة
-            conn = sqlite3.connect(DB_FILE)
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM Carts WHERE UserID=? AND ProductID= ?", (telegram_id, pid))
-            conn.commit()
-            conn.close()
-            removed_any = True
-            continue
-        cleaned_cart.append(item)
+        # إزالة منتجات متجر الأدمن من السلة إن وُجدت
+        cleaned_cart = []
+        removed_any = False
+        for item in cart_items:
+            pid = item[0]
+            prod = get_product_by_id(pid)
+            if not prod:
+                continue
+            prod_seller_id = prod[1]
+            seller = get_seller_by_id(prod_seller_id)
+            if seller and seller[1] == BOT_ADMIN_ID:
+                # حذف من السلة
+                conn = sqlite3.connect(DB_FILE)
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM Carts WHERE UserID=? AND ProductID= ?", (telegram_id, pid))
+                conn.commit()
+                conn.close()
+                removed_any = True
+                continue
+            cleaned_cart.append(item)
 
-    if removed_any:
-        bot.answer_callback_query(call.id, "⚠️ تمت إزالة منتجات من متجر الإدارة من السلة")
+        if removed_any:
+            bot.answer_callback_query(call.id, "⚠️ تمت إزالة منتجات من متجر الإدارة من السلة")
 
-    if not cleaned_cart:
-        bot.send_message(call.message.chat.id, "⛔ السلة لا تحتوي على منتجات قابلة للشراء حالياً.")
-        return
+        if not cleaned_cart:
+            bot.send_message(call.message.chat.id, "⛔ السلة لا تحتوي على منتجات قابلة للشراء حالياً.")
+            return
 
-    # استخدم cleaned_cart للمتابعة
-    cart_items = cleaned_cart
-    
-    # ====== التعديل الجديد ======
-    # التحقق إذا كان المستخدم زائراً (غير مسجل)
-    is_guest = telegram_id in user_states and user_states.get(telegram_id, {}).get('is_guest', False)
-    
-    if is_guest:
-        # للزوار، نطلب منهم إدخال معلوماتهم أولاً
+        # استخدم cleaned_cart للمتابعة
+        cart_items = cleaned_cart
+        
+        # ====== التعديل الجديد ======
+        # التحقق إذا كان المستخدم زائراً (غير مسجل)
+        is_guest = telegram_id in user_states and user_states.get(telegram_id, {}).get('is_guest', False)
+        
+        if is_guest:
+            # للزوار، نطلب منهم إدخال معلوماتهم أولاً
+            user_states[telegram_id] = {
+                "step": "guest_checkout_info",
+                "is_guest": True,
+                "cart_items": cart_items
+            }
+            
+            bot.send_message(call.message.chat.id,
+                            "📝 **معلومات الزائر**\n\n"
+                            "بما أنك زائر (غير مسجل)، نحتاج لمعلوماتك لإتمام الطلب.\n\n"
+                            "يرجى إدخال اسمك الكامل:")
+            
+            bot.answer_callback_query(call.id)
+            return
+        
+        items_by_seller = {}
+        
+        for item in cart_items:
+            product_id, quantity, price, name, desc, img_path, available_qty, seller_id, seller_name = item
+            
+            if seller_id not in items_by_seller:
+                items_by_seller[seller_id] = {
+                    'seller_name': seller_name,
+                    'items': [],
+                    'subtotal': 0
+                }
+            
+            items_by_seller[seller_id]['items'].append((product_id, quantity, price))
+            items_by_seller[seller_id]['subtotal'] += price * quantity
+        
         user_states[telegram_id] = {
-            "step": "guest_checkout_info",
-            "is_guest": True,
-            "cart_items": cart_items
+            "step": "checkout_select_seller",
+            "items_by_seller": items_by_seller,
+            "current_seller_index": 0
         }
         
-        bot.send_message(call.message.chat.id,
-                        "📝 **معلومات الزائر**\n\n"
-                        "بما أنك زائر (غير مسجل)، نحتاج لمعلوماتك لإتمام الطلب.\n\n"
-                        "يرجى إدخال اسمك الكامل:")
+        seller_ids = list(items_by_seller.keys())
+        first_seller_id = seller_ids[0]
+        first_seller_data = items_by_seller[first_seller_id]
         
+        start_checkout_for_seller(call.message, telegram_id, first_seller_id, first_seller_data)
         bot.answer_callback_query(call.id)
-        return
-    
-    items_by_seller = {}
-    
-    for item in cart_items:
-        product_id, quantity, price, name, desc, img_path, available_qty, seller_id, seller_name = item
-        
-        if seller_id not in items_by_seller:
-            items_by_seller[seller_id] = {
-                'seller_name': seller_name,
-                'items': [],
-                'subtotal': 0
-            }
-        
-        items_by_seller[seller_id]['items'].append((product_id, quantity, price))
-        items_by_seller[seller_id]['subtotal'] += price * quantity
-    
-    user_states[telegram_id] = {
-        "step": "checkout_select_seller",
-        "items_by_seller": items_by_seller,
-        "current_seller_index": 0
-    }
-    
-    seller_ids = list(items_by_seller.keys())
-    first_seller_id = seller_ids[0]
-    first_seller_data = items_by_seller[first_seller_id]
-    
-    start_checkout_for_seller(call.message, telegram_id, first_seller_id, first_seller_data)
-    bot.answer_callback_query(call.id)
+    except Exception as e:
+        bot.answer_callback_query(call.id, "حدث خطأ")
+        bot.send_message(call.message.chat.id, f"⚠️ خطأ في إتمام الطلب: {e}")
+        traceback.print_exc()
 
 @bot.message_handler(func=lambda message: message.from_user.id in user_states and 
                      user_states[message.from_user.id]["step"] == "guest_checkout_info")
@@ -5083,144 +5088,165 @@ def create_order_for_guest(buyer_id, seller_id, cart_items, delivery_address=Non
 
 @bot.callback_query_handler(func=lambda call: call.data == "clear_cart")
 def handle_clear_cart(call):
-    telegram_id = call.from_user.id
-    clear_cart_db(telegram_id)
-    
-    bot.answer_callback_query(call.id, "✅ تم تفريغ السلة")
-    bot.send_message(call.message.chat.id, "✅ تم تفريغ سلة المشتريات بنجاح.")
-    
-    # ====== التعديل الجديد ======
-    # التحقق إذا كان المستخدم زائراً (غير مسجل)
-    is_guest = telegram_id in user_states and user_states.get(telegram_id, {}).get('is_guest', False)
-    
-    if is_guest:
-        browse_without_registration(call.message)
-    else:
-        show_buyer_main_menu(call.message)
+    try:
+        telegram_id = call.from_user.id
+        clear_cart_db(telegram_id)
+        
+        bot.answer_callback_query(call.id, "✅ تم تفريغ السلة")
+        bot.send_message(call.message.chat.id, "✅ تم تفريغ سلة المشتريات بنجاح.")
+        
+        # ====== التعديل الجديد ======
+        # التحقق إذا كان المستخدم زائراً (غير مسجل)
+        is_guest = telegram_id in user_states and user_states.get(telegram_id, {}).get('is_guest', False)
+        
+        if is_guest:
+            browse_without_registration(call.message)
+        else:
+            show_buyer_main_menu(call.message)
+    except Exception as e:
+        bot.answer_callback_query(call.id, "حدث خطأ")
+        print(f"Error in clear_cart: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data == "edit_cart_quantities")
 def handle_edit_cart_quantities(call):
-    telegram_id = call.from_user.id
-    cart_items = get_cart_items_db(telegram_id)
-    
-    if not cart_items:
-        bot.answer_callback_query(call.id, "السلة فارغة")
-        return
-    
-    for item in cart_items:
-        product_id, quantity, price, name, desc, img_path, available_qty, seller_id, seller_name = item
+    try:
+        telegram_id = call.from_user.id
+        cart_items = get_cart_items_db(telegram_id)
         
-        markup = types.InlineKeyboardMarkup(row_width=3)
-        markup.add(
-            types.InlineKeyboardButton("➕", callback_data=f"increase_cart_{product_id}"),
-            types.InlineKeyboardButton(f"الكمية: {quantity}", callback_data=f"set_quantity_{product_id}"),
-            types.InlineKeyboardButton("➖", callback_data=f"decrease_cart_{product_id}"),
-            types.InlineKeyboardButton("🗑️ حذف", callback_data=f"remove_cart_{product_id}")
-        )
+        if not cart_items:
+            bot.answer_callback_query(call.id, "السلة فارغة")
+            return
         
-        caption = f"🛒 **{name}**\n💰 السعر: {price} IQD\n📦 الكمية: {quantity}\n💰 المجموع: {price * quantity} IQD\n🏪 {seller_name}"
-        
-        if img_path and os.path.exists(img_path):
-            try:
-                with open(img_path, 'rb') as photo:
-                    bot.send_photo(call.message.chat.id, photo, caption=caption, reply_markup=markup, parse_mode='Markdown')
-            except:
+        for item in cart_items:
+            product_id, quantity, price, name, desc, img_path, available_qty, seller_id, seller_name = item
+            
+            markup = types.InlineKeyboardMarkup(row_width=3)
+            markup.add(
+                types.InlineKeyboardButton("➕", callback_data=f"increase_cart_{product_id}"),
+                types.InlineKeyboardButton(f"الكمية: {quantity}", callback_data=f"set_quantity_{product_id}"),
+                types.InlineKeyboardButton("➖", callback_data=f"decrease_cart_{product_id}"),
+                types.InlineKeyboardButton("🗑️ حذف", callback_data=f"remove_cart_{product_id}")
+            )
+            
+            caption = f"🛒 **{name}**\n💰 السعر: {price} IQD\n📦 الكمية: {quantity}\n💰 المجموع: {price * quantity} IQD\n🏪 {seller_name}"
+            
+            if img_path and os.path.exists(img_path):
+                try:
+                    with open(img_path, 'rb') as photo:
+                        bot.send_photo(call.message.chat.id, photo, caption=caption, reply_markup=markup, parse_mode='Markdown')
+                except:
+                    bot.send_message(call.message.chat.id, caption, reply_markup=markup, parse_mode='Markdown')
+            else:
                 bot.send_message(call.message.chat.id, caption, reply_markup=markup, parse_mode='Markdown')
-        else:
-            bot.send_message(call.message.chat.id, caption, reply_markup=markup, parse_mode='Markdown')
-    
-    bot.answer_callback_query(call.id)
+        
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        bot.answer_callback_query(call.id, "حدث خطأ")
+        print(f"Error in edit_cart_quantities: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("increase_cart_"))
 def handle_increase_cart(call):
-    product_id = int(call.data.split("_")[2])
-    telegram_id = call.from_user.id
-    
-    cart_items = get_cart_items_db(telegram_id)
-    current_quantity = 0
-    current_price = 0
-    
-    for item in cart_items:
-        if item[0] == product_id:
-            current_quantity = item[1]
-            current_price = item[2]
-            break
-    
-    product = get_product_by_id(product_id)
-    if not product:
-        bot.answer_callback_query(call.id, "المنتج غير موجود")
-        return
-    
-    available_qty = product[7]
-    
-    if current_quantity >= available_qty:
-        bot.answer_callback_query(call.id, f"⚠️ الحد الأقصى للكمية المتاحة: {available_qty}")
-        return
-    
-    add_to_cart_db(telegram_id, product_id, 1, current_price)
-    bot.answer_callback_query(call.id, "✅ تم زيادة الكمية")
-    
     try:
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-    except:
-        pass
-    
-    view_cart(call.message)
+        product_id = int(call.data.split("_")[2])
+        telegram_id = call.from_user.id
+        
+        cart_items = get_cart_items_db(telegram_id)
+        current_quantity = 0
+        current_price = 0
+        
+        for item in cart_items:
+            if item[0] == product_id:
+                current_quantity = item[1]
+                current_price = item[2]
+                break
+        
+        product = get_product_by_id(product_id)
+        if not product:
+            bot.answer_callback_query(call.id, "المنتج غير موجود")
+            return
+        
+        available_qty = product[7]
+        
+        if current_quantity >= available_qty:
+            bot.answer_callback_query(call.id, f"⚠️ الحد الأقصى للكمية المتاحة: {available_qty}")
+            return
+        
+        add_to_cart_db(telegram_id, product_id, 1, current_price)
+        bot.answer_callback_query(call.id, "✅ تم زيادة الكمية")
+        
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
+        
+        view_cart(call.message)
+    except Exception as e:
+        bot.answer_callback_query(call.id, "حدث خطأ")
+        # bot.send_message(call.message.chat.id, f"Error: {e}")
+        print(f"Error in increase_cart: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("decrease_cart_"))
 def handle_decrease_cart(call):
-    product_id = int(call.data.split("_")[2])
-    telegram_id = call.from_user.id
-    
-    cart_items = get_cart_items_db(telegram_id)
-    current_quantity = 0
-    
-    for item in cart_items:
-        if item[0] == product_id:
-            current_quantity = item[1]
-            break
-    
-    if current_quantity <= 1:
+    try:
+        product_id = int(call.data.split("_")[2])
+        telegram_id = call.from_user.id
+        
+        cart_items = get_cart_items_db(telegram_id)
+        current_quantity = 0
+        
+        for item in cart_items:
+            if item[0] == product_id:
+                current_quantity = item[1]
+                break
+        
+        if current_quantity <= 1:
+            conn = sqlite3.connect(DB_FILE)
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM Carts WHERE UserID=? AND ProductID=?", (telegram_id, product_id))
+            conn.commit()
+            conn.close()
+            bot.answer_callback_query(call.id, "✅ تم حذف المنتج من السلة")
+        else:
+            conn = sqlite3.connect(DB_FILE)
+            cursor = conn.cursor()
+            cursor.execute("UPDATE Carts SET Quantity = Quantity - 1 WHERE UserID=? AND ProductID=?", (telegram_id, product_id))
+            conn.commit()
+            conn.close()
+            bot.answer_callback_query(call.id, "✅ تم تقليل الكمية")
+        
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
+        
+        view_cart(call.message)
+    except Exception as e:
+        bot.answer_callback_query(call.id, "حدث خطأ")
+        print(f"Error in decrease_cart: {e}")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("remove_cart_"))
+def handle_remove_cart(call):
+    try:
+        product_id = int(call.data.split("_")[2])
+        telegram_id = call.from_user.id
+        
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         cursor.execute("DELETE FROM Carts WHERE UserID=? AND ProductID=?", (telegram_id, product_id))
         conn.commit()
         conn.close()
+        
         bot.answer_callback_query(call.id, "✅ تم حذف المنتج من السلة")
-    else:
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute("UPDATE Carts SET Quantity = Quantity - 1 WHERE UserID=? AND ProductID=?", (telegram_id, product_id))
-        conn.commit()
-        conn.close()
-        bot.answer_callback_query(call.id, "✅ تم تقليل الكمية")
-    
-    try:
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-    except:
-        pass
-    
-    view_cart(call.message)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("remove_cart_"))
-def handle_remove_cart(call):
-    product_id = int(call.data.split("_")[2])
-    telegram_id = call.from_user.id
-    
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM Carts WHERE UserID=? AND ProductID=?", (telegram_id, product_id))
-    conn.commit()
-    conn.close()
-    
-    bot.answer_callback_query(call.id, "✅ تم حذف المنتج من السلة")
-    
-    try:
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-    except:
-        pass
-    
-    view_cart(call.message)
+        
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
+        
+        view_cart(call.message)
+    except Exception as e:
+        bot.answer_callback_query(call.id, "حدث خطأ")
+        print(f"Error in remove_cart: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("set_quantity_"))
 def handle_set_quantity(call):
