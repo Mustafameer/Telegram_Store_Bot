@@ -6411,7 +6411,15 @@ if __name__ == "__main__":
     else:
         print("❌ CRITICAL: No Token Found in Environment!")
 
-    init_db() 
+    try:
+        print("🛠️ Initializing Database...")
+        init_db()
+        print("✅ Database Initialized Successfully")
+    except Exception as e:
+        print(f"❌ CRITICAL DATABASE ERROR: {e}")
+        traceback.print_exc()
+        # Non-fatal? Maybe allow bot to try starting anyway, or fail loud?
+        # For now, let's fail loud but AFTER printing the error.
     try:
         print("🧹 Clearing Webhooks...")
         bot.remove_webhook()
