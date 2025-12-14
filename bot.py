@@ -10,7 +10,14 @@ import base64
 
 # ----------------- إعداد البوت وملفات -----------------
 import os
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8562406465:AAHHaUMALVMjfgVKlAYNh8nziTwIeg5GDCs")
+
+TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
+if not TOKEN:
+    print("❌ FATAL ERROR: TELEGRAM_BOT_TOKEN environment variable is NOT set! Using default token.")
+    TOKEN = "8562406465:AAHHaUMALVMjfgVKlAYNh8nziTwIeg5GDCs" # Fallback to default
+else:
+    print(f"✅ DEBUG: TELEGRAM_BOT_TOKEN found. Starts with: {TOKEN[:10]}... Ends with: ...{TOKEN[-5:]}")
+    print(f"✅ DEBUG: Token Length: {len(TOKEN)}")
 bot = telebot.TeleBot(TOKEN)
 IS_POSTGRES = os.environ.get('DATABASE_URL') is not None
 
