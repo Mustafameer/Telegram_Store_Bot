@@ -480,11 +480,21 @@ def set_credit_limit(customer_id, seller_id, max_amount, warning_percentage=0.8)
     result = cursor.fetchone()
     current_used = result[0] if result else 0
     
-    cursor.execute("""
-        INSERT OR REPLACE INTO CreditLimits 
-        (CustomerID, SellerID, MaxCreditAmount, WarningThreshold, CurrentUsedAmount, IsActive)
-        VALUES (?, ?, ?, ?, ?, TRUE)
-    """, (customer_id, seller_id, max_amount, warning_percentage, current_used))
+    if IS_POSTGRES:
+        cursor.execute("""
+            INSERT INTO CreditLimits (CustomerID, SellerID, MaxCreditAmount, WarningThreshold, CurrentUsedAmount, IsActive)
+            VALUES (%s, %s, %s, %s, %s, TRUE)
+            ON CONFLICT (CustomerID, SellerID) DO UPDATE SET
+                MaxCreditAmount = EXCLUDED.MaxCreditAmount,
+                WarningThreshold = EXCLUDED.WarningThreshold,
+                IsActive = TRUE
+        """, (customer_id, seller_id, max_amount, warning_percentage, current_used))
+    else:
+        cursor.execute("""
+            INSERT OR REPLACE INTO CreditLimits 
+            (CustomerID, SellerID, MaxCreditAmount, WarningThreshold, CurrentUsedAmount, IsActive)
+            VALUES (?, ?, ?, ?, ?, TRUE)
+        """, (customer_id, seller_id, max_amount, warning_percentage, current_used))
     
     conn.commit()
     conn.close()
@@ -657,10 +667,17 @@ def add_credit_customer(seller_id, full_name, phone_number):
     cursor = conn.cursor()
     
     try:
-        cursor.execute("""
-            INSERT OR IGNORE INTO CreditCustomers (SellerID, FullName, PhoneNumber)
-            VALUES (?, ?, ?)
-        """, (seller_id, full_name, phone_number))
+        if IS_POSTGRES:
+            cursor.execute("""
+                INSERT INTO CreditCustomers (SellerID, FullName, PhoneNumber)
+                VALUES (%s, %s, %s)
+                ON CONFLICT DO NOTHING
+            """, (seller_id, full_name, phone_number))
+        else:
+            cursor.execute("""
+                INSERT OR IGNORE INTO CreditCustomers (SellerID, FullName, PhoneNumber)
+                VALUES (?, ?, ?)
+            """, (seller_id, full_name, phone_number))
         conn.commit()
         customer_id = cursor.lastrowid
         conn.close()
@@ -897,10 +914,17 @@ def is_bot_admin(telegram_id):
 def add_seller(telegram_id, username, store_name):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-        INSERT OR IGNORE INTO Sellers (TelegramID, UserName, StoreName)
-        VALUES (?, ?, ?)
-    """, (telegram_id, username, store_name))
+    if IS_POSTGRES:
+        cursor.execute("""
+            INSERT INTO Sellers (TelegramID, UserName, StoreName)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (TelegramID) DO NOTHING
+        """, (telegram_id, username, store_name))
+    else:
+        cursor.execute("""
+            INSERT OR IGNORE INTO Sellers (TelegramID, UserName, StoreName)
+            VALUES (?, ?, ?)
+        """, (telegram_id, username, store_name))
     
     cursor.execute("""
         UPDATE Sellers SET StoreName=?, UserName=?
