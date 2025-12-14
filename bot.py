@@ -170,11 +170,41 @@ if not os.path.exists(DB_FILE) and os.path.exists(os.path.join(SEED_DIR, "store.
     print("✅ تم استعادة البيانات بنجاح!")
 
 # ===================== قاعدة البيانات =====================
+# ===================== قاعدة البيانات =====================
 def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # جدول الزبائن الآجل (الاسم، رقم التلفون)
+    # 1. Users (Main table, no dependencies)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS Users(
+            UserID INTEGER PRIMARY KEY AUTOINCREMENT,
+            TelegramID INTEGER UNIQUE,
+            UserName TEXT,
+            UserType TEXT,
+            PhoneNumber TEXT,
+            FullName TEXT,
+            CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # 2. Sellers (Depends on Users for SuspendedBy)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS Sellers(
+            SellerID INTEGER PRIMARY KEY AUTOINCREMENT,
+            TelegramID INTEGER UNIQUE,
+            UserName TEXT,
+            StoreName TEXT,
+            CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+            Status TEXT DEFAULT 'active',
+            SuspensionReason TEXT,
+            SuspendedBy INTEGER,
+            SuspendedAt DATETIME,
+            FOREIGN KEY (SuspendedBy) REFERENCES Users(TelegramID)
+        )
+    """)
+
+    # 3. CreditCustomers (Depends on Sellers)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS CreditCustomers(
             CustomerID INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -187,7 +217,8 @@ def init_db():
         )
     """)
 
-    # جدول جديد: حدود الائتمان
+    # 4. CreditLimits (Depends on CreditCustomers, Sellers)
+    # Using DEFAULT TRUE for Postgres compatibility
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS CreditLimits (
             LimitID INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -205,49 +236,7 @@ def init_db():
         )
     """)
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS Users(
-            UserID INTEGER PRIMARY KEY AUTOINCREMENT,
-            TelegramID INTEGER UNIQUE,
-            UserName TEXT,
-            UserType TEXT,
-            PhoneNumber TEXT,
-            FullName TEXT,
-            CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS Sellers(
-            SellerID INTEGER PRIMARY KEY AUTOINCREMENT,
-            TelegramID INTEGER UNIQUE,
-            UserName TEXT,
-            StoreName TEXT,
-            CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-            Status TEXT DEFAULT 'active',
-            SuspensionReason TEXT,
-            SuspendedBy INTEGER,
-            SuspendedAt DATETIME,
-            FOREIGN KEY (SuspendedBy) REFERENCES Users(TelegramID)
-        )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS CustomerCredit(
-            CreditID INTEGER PRIMARY KEY AUTOINCREMENT,
-            CustomerID INTEGER,
-            SellerID INTEGER,
-            TransactionType TEXT,
-            Amount REAL,
-            Description TEXT,
-            BalanceBefore REAL,
-            BalanceAfter REAL,
-            TransactionDate DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (CustomerID) REFERENCES CreditCustomers(CustomerID),
-            FOREIGN KEY (SellerID) REFERENCES Sellers(SellerID)
-        )
-    """)
-
+    # 5. Categories (Depends on Sellers)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS Categories(
             CategoryID INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -258,6 +247,7 @@ def init_db():
         )
     """)
 
+    # 6. Products (Depends on Sellers, Categories)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS Products(
             ProductID INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -276,6 +266,7 @@ def init_db():
         )
     """)
 
+    # 7. Carts (Depends on Users, Products)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS Carts(
             CartID INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -290,6 +281,8 @@ def init_db():
         )
     """)
 
+    # 8. Orders (Depends on Users, Sellers)
+    # Using DEFAULT FALSE for Postgres compatibility
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS Orders(
             OrderID INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -307,6 +300,7 @@ def init_db():
         )
     """)
 
+    # 9. OrderItems (Depends on Orders, Products)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS OrderItems(
             OrderItemID INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -322,6 +316,7 @@ def init_db():
         )
     """)
 
+    # 10. Returns (Depends on Orders, Products, Users)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS Returns(
             ReturnID INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -339,6 +334,8 @@ def init_db():
         )
     """)
 
+    # 11. Messages (Depends on Orders, Sellers)
+    # Using DEFAULT FALSE for Postgres compatibility
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS Messages(
             MessageID INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -349,6 +346,23 @@ def init_db():
             IsRead BOOLEAN DEFAULT FALSE,
             CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (OrderID) REFERENCES Orders(OrderID),
+            FOREIGN KEY (SellerID) REFERENCES Sellers(SellerID)
+        )
+    """)
+
+    # 12. CustomerCredit (Transaction History) - Depends on CreditCustomers, Sellers
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS CustomerCredit(
+            CreditID INTEGER PRIMARY KEY AUTOINCREMENT,
+            CustomerID INTEGER,
+            SellerID INTEGER,
+            TransactionType TEXT,
+            Amount REAL,
+            Description TEXT,
+            BalanceBefore REAL,
+            BalanceAfter REAL,
+            TransactionDate DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (CustomerID) REFERENCES CreditCustomers(CustomerID),
             FOREIGN KEY (SellerID) REFERENCES Sellers(SellerID)
         )
     """)
