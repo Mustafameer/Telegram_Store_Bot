@@ -3961,6 +3961,20 @@ def callback_handler(call):
             handle_return_details(call)
         elif call.data.startswith("process_return_"):
             handle_process_return(call)
+        elif call.data == "checkout_cart":
+            handle_checkout_cart(call)
+        elif call.data == "clear_cart":
+            handle_clear_cart(call)
+        elif call.data == "edit_cart_quantities":
+            handle_edit_cart_quantities(call)
+        elif call.data.startswith("increase_cart_"):
+            handle_increase_cart(call)
+        elif call.data.startswith("decrease_cart_"):
+            handle_decrease_cart(call)
+        elif call.data.startswith("remove_cart_"):
+            handle_remove_cart(call)
+        elif call.data.startswith("set_quantity_"):
+            handle_set_quantity(call)
         elif call.data in ["edit_name", "edit_phone"]:
             handle_edit_user_info(call)
         else:
