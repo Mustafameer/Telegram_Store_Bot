@@ -4322,72 +4322,77 @@ def handle_add_to_cart(call):
 # ====== إدارة السلة ======
 @bot.message_handler(func=lambda message: message.text == "سلة المشتريات 🛒")
 def view_cart(message):
-    telegram_id = message.from_user.id
-    
-    # ====== التعديل الجديد ======
-    # التحقق إذا كان المستخدم زائراً (غير مسجل)
-    is_guest = telegram_id in user_states and user_states.get(telegram_id, {}).get('is_guest', False)
-    
-    # if not is_guest:
-    #     # للمستخدمين المسجلين، التحقق من نوع المستخدم
-    #     user = get_user(telegram_id)
-    #     if not user or user[3] != 'buyer':
-    #         # bot.send_message(message.chat.id, "⛔ يجب أن تكون مشترياً لعرض السلة")
-    #         pass
-    
-    cart_items = get_cart_items_db(telegram_id)
-    
-    if not cart_items:
-        bot.send_message(message.chat.id, "🛒 **سلة المشتريات**\n\nالسلة فارغة حالياً.")
-        return
-    
-    total = 0
-    items_by_seller = {}
-    
-    for item in cart_items:
-        product_id, quantity, price, name, desc, img_path, available_qty, seller_id, seller_name = item
-        item_total = price * quantity
-        total += item_total
+    try:
+        telegram_id = message.from_user.id
         
-        if seller_id not in items_by_seller:
-            items_by_seller[seller_id] = {
-                'seller_name': seller_name,
-                'items': [],
-                'subtotal': 0
-            }
+        # ====== التعديل الجديد ======
+        # التحقق إذا كان المستخدم زائراً (غير مسجل)
+        is_guest = telegram_id in user_states and user_states.get(telegram_id, {}).get('is_guest', False)
         
-        items_by_seller[seller_id]['items'].append(item)
-        items_by_seller[seller_id]['subtotal'] += item_total
-    
-    text = f"🛒 **سلة المشتريات**\n\n"
-    text += f"📋 عدد المنتجات: {len(cart_items)}\n"
-    text += f"💰 الإجمالي: {total} IQD\n\n"
-    
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("✅ إنهاء الطلب", callback_data="checkout_cart"),
-        types.InlineKeyboardButton("🗑️ تفريغ السلة", callback_data="clear_cart"),
-        types.InlineKeyboardButton("✏️ تعديل الكميات", callback_data="edit_cart_quantities")
-    )
-    
-    bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode='Markdown')
-    
-    # إرسال كل عنصر في السلة مع صورته
-    for seller_id, seller_data in items_by_seller.items():
-        seller_text = f"🏪 **{seller_data['seller_name']}**\n\n"
+        # if not is_guest:
+        #     # للمستخدمين المسجلين، التحقق من نوع المستخدم
+        #     user = get_user(telegram_id)
+        #     if not user or user[3] != 'buyer':
+        #         # bot.send_message(message.chat.id, "⛔ يجب أن تكون مشترياً لعرض السلة")
+        #         pass
         
-        for item in seller_data['items']:
+        cart_items = get_cart_items_db(telegram_id)
+        
+        if not cart_items:
+            bot.send_message(message.chat.id, "🛒 **سلة المشتريات**\n\nالسلة فارغة حالياً.")
+            return
+        
+        total = 0
+        items_by_seller = {}
+        
+        for item in cart_items:
             product_id, quantity, price, name, desc, img_path, available_qty, seller_id, seller_name = item
             item_total = price * quantity
+            total += item_total
             
-            item_markup = types.InlineKeyboardMarkup(row_width=2)
-            item_markup.add(
-                types.InlineKeyboardButton("➕ زيادة", callback_data=f"increase_cart_{product_id}"),
-                types.InlineKeyboardButton("➖ تقليل", callback_data=f"decrease_cart_{product_id}"),
-                types.InlineKeyboardButton("🗑️ حذف", callback_data=f"remove_cart_{product_id}")
-            )
+            if seller_id not in items_by_seller:
+                items_by_seller[seller_id] = {
+                    'seller_name': seller_name,
+                    'items': [],
+                    'subtotal': 0
+                }
             
-            send_cart_item_with_image(message.chat.id, item, item_markup)
+            items_by_seller[seller_id]['items'].append(item)
+            items_by_seller[seller_id]['subtotal'] += item_total
+        
+        text = f"🛒 **سلة المشتريات**\n\n"
+        text += f"📋 عدد المنتجات: {len(cart_items)}\n"
+        text += f"💰 الإجمالي: {total:,.0f} IQD\n\n"
+        
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("✅ إنهاء الطلب", callback_data="checkout_cart"),
+            types.InlineKeyboardButton("🗑️ تفريغ السلة", callback_data="clear_cart"),
+            types.InlineKeyboardButton("✏️ تعديل الكميات", callback_data="edit_cart_quantities")
+        )
+        
+        bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode='Markdown')
+        
+        # إرسال كل عنصر في السلة مع صورته
+        for seller_id, seller_data in items_by_seller.items():
+            # seller_text = f"🏪 **{seller_data['seller_name']}**\n\n"
+            
+            for item in seller_data['items']:
+                product_id, quantity, price, name, desc, img_path, available_qty, seller_id, seller_name = item
+                # item_total = price * quantity
+                
+                item_markup = types.InlineKeyboardMarkup(row_width=2)
+                item_markup.add(
+                    types.InlineKeyboardButton("➕ زيادة", callback_data=f"increase_cart_{product_id}"),
+                    types.InlineKeyboardButton("➖ تقليل", callback_data=f"decrease_cart_{product_id}"),
+                    types.InlineKeyboardButton("🗑️ حذف", callback_data=f"remove_cart_{product_id}")
+                )
+                
+                send_cart_item_with_image(message.chat.id, item, item_markup)
+
+    except Exception as e:
+        bot.send_message(message.chat.id, f"⚠️ حدث خطأ أثناء عرض السلة:\n{str(e)}")
+        traceback.print_exc()
 
 @bot.callback_query_handler(func=lambda call: call.data == "checkout_cart")
 def handle_checkout_cart(call):
