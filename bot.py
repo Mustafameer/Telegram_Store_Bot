@@ -2003,10 +2003,10 @@ def system_stats(message):
     total_credit_customers = cursor.fetchone()[0]
     
     # إحصائيات الحدود الائتمانية
-    cursor.execute("SELECT COUNT(*) FROM CreditLimits WHERE IsActive = 1")
+    cursor.execute("SELECT COUNT(*) FROM CreditLimits WHERE IsActive IS TRUE")
     active_credit_limits = cursor.fetchone()[0]
     
-    cursor.execute("SELECT SUM(MaxCreditAmount), SUM(CurrentUsedAmount) FROM CreditLimits WHERE IsActive = 1")
+    cursor.execute("SELECT SUM(MaxCreditAmount), SUM(CurrentUsedAmount) FROM CreditLimits WHERE IsActive IS TRUE")
     limits = cursor.fetchone()
     total_max_credit = limits[0] or 0
     total_used_credit = limits[1] or 0
