@@ -102,6 +102,14 @@ def get_db_connection():
     database_url = os.environ.get('DATABASE_URL')
     if database_url:
         try:
+            # NUCLEAR OPTION: If we are supposed to use Postgres, KILL the local DB to prevent confusion
+            if os.path.exists(DB_FILE):
+                print("⚠️ FOUND LOCAL DB IN CLOUD MODE - DELETING IT TO FORCE POSTGRES ⚠️")
+                try:
+                    os.remove(DB_FILE)
+                except:
+                    pass
+
             result = urllib.parse.urlparse(database_url)
             username = result.username
             password = result.password
@@ -117,13 +125,15 @@ def get_db_connection():
             )
             return DBWrapper(conn, is_postgres=True)
         except Exception as e:
-            print(f"Error connecting to Postgres: {e}")
-            # Fallback to local SQLite if remote fails? For safety, maybe.
-            return DBWrapper(sqlite3.connect(DB_FILE), is_postgres=False)
+            print(f"❌ CRITICAL ERROR connecting to Postgres: {e}")
+            # DO NOT FALLBACK TO SQLITE. FAIL LOUDLY.
+            raise e
     else:
+        # Local development mode (no DATABASE_URL)
         return DBWrapper(sqlite3.connect(DB_FILE), is_postgres=False)
 
-if not os.path.exists(DB_FILE) and os.path.exists(os.path.join(SEED_DIR, "store.db")):
+# Remove the restore logic entirely or guard it carefully
+if not os.path.exists(DB_FILE) and os.path.exists(os.path.join(SEED_DIR, "store.db")) and not os.environ.get('DATABASE_URL'):
     print("🔄 استعادة قاعدة البيانات من النسخة الاحتياطية (Seed)...")
     shutil.copy(os.path.join(SEED_DIR, "store.db"), DB_FILE)
     if os.path.exists(os.path.join(SEED_DIR, "Images")):
