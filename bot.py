@@ -27,11 +27,17 @@ if TOKEN:
 
 if not TOKEN:
     print("❌ FATAL ERROR: TELEGRAM_BOT_TOKEN environment variable is NOT set!")
-    # TOKEN = "8562406465:AAHHaUMALVMjfgVKlAYNh8nziTwIeg5GDCs" # DELETE THIS!
     sys.exit(1) # Fail fast
 else:
     print(f"✅ DEBUG: TELEGRAM_BOT_TOKEN found. Starts with: {TOKEN[:10]}... Ends with: ...{TOKEN[-5:]}")
     print(f"✅ DEBUG: Token Length: {len(TOKEN)}")
+
+# --- DEBUGGING BLOCK: PRINT ALL ENV VARS ---
+print("\n🔍 DEBUGGING ENVIRONMENT VARIABLES:")
+for key, value in os.environ.items():
+    if "TOKEN" in key or "TELEGRAM" in key:
+        print(f"   🔑 Found Key: '{key}' -> Value starts with: '{value[:5]}...'")
+print("---------------------------------------\n")
 bot = telebot.TeleBot(TOKEN)
 IS_POSTGRES = (os.environ.get('DATABASE_URL') is not None) and (psycopg2 is not None)
 
