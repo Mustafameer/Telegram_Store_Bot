@@ -6278,8 +6278,41 @@ print("   • إتمام الطلبات للزوار")
 print("   • تسجيل حساب جديد في أي وقت")
 print("   • التفريق بين الزوار والمستخدمين المسجلين")
 
-try:
-    bot.polling(none_stop=True, timeout=60)
-except Exception as e:
-    print(f"❌ خطأ في تشغيل البوت: {e}")
-    traceback.print_exc()
+# ====== Debug Command ======
+@bot.message_handler(commands=['debug_db'])
+def debug_db_status(message):
+    try:
+        db_url = os.environ.get('DATABASE_URL')
+        status = "✅ Using PostgreSQL" if IS_POSTGRES else "⚠️ Using SQLite (Local)"
+        
+        info = f"**Database Status:**\n{status}\n\n"
+        if db_url:
+            masked_url = db_url[:15] + "..." + db_url[-5:]
+            info += f"URL Found: `{masked_url}`\n"
+        else:
+            info += "URL Not Found in Enviroment\n"
+            
+        # Try a quick count
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM Products")
+            count = cursor.fetchone()[0]
+            conn.close()
+            info += f"\nProducts Count: {count}"
+        except Exception as e:
+            info += f"\nDB Error: {e}"
+
+        bot.send_message(message.chat.id, info, parse_mode='Markdown')
+    except:
+        bot.send_message(message.chat.id, "Error checking status")
+
+# تشغيل البوت
+if __name__ == "__main__":
+    # Assuming init_db() is defined elsewhere and sets up the database
+    # init_db() 
+    try:
+        bot.polling(none_stop=True, timeout=60)
+    except Exception as e:
+        print(f"❌ خطأ في تشغيل البوت: {e}")
+        traceback.print_exc()
