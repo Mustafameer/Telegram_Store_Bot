@@ -11,6 +11,14 @@ import base64
 # ----------------- إعداد البوت وملفات -----------------
 import os
 
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+except ImportError:
+    print("⚠️ WARNING: psycopg2 not found. Database features will be DISABLED.")
+    psycopg2 = None
+
+
 TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 if not TOKEN:
     print("❌ FATAL ERROR: TELEGRAM_BOT_TOKEN environment variable is NOT set! Using default token.")
