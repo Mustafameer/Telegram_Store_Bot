@@ -2,6 +2,7 @@ import telebot
 from telebot import types
 import sqlite3
 import os
+import sys
 import time
 import uuid
 import traceback
@@ -25,8 +26,9 @@ if TOKEN:
     TOKEN = TOKEN.strip()
 
 if not TOKEN:
-    print("❌ FATAL ERROR: TELEGRAM_BOT_TOKEN environment variable is NOT set! Using default token.")
-    TOKEN = "8562406465:AAHHaUMALVMjfgVKlAYNh8nziTwIeg5GDCs" # Fallback to default
+    print("❌ FATAL ERROR: TELEGRAM_BOT_TOKEN environment variable is NOT set!")
+    # TOKEN = "8562406465:AAHHaUMALVMjfgVKlAYNh8nziTwIeg5GDCs" # DELETE THIS!
+    sys.exit(1) # Fail fast
 else:
     print(f"✅ DEBUG: TELEGRAM_BOT_TOKEN found. Starts with: {TOKEN[:10]}... Ends with: ...{TOKEN[-5:]}")
     print(f"✅ DEBUG: Token Length: {len(TOKEN)}")
