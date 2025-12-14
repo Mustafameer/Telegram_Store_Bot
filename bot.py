@@ -19,7 +19,7 @@ else:
     print(f"✅ DEBUG: TELEGRAM_BOT_TOKEN found. Starts with: {TOKEN[:10]}... Ends with: ...{TOKEN[-5:]}")
     print(f"✅ DEBUG: Token Length: {len(TOKEN)}")
 bot = telebot.TeleBot(TOKEN)
-IS_POSTGRES = os.environ.get('DATABASE_URL') is not None
+IS_POSTGRES = (os.environ.get('DATABASE_URL') is not None) and (psycopg2 is not None)
 
 # إضافة معرف صاحب البوت (أدمن) - للتحكم التقني فقط
 BOT_ADMIN_ID = 1041977029  # ضع هنا معرف التليجرام الخاص بأدمن البوت
