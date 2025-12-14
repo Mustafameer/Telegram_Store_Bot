@@ -65,6 +65,8 @@ class CursorWrapper:
             query = query.replace('?', '%s')
             # Handle AUTOINCREMENT replacement for Postgres compatibility
             query = query.replace('INTEGER PRIMARY KEY AUTOINCREMENT', 'SERIAL PRIMARY KEY')
+            query = query.replace('DATETIME DEFAULT CURRENT_TIMESTAMP', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
+            query = query.replace('DATETIME', 'TIMESTAMP')
         
         try:
             if params is None:
