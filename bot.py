@@ -11,8 +11,13 @@ import base64
 # ----------------- إعداد البوت وملفات -----------------
 import os
 
-import psycopg2
-from psycopg2.extras import RealDictCursor
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+except ImportError:
+    psycopg2 = None
+    RealDictCursor = None
+
 
 
 TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
