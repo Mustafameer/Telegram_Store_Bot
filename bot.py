@@ -375,7 +375,7 @@ def check_credit_limit(customer_id, seller_id, new_amount):
     cursor.execute("""
         SELECT MaxCreditAmount, CurrentUsedAmount 
         FROM CreditLimits 
-        WHERE CustomerID=? AND SellerID=? AND IsActive=1
+        WHERE CustomerID=? AND SellerID=? AND IsActive IS TRUE
     """, (customer_id, seller_id))
     
     limit_data = cursor.fetchone()
@@ -413,7 +413,7 @@ def update_credit_usage(customer_id, seller_id, amount, transaction_type):
     # الحصول على الحد الحالي أو إنشاء واحد جديد
     cursor.execute("""
         SELECT CurrentUsedAmount FROM CreditLimits 
-        WHERE CustomerID=? AND SellerID=? AND IsActive=1
+        WHERE CustomerID=? AND SellerID=? AND IsActive IS TRUE
     """, (customer_id, seller_id))
     
     result = cursor.fetchone()
