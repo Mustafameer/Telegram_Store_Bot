@@ -718,7 +718,7 @@ def get_all_credit_customers(seller_id):
         SELECT cc.*, 
                COALESCE(cl.MaxCreditAmount, 1000000) as MaxCredit,
                COALESCE(cl.CurrentUsedAmount, 0) as CurrentUsed,
-               COALESCE(cl.IsActive, 1) as LimitActive
+               COALESCE(cl.IsActive, TRUE) as LimitActive
         FROM CreditCustomers cc
         LEFT JOIN CreditLimits cl ON cc.CustomerID = cl.CustomerID AND cc.SellerID = cl.SellerID
         WHERE cc.SellerID=? 
@@ -840,7 +840,7 @@ def get_all_customers_with_balance(seller_id):
             ), 0) as Balance,
             COALESCE(cl.MaxCreditAmount, 1000000) as MaxCredit,
             COALESCE(cl.CurrentUsedAmount, 0) as CurrentUsed,
-            COALESCE(cl.IsActive, 1) as LimitActive
+            COALESCE(cl.IsActive, TRUE) as LimitActive
         FROM CreditCustomers cc
         LEFT JOIN CreditLimits cl ON cc.CustomerID = cl.CustomerID AND cc.SellerID = cl.SellerID
         WHERE cc.SellerID = ?
