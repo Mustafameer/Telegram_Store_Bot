@@ -301,7 +301,7 @@ def init_db():
             DeliveryAddress TEXT,
             Notes TEXT,
             PaymentMethod TEXT DEFAULT 'cash',
-            FullyPaid BOOLEAN DEFAULT 0,
+            FullyPaid BOOLEAN DEFAULT FALSE,
             FOREIGN KEY (BuyerID) REFERENCES Users(TelegramID),
             FOREIGN KEY (SellerID) REFERENCES Sellers(SellerID)
         )
@@ -346,7 +346,7 @@ def init_db():
             SellerID INTEGER,
             MessageType TEXT,
             MessageText TEXT,
-            IsRead BOOLEAN DEFAULT 0,
+            IsRead BOOLEAN DEFAULT FALSE,
             CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (OrderID) REFERENCES Orders(OrderID),
             FOREIGN KEY (SellerID) REFERENCES Sellers(SellerID)
@@ -433,7 +433,7 @@ def update_credit_usage(customer_id, seller_id, amount, transaction_type):
         cursor.execute("""
             UPDATE CreditLimits 
             SET CurrentUsedAmount=?, UpdatedAt=CURRENT_TIMESTAMP
-            WHERE CustomerID=? AND SellerID=? AND IsActive=1
+            WHERE CustomerID=? AND SellerID=? AND IsActive IS TRUE
         """, (new_used, customer_id, seller_id))
     else:
         # إنشاء سجل جديد
@@ -445,7 +445,7 @@ def update_credit_usage(customer_id, seller_id, amount, transaction_type):
         cursor.execute("""
             INSERT INTO CreditLimits 
             (CustomerID, SellerID, MaxCreditAmount, CurrentUsedAmount, IsActive)
-            VALUES (?, ?, 1000000, ?, 1)
+            VALUES (?, ?, 1000000, ?, TRUE)
         """, (customer_id, seller_id, current_used))
     
     conn.commit()
