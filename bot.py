@@ -1874,6 +1874,8 @@ def show_buyer_main_menu(message):
     markup.row("تصفح المتاجر 🛍️", "سلة المشتريات 🛒")
     markup.row("📋 طلباتي", "📦 مرتجعاتي")
     markup.row("💰 كشف حسابي الآجل", "👤 تعديل بياناتي")
+    # إضافة زر إنشاء متجر جديد
+    markup.row("🏪 إنشاء متجر جديد")
     markup.row("🏠 الرئيسية")
     
     welcome_msg = "👋 **مرحباً بك كـ مشتري!**\nاختر من القائمة:"
@@ -1929,6 +1931,58 @@ def process_admin_store_name(message):
     
     del user_states[user_id]
     show_bot_admin_menu(message)
+
+# ====== معالجة إنشاء متجر للمستخدمين ======
+@bot.message_handler(func=lambda message: message.text == "🏪 إنشاء متجر جديد")
+def handle_create_user_store(message):
+    telegram_id = message.from_user.id
+    
+    # التحقق من أن المستخدم ليس بائعاً بالفعل
+    seller = get_seller_by_telegram(telegram_id)
+    if seller:
+        bot.send_message(message.chat.id, "⛔ لديك متجر بالفعل!")
+        return
+
+    user_states[telegram_id] = {
+        "step": "create_user_store_name"
+    }
+    
+    bot.send_message(message.chat.id,
+                    "🏪 **إنشاء متجر جديد**\n\n"
+                    "يرجى إدخال اسم المتجر الذي ترغب بإنشائه:")
+
+@bot.message_handler(func=lambda message: message.from_user.id in user_states and 
+                     user_states[message.from_user.id]["step"] == "create_user_store_name")
+def process_user_store_name(message):
+    user_id = message.from_user.id
+    store_name = message.text.strip()
+    
+    if not store_name:
+        bot.send_message(message.chat.id, "الرجاء إدخال اسم صحيح للمتجر.")
+        return
+    
+    # إنشاء متجر للمستخدم
+    username = message.from_user.username or message.from_user.first_name
+    add_seller(user_id, username, store_name)
+    
+    # تحديث نوع المستخدم إلى بائع
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    if IS_POSTGRES:
+        cursor.execute("UPDATE Users SET UserType = 'seller' WHERE TelegramID = %s", (user_id,))
+    else:
+        cursor.execute("UPDATE Users SET UserType = 'seller' WHERE TelegramID = ?", (user_id,))
+    conn.commit()
+    conn.close()
+    
+    bot.send_message(message.chat.id,
+                    f"✅ **تم إنشاء متجرك بنجاح!**\n\n"
+                    f"🏪 اسم المتجر: {store_name}\n"
+                    f"👤 المالك: {format_seller_mention(username, user_id)}\n\n"
+                    f"يمكنك الآن البدء بإضافة المنتجات وإدارة متجرك.")
+    
+    del user_states[user_id]
+    show_seller_menu(message)
 
 # ====== معالجة قائمة أدمن البوت ======
 @bot.message_handler(func=lambda message: message.text == "👑 لوحة التحكم الإدارية" and is_bot_admin(message.from_user.id))
