@@ -6367,10 +6367,21 @@ def debug_db_status(message):
     except:
         bot.send_message(message.chat.id, "Error checking status")
 
+
+# ====== Ping Command (No DB) ======
+@bot.message_handler(commands=['ping'])
+def ping_pong(message):
+    try:
+        bot.reply_to(message, "Pong! 🏓\nI am alive and listening.")
+    except Exception as e:
+        print(f"Ping error: {e}")
+
 # تشغيل البوت
 if __name__ == "__main__":
-    init_db() 
+    print("🚀 SYSTEM STARTUP: Bot script is running...")
+    # init_db() 
     try:
+        print("📡 Starting Polling...")
         bot.polling(none_stop=True, timeout=60)
     except Exception as e:
         print(f"❌ خطأ في تشغيل البوت: {e}")
