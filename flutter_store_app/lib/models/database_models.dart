@@ -18,12 +18,12 @@ class User {
 
   factory User.fromMap(Map<String, dynamic> map) {
     return User(
-      userId: map['UserID'],
-      telegramId: map['TelegramID'],
-      userName: map['UserName'],
-      userType: map['UserType'],
-      phoneNumber: map['PhoneNumber'],
-      fullName: map['FullName'],
+      userId: map['userid'],
+      telegramId: map['telegramid'],
+      userName: map['username'],
+      userType: map['usertype'],
+      phoneNumber: map['phonenumber'],
+      fullName: map['fullname'],
     );
   }
 }
@@ -45,11 +45,11 @@ class Seller {
 
   factory Seller.fromMap(Map<String, dynamic> map) {
     return Seller(
-      sellerId: map['SellerID'],
-      telegramId: map['TelegramID'],
-      userName: map['UserName'],
-      storeName: map['StoreName'],
-      status: map['Status'],
+      sellerId: map['sellerid'],
+      telegramId: map['telegramid'],
+      userName: map['username'],
+      storeName: map['storename'],
+      status: map['status'],
     );
   }
 }
@@ -69,10 +69,10 @@ class Category {
 
   factory Category.fromMap(Map<String, dynamic> map) {
     return Category(
-      categoryId: map['CategoryID'],
-      sellerId: map['SellerID'],
-      name: map['Name'],
-      orderIndex: map['OrderIndex'] ?? 0,
+      categoryId: map['categoryid'],
+      sellerId: map['sellerid'],
+      name: map['name'],
+      orderIndex: map['orderindex'] ?? 0,
     );
   }
 }
@@ -104,16 +104,16 @@ class Product {
 
   factory Product.fromMap(Map<String, dynamic> map) {
     return Product(
-      productId: map['ProductID'],
-      sellerId: map['SellerID'],
-      categoryId: map['CategoryID'],
-      name: map['Name'],
-      description: map['Description'],
-      price: (map['Price'] as num).toDouble(),
-      wholesalePrice: map['WholesalePrice'] != null ? (map['WholesalePrice'] as num).toDouble() : null,
-      quantity: map['Quantity'],
-      imagePath: map['ImagePath'],
-      status: map['Status'] ?? 'active',
+      productId: map['productid'],
+      sellerId: map['sellerid'],
+      categoryId: map['categoryid'],
+      name: map['name'],
+      description: map['description'],
+      price: (map['price'] as num).toDouble(),
+      wholesalePrice: map['wholesaleprice'] != null ? (map['wholesaleprice'] as num).toDouble() : null,
+      quantity: map['quantity'],
+      imagePath: map['imagepath'],
+      status: map['status'] ?? 'active',
     );
   }
 }
@@ -145,16 +145,16 @@ class Order {
 
   factory Order.fromMap(Map<String, dynamic> map) {
     return Order(
-      orderId: map['OrderID'],
-      buyerId: map['BuyerID'],
-      sellerId: map['SellerID'],
-      total: (map['Total'] as num).toDouble(),
-      status: map['Status'] ?? 'Pending',
-      createdAt: map['CreatedAt'],
-      deliveryAddress: map['DeliveryAddress'],
-      notes: map['Notes'],
-      paymentMethod: map['PaymentMethod'] ?? 'cash',
-      fullyPaid: (map['FullyPaid'] == 1 || map['FullyPaid'] == true),
+      orderId: map['orderid'],
+      buyerId: map['buyerid'],
+      sellerId: map['sellerid'],
+      total: (map['total'] as num).toDouble(),
+      status: map['status'] ?? 'Pending',
+      createdAt: map['createdat'],
+      deliveryAddress: map['deliveryaddress'],
+      notes: map['notes'],
+      paymentMethod: map['paymentmethod'] ?? 'cash',
+      fullyPaid: (map['fullypaid'] == 1 || map['fullypaid'] == true),
     );
   }
 }
@@ -176,11 +176,11 @@ class OrderItem {
 
   factory OrderItem.fromMap(Map<String, dynamic> map) {
     return OrderItem(
-      orderItemId: map['OrderItemID'],
-      orderId: map['OrderID'],
-      productId: map['ProductID'],
-      quantity: map['Quantity'],
-      price: (map['Price'] as num).toDouble(),
+      orderItemId: map['orderitemid'],
+      orderId: map['orderid'],
+      productId: map['productid'],
+      quantity: map['quantity'],
+      price: (map['price'] as num).toDouble(),
     );
   }
 }

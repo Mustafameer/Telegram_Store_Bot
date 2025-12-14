@@ -103,20 +103,20 @@ class DatabaseHelper {
 
   // --- Users ---
   Future<List<User>> getAllUsers() async {
-    final result = await _query('SELECT * FROM "Users"');
+    final result = await _query('SELECT * FROM Users');
     return result.map((json) => User.fromMap(json)).toList();
   }
 
   // --- Sellers ---
   Future<List<Seller>> getAllSellers() async {
-    final result = await _query('SELECT * FROM "Sellers"');
+    final result = await _query('SELECT * FROM Sellers');
     return result.map((json) => Seller.fromMap(json)).toList();
   }
 
   // --- Categories ---
   Future<List<Category>> getCategories(int sellerId) async {
     final result = await _query(
-      'SELECT * FROM "Categories" WHERE "SellerID" = @id ORDER BY "OrderIndex"',
+      'SELECT * FROM Categories WHERE SellerID = @id ORDER BY OrderIndex',
       {'id': sellerId}
     );
     return result.map((json) => Category.fromMap(json)).toList();
@@ -125,7 +125,7 @@ class DatabaseHelper {
   // --- Login Helpers ---
   Future<Seller?> getSellerByTelegramId(int telegramId) async {
     final result = await _query(
-      'SELECT * FROM "Sellers" WHERE "TelegramID" = @id',
+      'SELECT * FROM Sellers WHERE TelegramID = @id',
       {'id': telegramId}
     );
     if (result.isNotEmpty) {
@@ -139,7 +139,7 @@ class DatabaseHelper {
     await _update(
       'Sellers', 
       {'Status': status}, 
-      '"SellerID" = @id', 
+      'SellerID = @id', 
       {'id': sellerId}
     );
   }
@@ -156,11 +156,11 @@ class DatabaseHelper {
 
   // --- Products ---
   Future<List<Product>> getProducts(int sellerId, {int? categoryId}) async {
-    String sql = 'SELECT * FROM "Products" WHERE "SellerID" = @sid';
+    String sql = 'SELECT * FROM Products WHERE SellerID = @sid';
     Map<String, dynamic> params = {'sid': sellerId};
 
     if (categoryId != null) {
-      sql += ' AND "CategoryID" = @cid';
+      sql += ' AND CategoryID = @cid';
       params['cid'] = categoryId;
     }
 
@@ -197,13 +197,13 @@ class DatabaseHelper {
         'ImagePath': product.imagePath,
         'Status': product.status,
       },
-      '"ProductID" = @id',
+      'ProductID = @id',
       {'id': product.productId}
     );
   }
 
   Future<void> deleteProduct(int productId) async {
-    await _delete('Products', '"ProductID" = @id', {'id': productId});
+    await _delete('Products', 'ProductID = @id', {'id': productId});
   }
 
   // --- Categories Management ---
@@ -219,19 +219,19 @@ class DatabaseHelper {
     await _update(
       'Categories',
       {'Name': category.name},
-      '"CategoryID" = @id',
+      'CategoryID = @id',
       {'id': category.categoryId}
     );
   }
 
   Future<void> deleteCategory(int categoryId) async {
-    await _delete('Categories', '"CategoryID" = @id', {'id': categoryId});
+    await _delete('Categories', 'CategoryID = @id', {'id': categoryId});
   }
 
   // --- Orders ---
   Future<List<Order>> getOrders(int sellerId) async {
     final result = await _query(
-      'SELECT * FROM "Orders" WHERE "SellerID" = @id ORDER BY "CreatedAt" DESC',
+      'SELECT * FROM Orders WHERE SellerID = @id ORDER BY CreatedAt DESC',
       {'id': sellerId}
     );
     return result.map((json) => Order.fromMap(json)).toList();
@@ -241,7 +241,7 @@ class DatabaseHelper {
     await _update(
       'Orders',
       {'Status': status},
-      '"OrderID" = @id',
+      'OrderID = @id',
       {'id': orderId}
     );
   }
@@ -264,10 +264,10 @@ class DatabaseHelper {
     // Postgres: ON CONFLICT (UserID, ProductID) DO UPDATE...
     
     final sql = '''
-      INSERT INTO "Carts" ("UserID", "ProductID", "Quantity", "Price", "AddedAt")
+      INSERT INTO Carts (UserID, ProductID, Quantity, Price, AddedAt)
       VALUES (@uid, @pid, @qty, @price, @date)
-      ON CONFLICT ("UserID", "ProductID") 
-      DO UPDATE SET "Quantity" = "Carts"."Quantity" + @qty, "Price" = @price
+      ON CONFLICT (UserID, ProductID) 
+      DO UPDATE SET Quantity = Carts.Quantity + @qty, Price = @price
     ''';
     
     await _execute(sql, {
@@ -281,11 +281,11 @@ class DatabaseHelper {
 
   Future<List<Map<String, dynamic>>> getCartItems(int userId) async {
     final sql = '''
-      SELECT c.*, p."Name", p."ImagePath", p."SellerID", s."StoreName"
-      FROM "Carts" c
-      JOIN "Products" p ON c."ProductID" = p."ProductID"
-      JOIN "Sellers" s ON p."SellerID" = s."SellerID"
-      WHERE c."UserID" = @uid
+      SELECT c.*, p.Name, p.ImagePath, p.SellerID, s.StoreName
+      FROM Carts c
+      JOIN Products p ON c.ProductID = p.ProductID
+      JOIN Sellers s ON p.SellerID = s.SellerID
+      WHERE c.UserID = @uid
     ''';
     
     return await _query(sql, {'uid': userId});
@@ -298,18 +298,18 @@ class DatabaseHelper {
       await _update(
         'Carts',
         {'Quantity': quantity},
-        '"CartID" = @id',
+        'CartID = @id',
         {'id': cartId}
       );
     }
   }
 
   Future<void> removeFromCart(int cartId) async {
-    await _delete('Carts', '"CartID" = @id', {'id': cartId});
+    await _delete('Carts', 'CartID = @id', {'id': cartId});
   }
 
   Future<void> clearCart(int userId) async {
-    await _delete('Carts', '"UserID" = @id', {'id': userId});
+    await _delete('Carts', 'UserID = @id', {'id': userId});
   }
 
   // --- Create Order ---
@@ -326,10 +326,10 @@ class DatabaseHelper {
        // I'll write raw SQL for transaction safety.
        
        final orderSql = '''
-         INSERT INTO "Orders" 
-         ("BuyerID", "SellerID", "Total", "Status", "CreatedAt", "DeliveryAddress", "Notes", "PaymentMethod", "FullyPaid")
+         INSERT INTO Orders 
+         (BuyerID, SellerID, Total, Status, CreatedAt, DeliveryAddress, Notes, PaymentMethod, FullyPaid)
          VALUES (@bid, @sid, @total, 'Pending', @date, @addr, @notes, 'cash', 0)
-         RETURNING "OrderID"
+         RETURNING OrderID
        ''';
        
        final orderParams = {
@@ -348,7 +348,7 @@ class DatabaseHelper {
        for (var item in items) {
          await ctx.execute(
            Sql.named('''
-             INSERT INTO "OrderItems" ("OrderID", "ProductID", "Quantity", "Price")
+             INSERT INTO OrderItems (OrderID, ProductID, Quantity, Price)
              VALUES (@oid, @pid, @qty, @price)
            '''),
            parameters: {
