@@ -6379,10 +6379,21 @@ def ping_pong(message):
 # تشغيل البوت
 if __name__ == "__main__":
     print("🚀 SYSTEM STARTUP: Bot script is running...")
+    
+    # 1. Log Token Status
+    if TOKEN:
+        print(f"🔑 Token Loaded: {TOKEN[:5]}...{TOKEN[-5:]} (Length: {len(TOKEN)})")
+    else:
+        print("❌ CRITICAL: No Token Found in Environment!")
+
     # init_db() 
     try:
+        print("🧹 Clearing Webhooks...")
+        bot.remove_webhook()
+        
         print("📡 Starting Polling...")
         bot.polling(none_stop=True, timeout=60)
     except Exception as e:
         print(f"❌ خطأ في تشغيل البوت: {e}")
         traceback.print_exc()
+
