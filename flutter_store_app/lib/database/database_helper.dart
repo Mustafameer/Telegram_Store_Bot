@@ -1,92 +1,132 @@
-
-import 'dart:io';
-import 'package:path/path.dart' as p;
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:postgres/postgres.dart';
 import '../models/database_models.dart';
 
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._init();
-  static Database? _database;
+  Connection? _connection;
+
+  // Railway Database Credentials
+  final String _dbHost = 'switchback.proxy.rlwy.net';
+  final int _dbPort = 20266;
+  final String _dbName = 'railway';
+  final String _dbUser = 'postgres';
+  final String _dbPass = 'bqcTJxNXLgwOftDoarrtmjmjYWurEIEh';
 
   DatabaseHelper._init();
 
-  Future<Database> get database async {
-    if (_database != null) return _database!;
-    _database = await _initDB('store.db');
-    return _database!;
+  Future<Connection> get database async {
+    if (_connection != null && _connection!.isOpen) return _connection!;
+    _connection = await _initDB();
+    return _connection!;
   }
 
-  Future<Database> _initDB(String filePath) async {
-    sqfliteFfiInit();
-    var databaseFactory = databaseFactoryFfi;
-    
-    // Logic to find the database file. 
-    // Since the app is in `flutter_store_app` and db is in `TelegramStoreBot/data` (parent/data),
-    // we look one level up then into data.
-    
-    // Try to locate the file safely
-    String dbPath = p.join(Directory.current.parent.path, 'data', 'store.db');
-    
-    if (!File(dbPath).existsSync()) {
-      // Fallback: Try absolute path if we know it (from context)
-       if (File(p.join(Directory.current.path, 'data', 'store.db')).existsSync()) {
-         dbPath = p.join(Directory.current.path, 'data', 'store.db');
-       } else {
-         // Harcoded path specific to this user's request context
-         dbPath = r'c:\Users\Hp\Desktop\TelegramStoreBot\data\store.db';
-       }
-    }
-
-    // ignore: avoid_print
-    print("Opening database at: $dbPath");
-
-    return await databaseFactory.openDatabase(
-      dbPath,
-      options: OpenDatabaseOptions(
-        version: 1,
-        // We do not want to onCreate because the DB should exist.
-        // But if it doesn't, we might need to initialize it (though user said same DB)
-        onOpen: (db) {
-          // ignore: avoid_print
-          print("Database opened successfully");
-        },
+  Future<Connection> _initDB() async {
+    print("Connecting to PostgreSQL...");
+    return await Connection.open(
+      Endpoint(
+        host: _dbHost,
+        port: _dbPort,
+        database: _dbName,
+        username: _dbUser,
+        password: _dbPass,
       ),
+      settings: ConnectionSettings(sslMode: SslMode.disable),
     );
+  }
+
+  // --- Helpers to mimic sqflite behavior but with Postgres ---
+  
+  Future<List<Map<String, dynamic>>> _query(String sql, [Map<String, dynamic>? params]) async {
+    final conn = await database;
+    try {
+      final result = await conn.execute(Sql.named(sql), parameters: params);
+      
+      // Convert Result to List<Map<String, dynamic>>
+      // Result is an iterable of ResultRow. ResultRow is indexable but also has column metadata.
+      // We need to map it to Key-Value pairs.
+      return result.map((row) => row.toColumnMap()).toList();
+    } catch (e) {
+      print("Query Error: $e\nSQL: $sql");
+      rethrow;
+    }
+  }
+
+  Future<int> _execute(String sql, [Map<String, dynamic>? params]) async {
+    final conn = await database;
+    try {
+      final result = await conn.execute(Sql.named(sql), parameters: params);
+      return result.affectedRows;
+    } catch (e) {
+      print("Execute Error: $e\nSQL: $sql");
+      rethrow;
+    }
+  }
+  
+  Future<dynamic> _insertReturningId(String table, Map<String, dynamic> values, String pkName) async {
+    final columns = values.keys.join(', ');
+    final placeholders = values.keys.map((k) => '@$k').join(', ');
+    
+    final sql = 'INSERT INTO "$table" ($columns) VALUES ($placeholders) RETURNING "$pkName"';
+    
+    // Ensure all values are mapped correctly for Postgres
+    // Dates might need to be DateTime objects or ISO strings.
+    
+    final result = await _query(sql, values);
+    if (result.isNotEmpty) {
+      return result.first[pkName];
+    }
+    return null;
+  }
+  
+  Future<void> _insert(String table, Map<String, dynamic> values) async {
+    final columns = values.keys.join(', ');
+    final placeholders = values.keys.map((k) => '@$k').join(', ');
+    
+    final sql = 'INSERT INTO "$table" ($columns) VALUES ($placeholders)';
+    await _execute(sql, values);
+  }
+
+  Future<void> _update(String table, Map<String, dynamic> values, String where, Map<String, dynamic> whereArgs) async {
+    final updates = values.keys.map((k) => '$k = @$k').join(', ');
+    
+    // Merge values and whereArgs
+    final params = {...values, ...whereArgs};
+    
+    final sql = 'UPDATE "$table" SET $updates WHERE $where';
+    await _execute(sql, params);
+  }
+  
+  Future<void> _delete(String table, String where, Map<String, dynamic> whereArgs) async {
+    final sql = 'DELETE FROM "$table" WHERE $where';
+    await _execute(sql, whereArgs);
   }
 
   // --- Users ---
   Future<List<User>> getAllUsers() async {
-    final db = await database;
-    final result = await db.query('Users');
+    final result = await _query('SELECT * FROM "Users"');
     return result.map((json) => User.fromMap(json)).toList();
   }
 
   // --- Sellers ---
   Future<List<Seller>> getAllSellers() async {
-    final db = await database;
-    final result = await db.query('Sellers');
+    final result = await _query('SELECT * FROM "Sellers"');
     return result.map((json) => Seller.fromMap(json)).toList();
   }
 
-    // --- Categories ---
+  // --- Categories ---
   Future<List<Category>> getCategories(int sellerId) async {
-    final db = await database;
-    final result = await db.query(
-      'Categories',
-      where: 'SellerID = ?',
-      whereArgs: [sellerId],
-      orderBy: 'OrderIndex',
+    final result = await _query(
+      'SELECT * FROM "Categories" WHERE "SellerID" = @id ORDER BY "OrderIndex"',
+      {'id': sellerId}
     );
     return result.map((json) => Category.fromMap(json)).toList();
   }
 
   // --- Login Helpers ---
   Future<Seller?> getSellerByTelegramId(int telegramId) async {
-    final db = await database;
-    final result = await db.query(
-      'Sellers',
-      where: 'TelegramID = ?',
-      whereArgs: [telegramId],
+    final result = await _query(
+      'SELECT * FROM "Sellers" WHERE "TelegramID" = @id',
+      {'id': telegramId}
     );
     if (result.isNotEmpty) {
       return Seller.fromMap(result.first);
@@ -94,20 +134,18 @@ class DatabaseHelper {
     return null;
   }
 
-  // --- Seller Management (Admin) ---
+  // --- Seller Management ---
   Future<void> updateSellerStatus(int sellerId, String status) async {
-    final db = await database;
-    await db.update(
-      'Sellers',
-      {'Status': status},
-      where: 'SellerID = ?',
-      whereArgs: [sellerId],
+    await _update(
+      'Sellers', 
+      {'Status': status}, 
+      '"SellerID" = @id', 
+      {'id': sellerId}
     );
   }
 
   Future<void> addSeller(String storeName, int telegramId, String userName) async {
-    final db = await database;
-    await db.insert('Sellers', {
+    await _insert('Sellers', {
       'TelegramID': telegramId,
       'StoreName': storeName,
       'UserName': userName,
@@ -118,28 +156,23 @@ class DatabaseHelper {
 
   // --- Products ---
   Future<List<Product>> getProducts(int sellerId, {int? categoryId}) async {
-    final db = await database;
-    String where = 'SellerID = ?';
-    List<dynamic> args = [sellerId];
+    String sql = 'SELECT * FROM "Products" WHERE "SellerID" = @sid';
+    Map<String, dynamic> params = {'sid': sellerId};
 
     if (categoryId != null) {
-      where += ' AND CategoryID = ?';
-      args.add(categoryId);
+      sql += ' AND "CategoryID" = @cid';
+      params['cid'] = categoryId;
     }
 
-    final result = await db.query(
-      'Products',
-      where: where,
-      whereArgs: args,
-    );
+    final result = await _query(sql, params);
     return result.map((json) => Product.fromMap(json)).toList();
   }
 
   Future<void> addProduct(Product product) async {
-    final db = await database;
-    await db.insert(
-      'Products',
-      {
+    // Note: conflictAlgorithm replace is not simple in Postgres (ON CONFLICT). 
+    // Assuming INSERT is enough or we check existence. 
+    // For now, standard INSERT.
+    await _insert('Products', {
         'SellerID': product.sellerId,
         'CategoryID': product.categoryId,
         'Name': product.name,
@@ -149,15 +182,11 @@ class DatabaseHelper {
         'Quantity': product.quantity,
         'ImagePath': product.imagePath,
         'Status': product.status,
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    });
   }
   
   Future<void> updateProduct(Product product) async {
-    final db = await database;
-    await db.update(
-      'Products',
+    await _update('Products',
       {
         'CategoryID': product.categoryId,
         'Name': product.name,
@@ -168,24 +197,18 @@ class DatabaseHelper {
         'ImagePath': product.imagePath,
         'Status': product.status,
       },
-      where: 'ProductID = ?',
-      whereArgs: [product.productId],
+      '"ProductID" = @id',
+      {'id': product.productId}
     );
   }
 
   Future<void> deleteProduct(int productId) async {
-    final db = await database;
-    await db.delete(
-      'Products',
-      where: 'ProductID = ?',
-      whereArgs: [productId],
-    );
+    await _delete('Products', '"ProductID" = @id', {'id': productId});
   }
 
-  // --- Categories Management (Seller) ---
+  // --- Categories Management ---
   Future<void> addCategory(Category category) async {
-    final db = await database;
-    await db.insert('Categories', {
+    await _insert('Categories', {
       'SellerID': category.sellerId,
       'Name': category.name,
       'OrderIndex': category.orderIndex
@@ -193,50 +216,39 @@ class DatabaseHelper {
   }
 
   Future<void> updateCategory(Category category) async {
-    final db = await database;
-    await db.update(
+    await _update(
       'Categories',
       {'Name': category.name},
-      where: 'CategoryID = ?',
-      whereArgs: [category.categoryId],
+      '"CategoryID" = @id',
+      {'id': category.categoryId}
     );
   }
 
   Future<void> deleteCategory(int categoryId) async {
-    final db = await database;
-    await db.delete(
-      'Categories',
-      where: 'CategoryID = ?',
-      whereArgs: [categoryId],
-    );
+    await _delete('Categories', '"CategoryID" = @id', {'id': categoryId});
   }
 
   // --- Orders ---
   Future<List<Order>> getOrders(int sellerId) async {
-    final db = await database;
-    final result = await db.query(
-      'Orders',
-      where: 'SellerID = ?',
-      whereArgs: [sellerId],
-      orderBy: 'CreatedAt DESC',
+    final result = await _query(
+      'SELECT * FROM "Orders" WHERE "SellerID" = @id ORDER BY "CreatedAt" DESC',
+      {'id': sellerId}
     );
     return result.map((json) => Order.fromMap(json)).toList();
   }
 
   Future<void> updateOrderStatus(int orderId, String status) async {
-    final db = await database;
-    await db.update(
+    await _update(
       'Orders',
       {'Status': status},
-      where: 'OrderID = ?',
-      whereArgs: [orderId],
+      '"OrderID" = @id',
+      {'id': orderId}
     );
   }
   
   // --- Messages ---
   Future<void> addMessage(int orderId, int sellerId, String messageType, String messageText) async {
-    final db = await database;
-    await db.insert('Messages', {
+    await _insert('Messages', {
       'OrderID': orderId,
       'SellerID': sellerId,
       'MessageType': messageType,
@@ -247,85 +259,108 @@ class DatabaseHelper {
   }
 
   // --- Cart ---
-  // Simple cart implementation: Using the existing Carts table
-  // But we need a way to identify the "current user" of the desktop app if acting as buyer.
-  // We can use a special UserID or just the logged in UserID.
-
   Future<void> addToCart(int userId, int productId, int quantity, double price) async {
-    final db = await database;
-    await db.insert(
-      'Carts',
-      {
-        'UserID': userId,
-        'ProductID': productId,
-        'Quantity': quantity,
-        'Price': price,
-        'AddedAt': DateTime.now().toIso8601String(),
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    // Upsert logic for Carts (UNIQUE UserID, ProductID)
+    // Postgres: ON CONFLICT (UserID, ProductID) DO UPDATE...
+    
+    final sql = '''
+      INSERT INTO "Carts" ("UserID", "ProductID", "Quantity", "Price", "AddedAt")
+      VALUES (@uid, @pid, @qty, @price, @date)
+      ON CONFLICT ("UserID", "ProductID") 
+      DO UPDATE SET "Quantity" = "Carts"."Quantity" + @qty, "Price" = @price
+    ''';
+    
+    await _execute(sql, {
+      'uid': userId,
+      'pid': productId,
+      'qty': quantity,
+      'price': price,
+      'date': DateTime.now().toIso8601String()
+    });
   }
 
   Future<List<Map<String, dynamic>>> getCartItems(int userId) async {
-    final db = await database;
-    return await db.rawQuery('''
-      SELECT c.*, p.Name, p.ImagePath, p.SellerID, s.StoreName
-      FROM Carts c
-      JOIN Products p ON c.ProductID = p.ProductID
-      JOIN Sellers s ON p.SellerID = s.SellerID
-      WHERE c.UserID = ?
-    ''', [userId]);
+    final sql = '''
+      SELECT c.*, p."Name", p."ImagePath", p."SellerID", s."StoreName"
+      FROM "Carts" c
+      JOIN "Products" p ON c."ProductID" = p."ProductID"
+      JOIN "Sellers" s ON p."SellerID" = s."SellerID"
+      WHERE c."UserID" = @uid
+    ''';
+    
+    return await _query(sql, {'uid': userId});
   }
 
   Future<void> updateCartQuantity(int cartId, int quantity) async {
-    final db = await database;
     if (quantity <= 0) {
       await removeFromCart(cartId);
     } else {
-      await db.update(
+      await _update(
         'Carts',
         {'Quantity': quantity},
-        where: 'CartID = ?',
-        whereArgs: [cartId],
+        '"CartID" = @id',
+        {'id': cartId}
       );
     }
   }
 
   Future<void> removeFromCart(int cartId) async {
-    final db = await database;
-    await db.delete('Carts', where: 'CartID = ?', whereArgs: [cartId]);
+    await _delete('Carts', '"CartID" = @id', {'id': cartId});
   }
 
   Future<void> clearCart(int userId) async {
-    final db = await database;
-    await db.delete('Carts', where: 'UserID = ?', whereArgs: [userId]);
+    await _delete('Carts', '"UserID" = @id', {'id': userId});
   }
 
   // --- Create Order ---
   Future<int> createOrder(int buyerId, int sellerId, double total, String address, String notes, List<Map<String, dynamic>> items) async {
-    final db = await database;
-    return await db.transaction((txn) async {
-      final orderId = await txn.insert('Orders', {
-        'BuyerID': buyerId,
-        'SellerID': sellerId,
-        'Total': total,
-        'Status': 'Pending',
-        'CreatedAt': DateTime.now().toString(), // Format like SQLite default
-        'DeliveryAddress': address,
-        'Notes': notes,
-        'PaymentMethod': 'cash',
-        'FullyPaid': 0
-      });
+    final conn = await database;
+    
+    // Transaction
+    return await conn.runTx((ctx) async {
+       // Insert Order
+       // Return ID
+       // Note: Helper methods usually use global _execute which calls conn.execute.
+       // Inside transaction, we must use ctx.execute.
+       // So we can't easily use the helpers here unless we refactor helpers to accept connection context.
+       // I'll write raw SQL for transaction safety.
+       
+       final orderSql = '''
+         INSERT INTO "Orders" 
+         ("BuyerID", "SellerID", "Total", "Status", "CreatedAt", "DeliveryAddress", "Notes", "PaymentMethod", "FullyPaid")
+         VALUES (@bid, @sid, @total, 'Pending', @date, @addr, @notes, 'cash', 0)
+         RETURNING "OrderID"
+       ''';
+       
+       final orderParams = {
+         'bid': buyerId,
+         'sid': sellerId,
+         'total': total,
+         'date': DateTime.now().toString(),
+         'addr': address,
+         'notes': notes
+       };
+       
+       final result = await ctx.execute(Sql.named(orderSql), parameters: orderParams);
+       final orderId = result.first[0] as int;
 
-      for (var item in items) {
-        await txn.insert('OrderItems', {
-          'OrderID': orderId,
-          'ProductID': item['ProductID'],
-          'Quantity': item['Quantity'],
-          'Price': item['Price'],
-        });
-      }
-      return orderId;
+       // Insert Items
+       for (var item in items) {
+         await ctx.execute(
+           Sql.named('''
+             INSERT INTO "OrderItems" ("OrderID", "ProductID", "Quantity", "Price")
+             VALUES (@oid, @pid, @qty, @price)
+           '''),
+           parameters: {
+             'oid': orderId,
+             'pid': item['ProductID'],
+             'qty': item['Quantity'],
+             'price': item['Price']
+           }
+         );
+       }
+       
+       return orderId;
     });
   }
 }

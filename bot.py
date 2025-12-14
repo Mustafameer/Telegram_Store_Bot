@@ -12,6 +12,7 @@ import base64
 import os
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8562406465:AAHHaUMALVMjfgVKlAYNh8nziTwIeg5GDCs")
 bot = telebot.TeleBot(TOKEN)
+IS_POSTGRES = os.environ.get('DATABASE_URL') is not None
 
 # إضافة معرف صاحب البوت (أدمن) - للتحكم التقني فقط
 BOT_ADMIN_ID = 1041977029  # ضع هنا معرف التليجرام الخاص بأدمن البوت
@@ -33,6 +34,93 @@ os.makedirs(IMAGES_FOLDER, exist_ok=True)
 
 # ----------------- استعادة البيانات عند إضافة Volume جديد -----------------
 import shutil
+import psycopg2
+import urllib.parse
+from contextlib import contextmanager
+
+# ===================== Database Wrapper =====================
+class DBWrapper:
+    def __init__(self, conn, is_postgres=False):
+        self.conn = conn
+        self.is_postgres = is_postgres
+
+    def cursor(self):
+        return CursorWrapper(self.conn.cursor(), self.is_postgres)
+
+    def commit(self):
+        self.conn.commit()
+
+    def close(self):
+        self.conn.close()
+
+class CursorWrapper:
+    def __init__(self, cursor, is_postgres=False):
+        self.cursor = cursor
+        self.is_postgres = is_postgres
+        self.lastrowid = None # Placeholder
+
+    def execute(self, query, params=None):
+        if self.is_postgres:
+            # Replace ? with %s
+            query = query.replace('?', '%s')
+            # Handle AUTOINCREMENT replacement for Postgres compatibility
+            query = query.replace('INTEGER PRIMARY KEY AUTOINCREMENT', 'SERIAL PRIMARY KEY')
+        
+        try:
+            if params is None:
+                self.cursor.execute(query)
+            else:
+                self.cursor.execute(query, params)
+                
+            # Try to capture lastrowid if supported
+            if not self.is_postgres:
+                self.lastrowid = self.cursor.lastrowid
+            else:
+                # Psycopg2: lastrowid is often OID, not PK. 
+                # If RETURNING was used, we need to fetchone to get it.
+                if query.strip().upper().startswith("INSERT") and "RETURNING" in query.upper():
+                    res = self.cursor.fetchone()
+                    if res:
+                        self.lastrowid = res[0]
+        except Exception as e:
+            raise e
+            
+        return self
+
+    def fetchone(self):
+        return self.cursor.fetchone()
+
+    def fetchall(self):
+        return self.cursor.fetchall()
+        
+    def close(self):
+        self.cursor.close()
+
+def get_db_connection():
+    database_url = os.environ.get('DATABASE_URL')
+    if database_url:
+        try:
+            result = urllib.parse.urlparse(database_url)
+            username = result.username
+            password = result.password
+            database = result.path[1:]
+            hostname = result.hostname
+            port = result.port
+            conn = psycopg2.connect(
+                database=database,
+                user=username,
+                password=password,
+                host=hostname,
+                port=port
+            )
+            return DBWrapper(conn, is_postgres=True)
+        except Exception as e:
+            print(f"Error connecting to Postgres: {e}")
+            # Fallback to local SQLite if remote fails? For safety, maybe.
+            return DBWrapper(sqlite3.connect(DB_FILE), is_postgres=False)
+    else:
+        return DBWrapper(sqlite3.connect(DB_FILE), is_postgres=False)
+
 if not os.path.exists(DB_FILE) and os.path.exists(os.path.join(SEED_DIR, "store.db")):
     print("🔄 استعادة قاعدة البيانات من النسخة الاحتياطية (Seed)...")
     shutil.copy(os.path.join(SEED_DIR, "store.db"), DB_FILE)
@@ -44,7 +132,7 @@ if not os.path.exists(DB_FILE) and os.path.exists(os.path.join(SEED_DIR, "store.
 
 # ===================== قاعدة البيانات =====================
 def init_db():
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     # جدول الزبائن الآجل (الاسم، رقم التلفون)
@@ -233,7 +321,7 @@ init_db()
 
 def check_and_fix_db():
     """التحقق من وجود جميع الجداول وإصلاح النواقص"""
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     tables = ['CreditCustomers', 'CreditLimits', 'Users', 'Sellers', 'CustomerCredit', 'Categories', 'Products', 
@@ -252,7 +340,7 @@ check_and_fix_db()
 
 def check_credit_limit(customer_id, seller_id, new_amount):
     """التحقق إذا كان يمكن للزبون تحمل مبلغ جديد"""
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     # الحصول على الحد الحالي
@@ -291,7 +379,7 @@ def check_credit_limit(customer_id, seller_id, new_amount):
 
 def update_credit_usage(customer_id, seller_id, amount, transaction_type):
     """تحديث المبلغ المستخدم من الحد الائتماني"""
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     # الحصول على الحد الحالي أو إنشاء واحد جديد
@@ -338,7 +426,7 @@ def update_credit_usage(customer_id, seller_id, amount, transaction_type):
 
 def set_credit_limit(customer_id, seller_id, max_amount, warning_percentage=0.8):
     """تعيين حد ائتماني للزبون"""
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     # الحصول على المبلغ المستخدم الحالي
@@ -362,7 +450,7 @@ def set_credit_limit(customer_id, seller_id, max_amount, warning_percentage=0.8)
 
 def get_credit_limit_info(customer_id, seller_id):
     """الحصول على معلومات الحد الائتماني"""
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     cursor.execute("""
@@ -399,7 +487,7 @@ def get_credit_limit_info(customer_id, seller_id):
 
 def reset_credit_usage(customer_id, seller_id):
     """إعادة تعيين المبلغ المستخدم للصفر"""
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     cursor.execute("""
@@ -414,7 +502,7 @@ def reset_credit_usage(customer_id, seller_id):
 
 def deactivate_credit_limit(customer_id, seller_id):
     """تعطيل الحد الائتماني للزبون"""
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     cursor.execute("""
@@ -430,7 +518,7 @@ def deactivate_credit_limit(customer_id, seller_id):
 # ===================== دوال إدارة الحسابات =====================
 def suspend_seller(seller_id, suspended_by, reason=None):
     """تعليق حساب بائع"""
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     cursor.execute("""
@@ -462,7 +550,7 @@ def suspend_seller(seller_id, suspended_by, reason=None):
 
 def activate_seller(seller_id, activated_by):
     """تنشيط حساب بائع"""
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     cursor.execute("""
@@ -498,7 +586,7 @@ def is_seller_active(seller_telegram_id):
 
 def get_seller_status(seller_id):
     """الحصول على حالة البائع"""
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT Status, SuspensionReason, SuspendedAt FROM Sellers WHERE SellerID=?", (seller_id,))
     result = cursor.fetchone()
@@ -507,7 +595,7 @@ def get_seller_status(seller_id):
 
 def get_suspended_sellers():
     """الحصول على قائمة الحسابات المعلقة"""
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
         SELECT s.*, u.UserName as SuspenderName
@@ -523,7 +611,7 @@ def get_suspended_sellers():
 # ===================== نظام الزبائن الآجل =====================
 def add_credit_customer(seller_id, full_name, phone_number):
     """إضافة زبون آجل"""
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     try:
@@ -541,7 +629,7 @@ def add_credit_customer(seller_id, full_name, phone_number):
 
 def get_credit_customer(seller_id, phone_number=None, full_name=None):
     """الحصول على زبون آجل بالهاتف أو الاسم"""
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     if phone_number:
@@ -564,7 +652,7 @@ def get_credit_customer(seller_id, phone_number=None, full_name=None):
 
 def get_all_credit_customers(seller_id):
     """الحصول على جميع الزبائن الآجلين"""
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     cursor.execute("""
@@ -590,7 +678,7 @@ def is_credit_customer(seller_id, phone_number, full_name):
 # ===================== نظام كشف حساب الزبائن الآجل =====================
 def add_credit_transaction(customer_id, seller_id, transaction_type, amount, description=""):
     """إضافة معاملة ائتمانية للزبون"""
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     # الحصول على الرصيد الحالي
@@ -614,11 +702,15 @@ def add_credit_transaction(customer_id, seller_id, transaction_type, amount, des
         balance_after = balance_before
     
     # إضافة المعاملة
-    cursor.execute("""
+    query = """
         INSERT INTO CustomerCredit 
         (CustomerID, SellerID, TransactionType, Amount, Description, BalanceBefore, BalanceAfter)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (customer_id, seller_id, transaction_type, amount, description, balance_before, balance_after))
+    """
+    if IS_POSTGRES:
+        query += " RETURNING CreditID"
+    
+    cursor.execute(query, (customer_id, seller_id, transaction_type, amount, description, balance_before, balance_after))
     
     # تحديث الحد الائتماني
     if transaction_type in ['purchase', 'payment']:
@@ -631,7 +723,7 @@ def add_credit_transaction(customer_id, seller_id, transaction_type, amount, des
 
 def get_customer_balance(customer_id, seller_id):
     """الحصول على رصيد الزبون لدى بائع معين"""
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     cursor.execute("""
@@ -648,7 +740,7 @@ def get_customer_balance(customer_id, seller_id):
 
 def get_customer_statement(customer_id, seller_id, limit=10):
     """الحصول على كشف حساب الزبون"""
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     cursor.execute("""
@@ -672,7 +764,7 @@ def get_customer_statement(customer_id, seller_id, limit=10):
 
 def get_all_customers_with_balance(seller_id):
     """الحصول على جميع الزبائن الذين لهم رصيد لدى البائع"""
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     cursor.execute("""
@@ -703,7 +795,7 @@ def get_all_customers_with_balance(seller_id):
 
 # ===================== دوال النظام =====================
 def add_user(telegram_id, username, usertype, phone_number=None, full_name=None):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
         INSERT OR REPLACE INTO Users (TelegramID, UserName, UserType, PhoneNumber, FullName) 
@@ -713,7 +805,7 @@ def add_user(telegram_id, username, usertype, phone_number=None, full_name=None)
     conn.close()
 
 def get_user(telegram_id):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM Users WHERE TelegramID=?", (telegram_id,))
     user = cursor.fetchone()
@@ -721,7 +813,7 @@ def get_user(telegram_id):
     return user
 
 def update_user_info(telegram_id, phone_number=None, full_name=None):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     updates = []
@@ -747,7 +839,7 @@ def is_bot_admin(telegram_id):
     return telegram_id == BOT_ADMIN_ID
 
 def add_seller(telegram_id, username, store_name):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
         INSERT OR IGNORE INTO Sellers (TelegramID, UserName, StoreName)
@@ -762,7 +854,7 @@ def add_seller(telegram_id, username, store_name):
     conn.close()
 
 def get_seller_by_telegram(telegram_id):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM Sellers WHERE TelegramID=?", (telegram_id,))
     seller = cursor.fetchone()
@@ -777,7 +869,7 @@ def get_seller_by_telegram(telegram_id):
             username = user[2] or user[5] or "بائع"
             store_name = f"متجر {username}"
             add_seller(telegram_id, username, store_name)
-            conn = sqlite3.connect(DB_FILE)
+            conn = get_db_connection()
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM Sellers WHERE TelegramID=?", (telegram_id,))
             seller = cursor.fetchone()
@@ -786,7 +878,7 @@ def get_seller_by_telegram(telegram_id):
     return seller
 
 def get_seller_by_id(seller_id):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM Sellers WHERE SellerID=?", (seller_id,))
     seller = cursor.fetchone()
@@ -802,7 +894,7 @@ def is_seller(telegram_id):
     return seller is not None
 
 def get_user_type(telegram_id):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT UserType FROM Users WHERE TelegramID=?", (telegram_id,))
     result = cursor.fetchone()
@@ -810,7 +902,7 @@ def get_user_type(telegram_id):
     return result[0] if result else None
 
 def add_category(seller_id, name):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("INSERT INTO Categories (SellerID, Name) VALUES (?, ?)",
                    (seller_id, name))
@@ -818,14 +910,14 @@ def add_category(seller_id, name):
     conn.close()
 
 def update_category(category_id, name):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("UPDATE Categories SET Name = ? WHERE CategoryID = ?", (name, category_id))
     conn.commit()
     conn.close()
 
 def get_categories(seller_id):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT CategoryID, Name FROM Categories WHERE SellerID=? ORDER BY OrderIndex", (seller_id,))
     categories = cursor.fetchall()
@@ -833,7 +925,7 @@ def get_categories(seller_id):
     return categories
 
 def get_category_by_id(category_id):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT CategoryID, SellerID, Name FROM Categories WHERE CategoryID=?", (category_id,))
     category = cursor.fetchone()
@@ -841,7 +933,7 @@ def get_category_by_id(category_id):
     return category
 
 def add_product_db(seller_id, category_id, name, description, price, wholesale_price, quantity, image_path=""):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO Products (SellerID, CategoryID, Name, Description, Price, WholesalePrice, Quantity, ImagePath) 
@@ -851,7 +943,7 @@ def add_product_db(seller_id, category_id, name, description, price, wholesale_p
     conn.close()
 
 def update_product(product_id, name=None, description=None, price=None, wholesale_price=None, quantity=None, category_id=None, image_path=None):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     updates = []
@@ -894,7 +986,7 @@ def update_product(product_id, name=None, description=None, price=None, wholesal
     conn.close()
 
 def get_products(seller_id=None, category_id=None):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     if seller_id and category_id:
         cursor.execute("SELECT ProductID, Name, Description, Price, WholesalePrice, Quantity, ImagePath FROM Products WHERE Quantity > 0 AND SellerID=? AND CategoryID=? AND Status='active'", 
@@ -910,7 +1002,7 @@ def get_products(seller_id=None, category_id=None):
     return products
 
 def get_product_by_id(pid):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT ProductID, SellerID, CategoryID, Name, Description, Price, WholesalePrice, Quantity, ImagePath FROM Products WHERE ProductID=?", (pid,))
     product = cursor.fetchone()
@@ -933,7 +1025,7 @@ def get_product_price_for_customer(product_id, seller_id, phone_number=None, ful
     return product[5]
 
 def add_to_cart_db(user_id, product_id, quantity=1, price=None):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     if price is None:
@@ -959,7 +1051,7 @@ def add_to_cart_db(user_id, product_id, quantity=1, price=None):
     return True
 
 def get_cart_items_db(user_id):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     cursor.execute("""
@@ -977,17 +1069,21 @@ def get_cart_items_db(user_id):
     return items
 
 def create_order(buyer_id, seller_id, cart_items, delivery_address=None, notes=None, payment_method='cash', fully_paid=False):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     total = 0
     
     for pid, qty, price in cart_items:
         total += price * qty
 
-    cursor.execute("""
+    query = """
         INSERT INTO Orders (BuyerID, SellerID, Total, DeliveryAddress, Notes, PaymentMethod, FullyPaid) 
         VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (buyer_id, seller_id, total, delivery_address, notes, payment_method, fully_paid))
+    """
+    if IS_POSTGRES:
+        query += " RETURNING OrderID"
+    
+    cursor.execute(query, (buyer_id, seller_id, total, delivery_address, notes, payment_method, fully_paid))
     order_id = cursor.lastrowid
 
     for pid, qty, price in cart_items:
@@ -1027,7 +1123,7 @@ def create_order(buyer_id, seller_id, cart_items, delivery_address=None, notes=N
     return order_id, total
 
 def get_orders_by_seller(seller_id, status=None):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     query = """
@@ -1053,14 +1149,14 @@ def get_orders_by_seller(seller_id, status=None):
     return orders
 
 def update_order_status(order_id, new_status):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("UPDATE Orders SET Status=? WHERE OrderID=?", (new_status, order_id))
     conn.commit()
     conn.close()
 
 def get_order_details(order_id):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     cursor.execute("""
@@ -1084,7 +1180,7 @@ def get_order_details(order_id):
     return order, items
 
 def clear_cart_db(user_id):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM Carts WHERE UserID=?", (user_id,))
     conn.commit()
@@ -1092,7 +1188,7 @@ def clear_cart_db(user_id):
     return True
 
 def create_message(order_id, seller_id, message_type, message_text):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO Messages (OrderID, SellerID, MessageType, MessageText) 
@@ -1102,7 +1198,7 @@ def create_message(order_id, seller_id, message_type, message_text):
     conn.close()
 
 def get_unread_messages(seller_id):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
         SELECT m.*, o.OrderID, o.BuyerID, o.Status, o.CreatedAt,
@@ -1118,14 +1214,14 @@ def get_unread_messages(seller_id):
     return messages
 
 def mark_message_as_read(message_id):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("UPDATE Messages SET IsRead = 1 WHERE MessageID = ?", (message_id,))
     conn.commit()
     conn.close()
 
 def create_return_request(order_id, product_id, quantity, reason, buyer_id):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     cursor.execute("""
@@ -1146,10 +1242,14 @@ def create_return_request(order_id, product_id, quantity, reason, buyer_id):
         conn.close()
         return False, f"الكمية المطلوبة للإرجاع ({quantity}) أكبر من الكمية المتبقية ({total_quantity - returned_quantity})"
     
-    cursor.execute("""
+    query = """
         INSERT INTO Returns (OrderID, ProductID, Quantity, Reason, Status) 
         VALUES (?, ?, ?, ?, 'Pending')
-    """, (order_id, product_id, quantity, reason))
+    """
+    if IS_POSTGRES:
+        query += " RETURNING ReturnID"
+    
+    cursor.execute(query, (order_id, product_id, quantity, reason))
     
     return_id = cursor.lastrowid
     
@@ -1164,7 +1264,7 @@ def create_return_request(order_id, product_id, quantity, reason, buyer_id):
     return True, return_id
 
 def process_return_request(return_id, status, processed_by, notes=None):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     cursor.execute("SELECT OrderID, ProductID, Quantity FROM Returns WHERE ReturnID = ?", (return_id,))
@@ -1229,7 +1329,7 @@ def process_return_request(return_id, status, processed_by, notes=None):
     return True, "تم تحديث حالة الإرجاع بنجاح"
 
 def get_pending_returns(seller_id):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     cursor.execute("""
@@ -1793,7 +1893,7 @@ def manage_accounts(message):
 
 @bot.message_handler(func=lambda message: message.text == "📊 إحصائيات النظام" and is_bot_admin(message.from_user.id))
 def system_stats(message):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     # إحصائيات المستخدمين
@@ -2130,7 +2230,7 @@ def start(message):
 
 @bot.message_handler(func=lambda message: message.text == "📋 قائمة المتاجر" and is_bot_admin(message.from_user.id))
 def list_stores(message):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
         SELECT s.*, 
@@ -3309,7 +3409,7 @@ def handle_set_credit_limit(call):
         "seller_id": seller[0]
     }
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT FullName FROM CreditCustomers WHERE CustomerID=?", (customer_id,))
     customer_info = cursor.fetchone()
@@ -3386,7 +3486,7 @@ def process_warning_threshold(message):
     
     set_credit_limit(state["customer_id"], state["seller_id"], max_amount, warning_threshold)
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT FullName FROM CreditCustomers WHERE CustomerID=?", (state["customer_id"],))
     customer_info = cursor.fetchone()
@@ -3409,7 +3509,7 @@ def handle_view_credit_customer(call):
     customer_id = int(call.data.split("_")[3])
     telegram_id = call.from_user.id
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM CreditCustomers WHERE CustomerID=?", (customer_id,))
     customer = cursor.fetchone()
@@ -3486,7 +3586,7 @@ def handle_select_customer_payment(call):
         "seller_id": seller[0]
     }
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT FullName, PhoneNumber FROM CreditCustomers WHERE CustomerID=?", (customer_id,))
     customer_info = cursor.fetchone()
@@ -3527,7 +3627,7 @@ def process_payment_amount(message):
     customer_id = state["customer_id"]
     seller_id = state["seller_id"]
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT FullName FROM CreditCustomers WHERE CustomerID=?", (customer_id,))
     customer_info = cursor.fetchone()
@@ -3579,7 +3679,7 @@ def confirm_payment(message):
     customer_id = state["customer_id"]
     seller_id = state["seller_id"]
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT FullName FROM CreditCustomers WHERE CustomerID=?", (customer_id,))
     customer_info = cursor.fetchone()
@@ -3612,7 +3712,7 @@ def handle_view_customer_statement(call):
     telegram_id = call.from_user.id
     seller = get_seller_by_telegram(telegram_id)
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT FullName, PhoneNumber FROM CreditCustomers WHERE CustomerID=?", (customer_id,))
     customer_info = cursor.fetchone()
@@ -3747,7 +3847,7 @@ def my_credit_statement(message):
         bot.send_message(message.chat.id, "⚠️ لم يتم العثور على بياناتك.")
         return
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     cursor.execute("""
@@ -3984,7 +4084,7 @@ def callback_handler(call):
         bot.answer_callback_query(call.id, f"حدث خطأ: {e}")
 
 def list_active_stores_callback(call):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
         SELECT s.*, 
@@ -4042,7 +4142,7 @@ def list_suspended_stores_callback(call):
     bot.answer_callback_query(call.id)
 
 def suspend_store_menu(call):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
         SELECT s.SellerID, s.StoreName, s.UserName, s.TelegramID
@@ -4187,7 +4287,7 @@ def browse_stores(message):
     
     if is_guest:
         # عرض المتاجر للزوار
-        conn = sqlite3.connect(DB_FILE)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("""
             SELECT TelegramID, UserName, StoreName 
@@ -4214,7 +4314,7 @@ def browse_stores(message):
         bot.send_message(message.chat.id, "🛍️ **المتاجر المتاحة:**", reply_markup=markup)
     else:
         # عرض المتاجر للمستخدمين المسجلين
-        conn = sqlite3.connect(DB_FILE)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("""
             SELECT TelegramID, UserName, StoreName 
@@ -4430,7 +4530,7 @@ def handle_checkout_cart(call):
             seller = get_seller_by_id(prod_seller_id)
             if seller and seller[1] == BOT_ADMIN_ID:
                 # حذف من السلة
-                conn = sqlite3.connect(DB_FILE)
+                conn = get_db_connection()
                 cursor = conn.cursor()
                 cursor.execute("DELETE FROM Carts WHERE UserID=? AND ProductID= ?", (telegram_id, pid))
                 conn.commit()
@@ -4895,7 +4995,7 @@ def handle_skip_seller(call):
     # حذف عناصر هذا البائع من السلة
     seller_items = state["items_by_seller"][seller_id]['items']
     for product_id, quantity, price in seller_items:
-        conn = sqlite3.connect(DB_FILE)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("DELETE FROM Carts WHERE UserID=? AND ProductID=?", (telegram_id, product_id))
         conn.commit()
@@ -5025,7 +5125,7 @@ def process_delivery_address(message):
     
     # حذف عناصر هذا البائع من السلة
     for product_id, quantity, price in seller_data['items']:
-        conn = sqlite3.connect(DB_FILE)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("DELETE FROM Carts WHERE UserID=? AND ProductID=?", (telegram_id, product_id))
         conn.commit()
@@ -5065,7 +5165,7 @@ def process_delivery_address(message):
 
 def create_order_for_guest(buyer_id, seller_id, cart_items, delivery_address=None, guest_name=None, guest_phone=None, payment_method='cash', fully_paid=False):
     """إنشاء طلب للزوار (غير المسجلين)"""
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     total = 0
     
@@ -5214,14 +5314,14 @@ def handle_decrease_cart(call):
                 break
         
         if current_quantity <= 1:
-            conn = sqlite3.connect(DB_FILE)
+            conn = get_db_connection()
             cursor = conn.cursor()
             cursor.execute("DELETE FROM Carts WHERE UserID=? AND ProductID=?", (telegram_id, product_id))
             conn.commit()
             conn.close()
             bot.answer_callback_query(call.id, "✅ تم حذف المنتج من السلة")
         else:
-            conn = sqlite3.connect(DB_FILE)
+            conn = get_db_connection()
             cursor = conn.cursor()
             cursor.execute("UPDATE Carts SET Quantity = Quantity - 1 WHERE UserID=? AND ProductID=?", (telegram_id, product_id))
             conn.commit()
@@ -5244,7 +5344,7 @@ def handle_remove_cart(call):
         product_id = int(call.data.split("_")[2])
         telegram_id = call.from_user.id
         
-        conn = sqlite3.connect(DB_FILE)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("DELETE FROM Carts WHERE UserID=? AND ProductID=?", (telegram_id, product_id))
         conn.commit()
@@ -5307,7 +5407,7 @@ def process_set_cart_quantity(message):
         del user_states[telegram_id]
         return
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("UPDATE Carts SET Quantity = ? WHERE UserID=? AND ProductID=?", 
                   (new_quantity, telegram_id, product_id))
@@ -5557,7 +5657,7 @@ def handle_reject_order(call):
 def handle_view_return(call):
     return_id = int(call.data.split("_")[2])
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     cursor.execute("""
@@ -5606,7 +5706,7 @@ def handle_view_return(call):
 
 def handle_return_details(call):
     message_id = int(call.data.split("_")[2])
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT OrderID, MessageText FROM Messages WHERE MessageID = ?", (message_id,))
     msg = cursor.fetchone()
@@ -5622,7 +5722,7 @@ def handle_return_details(call):
 
 def handle_process_return(call):
     message_id = int(call.data.split("_")[2])
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT OrderID FROM Messages WHERE MessageID = ?", (message_id,))
     msg = cursor.fetchone()
@@ -5774,7 +5874,7 @@ def my_orders(message):
                         "3. ستتمكن من رؤية جميع طلباتك السابقة")
         return
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     cursor.execute("""
@@ -5829,7 +5929,7 @@ def my_orders(message):
 def handle_view_recent_orders(call):
     telegram_id = call.from_user.id
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     cursor.execute("""
@@ -5896,7 +5996,7 @@ def handle_request_return_order(call):
         "order_id": order_id
     }
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     cursor.execute("""
