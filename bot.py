@@ -196,7 +196,7 @@ def init_db():
             MaxCreditAmount REAL DEFAULT 1000000,
             WarningThreshold REAL DEFAULT 0.8,
             CurrentUsedAmount REAL DEFAULT 0,
-            IsActive BOOLEAN DEFAULT 1,
+            IsActive BOOLEAN DEFAULT TRUE,
             CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
             UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (CustomerID) REFERENCES CreditCustomers(CustomerID),
