@@ -6309,8 +6309,7 @@ def debug_db_status(message):
 
 # تشغيل البوت
 if __name__ == "__main__":
-    # Assuming init_db() is defined elsewhere and sets up the database
-    # init_db() 
+    init_db() 
     try:
         bot.polling(none_stop=True, timeout=60)
     except Exception as e:
