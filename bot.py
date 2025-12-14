@@ -6108,7 +6108,7 @@ def handle_select_return_product(call):
         bot.answer_callback_query(call.id, "المنتج غير موجود")
         return
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     cursor.execute("""
@@ -6153,7 +6153,7 @@ def process_return_quantity(message):
     order_id = state["order_id"]
     product_id = state["product_id"]
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     cursor.execute("""
