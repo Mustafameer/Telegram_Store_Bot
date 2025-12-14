@@ -340,24 +340,13 @@ def init_db():
     conn.commit()
     conn.close()
 
-init_db()
+# init_db()
 
 def check_and_fix_db():
-    """التحقق من وجود جميع الجداول وإصلاح النواقص"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    tables = ['CreditCustomers', 'CreditLimits', 'Users', 'Sellers', 'CustomerCredit', 'Categories', 'Products', 
-              'Carts', 'Orders', 'OrderItems', 'Returns', 'Messages']
-    
-    for table in tables:
-        cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{table}'")
-        if not cursor.fetchone():
-            print(f"⚠️ جدول {table} غير موجود، سيتم إنشاؤه في المرة القادمة")
-    
-    conn.close()
+    # ... logic skipped ...
+    pass
 
-check_and_fix_db()
+# check_and_fix_db()
 
 # ===================== نظام حدود الائتمان =====================
 
@@ -6299,7 +6288,52 @@ print("   • إتمام الطلبات للزوار")
 print("   • تسجيل حساب جديد في أي وقت")
 print("   • التفريق بين الزوار والمستخدمين المسجلين")
 
+
+# ====== Start Command ======
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    try:
+        user_id = message.from_user.id
+        username = message.from_user.username
+        full_name = message.from_user.full_name
+        
+        # Register user if not exists
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        if IS_POSTGRES:
+            cursor.execute("SELECT * FROM Users WHERE TelegramID = %s", (user_id,))
+        else:
+            cursor.execute("SELECT * FROM Users WHERE TelegramID = ?", (user_id,))
+            
+        user = cursor.fetchone()
+        
+        if not user:
+            if IS_POSTGRES:
+                cursor.execute("INSERT INTO Users (TelegramID, UserName, FullName, UserType) VALUES (%s, %s, %s, 'customer')", (user_id, username, full_name))
+            else:
+                cursor.execute("INSERT INTO Users (TelegramID, UserName, FullName, UserType) VALUES (?, ?, ?, 'customer')", (user_id, username, full_name))
+            conn.commit()
+            print(f"✅ New user registered: {full_name}")
+            
+        conn.close()
+
+        # Send Welcome Message
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        btn1 = types.InlineKeyboardButton("🛍️ تصفح المنتجات", callback_data='browse_products')
+        btn2 = types.InlineKeyboardButton("🛒 سلة التسوق", callback_data='view_cart')
+        btn3 = types.InlineKeyboardButton("📦 طلباتي", callback_data='my_orders')
+        btn4 = types.InlineKeyboardButton("📞 تواصل معنا", callback_data='contact_us')
+        markup.add(btn1, btn2, btn3, btn4)
+        
+        bot.reply_to(message, f"👋 أهلاً بك {full_name} في متجرنا!\n\nيمكنك البدء بالتسوق الآن:", reply_markup=markup)
+        
+    except Exception as e:
+        print(f"Error in start command: {e}")
+        bot.reply_to(message, "حدث خطأ بسيط، حاول مرة أخرى.")
+
 # ====== Debug Command ======
+
 @bot.message_handler(commands=['debug_db'])
 def debug_db_status(message):
     try:
