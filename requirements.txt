@@ -1,4 +1,5 @@
 pyTelegramBotAPI==4.15.4
-# psycopg2-binary removed for debug
+psycopg2-binary
+
 
 # Force rebuild 1

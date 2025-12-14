@@ -11,12 +11,8 @@ import base64
 # ----------------- إعداد البوت وملفات -----------------
 import os
 
-try:
-    import psycopg2
-    from psycopg2.extras import RealDictCursor
-except ImportError:
-    print("⚠️ WARNING: psycopg2 not found. Database features will be DISABLED.")
-    psycopg2 = None
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 
 TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
