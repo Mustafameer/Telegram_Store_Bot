@@ -33,11 +33,11 @@ else:
     print(f"✅ DEBUG: Token Length: {len(TOKEN)}")
 
 # --- DEBUGGING BLOCK: PRINT ALL ENV VARS ---
-print("\n🔍 DEBUGGING ENVIRONMENT VARIABLES:")
-for key, value in os.environ.items():
-    if "TOKEN" in key or "TELEGRAM" in key:
-        print(f"   🔑 Found Key: '{key}' -> Value starts with: '{value[:5]}...'")
-print("---------------------------------------\n")
+# print("\n🔍 DEBUGGING ENVIRONMENT VARIABLES:")
+# for key, value in os.environ.items():
+#    if "TOKEN" in key or "TELEGRAM" in key:
+#        print(f"   🔑 Found Key: '{key}' -> Value starts with: '{value[:5]}...'")
+# print("---------------------------------------\n")
 bot = telebot.TeleBot(TOKEN)
 IS_POSTGRES = (os.environ.get('DATABASE_URL') is not None) and (psycopg2 is not None)
 
@@ -6411,7 +6411,7 @@ if __name__ == "__main__":
     else:
         print("❌ CRITICAL: No Token Found in Environment!")
 
-    # init_db() 
+    init_db() 
     try:
         print("🧹 Clearing Webhooks...")
         bot.remove_webhook()
