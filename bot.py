@@ -483,7 +483,7 @@ def set_credit_limit(customer_id, seller_id, max_amount, warning_percentage=0.8)
     cursor.execute("""
         INSERT OR REPLACE INTO CreditLimits 
         (CustomerID, SellerID, MaxCreditAmount, WarningThreshold, CurrentUsedAmount, IsActive)
-        VALUES (?, ?, ?, ?, ?, 1)
+        VALUES (?, ?, ?, ?, ?, TRUE)
     """, (customer_id, seller_id, max_amount, warning_percentage, current_used))
     
     conn.commit()
@@ -504,7 +504,7 @@ def get_credit_limit_info(customer_id, seller_id):
                END as Status,
                MaxCreditAmount - CurrentUsedAmount as Available
         FROM CreditLimits 
-        WHERE CustomerID=? AND SellerID=? AND IsActive=1
+        WHERE CustomerID=? AND SellerID=? AND IsActive IS TRUE
     """, (customer_id, seller_id))
     
     info = cursor.fetchone()
@@ -1262,7 +1262,7 @@ def get_unread_messages(seller_id):
         FROM Messages m
         JOIN Orders o ON m.OrderID = o.OrderID
         LEFT JOIN Users u ON o.BuyerID = u.TelegramID
-        WHERE m.SellerID = ? AND m.IsRead = 0
+        WHERE m.SellerID = ? AND m.IsRead IS FALSE
         ORDER BY m.CreatedAt DESC
     """, (seller_id,))
     messages = cursor.fetchall()
@@ -1272,7 +1272,7 @@ def get_unread_messages(seller_id):
 def mark_message_as_read(message_id):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("UPDATE Messages SET IsRead = 1 WHERE MessageID = ?", (message_id,))
+    cursor.execute("UPDATE Messages SET IsRead = TRUE WHERE MessageID = ?", (message_id,))
     conn.commit()
     conn.close()
 
@@ -5963,7 +5963,7 @@ def my_orders(message):
             'Rejected': '❌'
         }.get(status, '📝')
         
-        payment_status = "💵 مدفوع" if fully_paid == 1 else "💳 غير مدفوع"
+        payment_status = "💵 مدفوع" if fully_paid else "💳 غير مدفوع"
         
         text += f"{status_emoji} **الطلب #{order_id}**\n"
         text += f"🏪 المتجر: {store_name}\n"
@@ -6020,7 +6020,7 @@ def handle_view_recent_orders(call):
             'Rejected': '❌'
         }.get(status, '📝')
         
-        payment_status = "💵 مدفوع" if fully_paid == 1 else "💳 غير مدفوع"
+        payment_status = "💵 مدفوع" if fully_paid else "💳 غير مدفوع"
         
         text = f"{status_emoji} **الطلب #{order_id}**\n\n"
         text += f"🏪 المتجر: {store_name}\n"
