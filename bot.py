@@ -4335,9 +4335,9 @@ def handle_add_to_cart(call):
 
 # ====== إدارة السلة ======
 @bot.message_handler(func=lambda message: message.text == "سلة المشتريات 🛒")
-def view_cart(message):
+def view_cart(message, user_id=None):
     try:
-        telegram_id = message.from_user.id
+        telegram_id = user_id if user_id else message.from_user.id
         
         # ====== التعديل الجديد ======
         # التحقق إذا كان المستخدم زائراً (غير مسجل)
@@ -5193,7 +5193,7 @@ def handle_increase_cart(call):
         except:
             pass
         
-        view_cart(call.message)
+        view_cart(call.message, user_id=telegram_id)
     except Exception as e:
         bot.answer_callback_query(call.id, "حدث خطأ")
         # bot.send_message(call.message.chat.id, f"Error: {e}")
@@ -5233,7 +5233,7 @@ def handle_decrease_cart(call):
         except:
             pass
         
-        view_cart(call.message)
+        view_cart(call.message, user_id=telegram_id)
     except Exception as e:
         bot.answer_callback_query(call.id, "حدث خطأ")
         print(f"Error in decrease_cart: {e}")
@@ -5257,7 +5257,7 @@ def handle_remove_cart(call):
         except:
             pass
         
-        view_cart(call.message)
+        view_cart(call.message, user_id=telegram_id)
     except Exception as e:
         bot.answer_callback_query(call.id, "حدث خطأ")
         print(f"Error in remove_cart: {e}")
@@ -5317,7 +5317,7 @@ def process_set_cart_quantity(message):
     bot.send_message(message.chat.id, f"✅ تم تحديث الكمية إلى {new_quantity}")
     
     del user_states[telegram_id]
-    view_cart(message)
+    view_cart(message, user_id=telegram_id)
 
 # ====== نظام الرسائل ======
 @bot.message_handler(func=lambda message: "📩 الرسائل" in message.text and is_seller(message.from_user.id))
