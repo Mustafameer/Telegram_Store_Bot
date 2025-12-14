@@ -970,7 +970,7 @@ def get_cart_items_db(user_id):
         JOIN Sellers S ON P.SellerID = S.SellerID
         WHERE C.UserID = ?
         ORDER BY C.AddedAt DESC
-    """)
+    """, (user_id,))
     
     items = cursor.fetchall()
     conn.close()
