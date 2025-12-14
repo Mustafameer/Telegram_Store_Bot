@@ -21,6 +21,9 @@ except ImportError:
 
 
 TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
+if TOKEN:
+    TOKEN = TOKEN.strip()
+
 if not TOKEN:
     print("❌ FATAL ERROR: TELEGRAM_BOT_TOKEN environment variable is NOT set! Using default token.")
     TOKEN = "8562406465:AAHHaUMALVMjfgVKlAYNh8nziTwIeg5GDCs" # Fallback to default
