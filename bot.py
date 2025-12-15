@@ -6516,6 +6516,9 @@ if __name__ == "__main__":
         print("🧹 Clearing Webhooks...")
         bot.remove_webhook()
         
+    except Exception as e:
+        print(f"⚠️ Failed to remove webhook: {e}")
+
     print("📡 Starting Polling...")
     
     # Infinite loop to auto-restart on crashes/connection errors
