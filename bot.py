@@ -8,6 +8,9 @@ import uuid
 import traceback
 from datetime import datetime
 import base64
+# Reverting to direct DB functions defined in bot.py
+# from db_manager import get_seller_by_telegram, get_products, get_categories, get_product_by_id, get_category_by_id
+# from integration_models import Product, Category, Seller
 
 # ----------------- إعداد البوت وملفات -----------------
 import os
@@ -1129,6 +1132,18 @@ def add_to_cart_db(user_id, product_id, quantity=1, price=None):
     conn.close()
     return True
 
+def update_cart_quantity_db(user_id, product_id, new_quantity):
+    """Update the quantity of a product in the cart (Set, not Add)"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("UPDATE Carts SET Quantity=? WHERE UserID=? AND ProductID=?", 
+                  (new_quantity, user_id, product_id))
+    
+    conn.commit()
+    conn.close()
+    return True
+
 def get_cart_items_db(user_id):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -1640,6 +1655,49 @@ def send_product_with_image(chat_id, product, markup=None, seller_name=""):
         print(f"⚠️ خطأ في send_product_with_image: {e}")
         traceback.print_exc()
 
+# ====== دالة مساعدة لإنشاء أزرار الكمية ======
+def create_product_markup_with_qty(product_id, current_qty=1, is_admin_store=False):
+    markup = types.InlineKeyboardMarkup()
+    if not is_admin_store:
+        # Quantity Control Row
+        markup.row(
+            types.InlineKeyboardButton("➖", callback_data=f"qty_dec_{product_id}_{current_qty}"),
+            types.InlineKeyboardButton(f"{current_qty}", callback_data="noop"),
+            types.InlineKeyboardButton("➕", callback_data=f"qty_inc_{product_id}_{current_qty}")
+        )
+        # Add to Cart Button with Quantity
+        markup.add(types.InlineKeyboardButton(f"🛒 أضف {current_qty} للسلة", callback_data=f"addtocart_{product_id}_{current_qty}"))
+    return markup
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("qty_"))
+def handle_qty_update(call):
+    try:
+        parts = call.data.split("_")
+        action = parts[1] # inc or dec
+        product_id = int(parts[2])
+        current_qty = int(parts[3])
+        
+        new_qty = current_qty
+        if action == "inc":
+            new_qty += 1
+        elif action == "dec":
+            if current_qty > 1:
+                new_qty -= 1
+        
+        if new_qty != current_qty:
+            # Re-generate markup with new quantity
+            # We need to check if it's admin store, but usually this button only appears if not admin.
+            # However, for safety we can assume False or check product owner.
+            # For UI speed, we assume False here as these buttons are only added if !is_admin_store
+            markup = create_product_markup_with_qty(product_id, new_qty, is_admin_store=False)
+            
+            bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=markup)
+        
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        print(f"Error in handle_qty_update: {e}")
+        bot.answer_callback_query(call.id, "حدث خطأ")
+
 # ====== دالة لعرض عناصر السلة مع الصور ======
 def send_cart_item_with_image(chat_id, cart_item, markup=None):
     """إرسال عنصر في السلة مع صورته"""
@@ -1816,17 +1874,19 @@ def show_bot_admin_menu(message):
     unread_count = len(get_unread_messages(seller[0])) if seller else 0
     messages_badge = f" 📨({unread_count})" if unread_count > 0 else ""
     
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.row("👑 لوحة التحكم الإدارية")
-    markup.row("🗑️ حذف منتج", "✏️ تعديل منتج", "➕ إضافة منتج")
-    markup.row("🗑️ حذف قسم", "✏️ تعديل قسم", "➕ إضافة قسم")
-    markup.row(f"📩 الرسائل{messages_badge}", "📊 كشف حساب الزبائن")
-    markup.row("🏪 إدارة الزبائن الآجلين", "📁 الأقسام", "🏪 منتجاتي")
-    markup.row("🔗 رابط المتجر")
-    markup.row("📦 إرجاع المنتجات", "🛍️ وضع المشتري")
+    # Row 1: Seller Hubs
+    markup.row("🏪 منتجاتي", "📁 الأقسام")
+    # Row 2: Customer & Orders
+    markup.row("📊 كشف حساب الزبائن", "🏪 إدارة الزبائن الآجلين")
+    # Row 3: Utility
+    markup.row(f"📩 الرسائل{messages_badge}", "🔗 رابط المتجر")
+    # Row 4: Admin Controls
     markup.row("🗑️ حذف متجر", "➕ إضافة متجر", "📋 قائمة المتاجر")
     markup.row("👑 إدارة الحسابات", "📊 إحصائيات النظام")
-    markup.row("🏠 الرئيسية")
+    # Row 5: Other
+    markup.row("📦 إرجاع المنتجات", "🏠 الرئيسية", "🛍️ وضع المشتري")
     
     welcome_msg = f"👑🏪 **مرحباً بأدمن البوت وصاحب المتجر!**\n\n"
     welcome_msg += f"🏪 متجرك: {store_name}\n"
@@ -1880,13 +1940,14 @@ def show_seller_menu(message):
     messages_badge = f" 📨({unread_count})" if unread_count > 0 else ""
     
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row("🗑️ حذف منتج", "✏️ تعديل منتج", "➕ إضافة منتج")
-    markup.row("🗑️ حذف قسم", "✏️ تعديل قسم", "➕ إضافة قسم")
-    markup.row(f"📩 الرسائل{messages_badge}", "📊 كشف حساب الزبائن")
-    markup.row("🏪 إدارة الزبائن الآجلين", "📁 الأقسام", "🏪 منتجاتي")
-    markup.row("🔗 رابط المتجر")
-    markup.row("📦 إرجاع المنتجات", "🛍️ وضع المشتري")
-    markup.row("🏠 الرئيسية")
+    # Row 1: Main Management Hubs
+    markup.row("🏪 منتجاتي", "📁 الأقسام")
+    # Row 2: Customer & Orders
+    markup.row("📊 كشف حساب الزبائن", "🏪 إدارة الزبائن الآجلين")
+    # Row 3: Utility
+    markup.row(f"📩 الرسائل{messages_badge}", "🔗 رابط المتجر")
+    # Row 4: Other
+    markup.row("🏠 الرئيسية", "🛍️ وضع المشتري")
     
     welcome_msg = f"🏪 **مرحباً بصاحب المتجر!**\n"
     welcome_msg += f"🏪 متجرك: {store_name}"
@@ -1919,7 +1980,7 @@ def show_buyer_main_menu(message):
     
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row("تصفح المتاجر 🛍️", "سلة المشتريات 🛒")
-    markup.row("📋 طلباتي", "📦 مرتجعاتي")
+    # markup.row("📋 طلباتي", "📦 مرتجعاتي") - Removed
     markup.row("💰 كشف حسابي الآجل", "👤 تعديل بياناتي")
     # إضافة زر إنشاء متجر جديد
     markup.row("🏪 إنشاء متجر جديد")
@@ -1994,9 +2055,12 @@ def handle_create_user_store(message):
         "step": "create_user_store_name"
     }
     
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row("🏠 الرئيسية")
+    
     bot.send_message(message.chat.id,
                     "🏪 **إنشاء متجر جديد**\n\n"
-                    "يرجى إدخال اسم المتجر الذي ترغب بإنشائه:")
+                    "يرجى إدخال اسم المتجر الذي ترغب بإنشائه:", reply_markup=markup)
 
 @bot.message_handler(func=lambda message: message.from_user.id in user_states and 
                      user_states[message.from_user.id]["step"] == "create_user_store_name")
@@ -2262,13 +2326,14 @@ def show_seller_menu_for_new_seller(telegram_id, store_name):
         messages_badge = f" 📨({unread_count})" if unread_count > 0 else ""
         
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.row("➕ إضافة منتج", "✏️ تعديل منتج")
-        markup.row("➕ إضافة قسم", "✏️ تعديل قسم")
-        markup.row(f"📩 الرسائل{messages_badge}", "📊 كشف حساب الزبائن")
-        markup.row("🏪 إدارة الزبائن الآجلين", "📁 الأقسام", "🏪 منتجاتي")
-        markup.row("📊 لوحة التحكم", "🔗 رابط المتجر")
-        markup.row("📦 إرجاع المنتجات", "🛍️ وضع المشتري")
-        markup.row("🏠 الرئيسية")
+        # Row 1: Main Management Hubs
+        markup.row("🏪 منتجاتي", "📁 الأقسام")
+        # Row 2: Customer & Orders
+        markup.row("📊 كشف حساب الزبائن", "🏪 إدارة الزبائن الآجلين")
+        # Row 3: Utility
+        markup.row(f"📩 الرسائل{messages_badge}", "🔗 رابط المتجر")
+        # Row 4: Other
+        markup.row("🏠 الرئيسية", "🛍️ وضع المشتري")
         
         welcome_msg = f"🏪 **مرحباً بصاحب المتجر!**\n"
         welcome_msg += f"🏪 متجرك: {store_name}"
@@ -2442,10 +2507,18 @@ def admin_main_menu(message):
 @bot.message_handler(func=lambda message: message.text == "➕ إضافة قسم" and is_seller(message.from_user.id))
 def add_category_step1(message):
     telegram_id = message.from_user.id
+    
+    # safeguard: IF NOT MOCK (Real user click on old button), Redirect to new menu
+    if not getattr(message, 'is_mock', False):
+        bot.send_message(message.chat.id, "🔄 تحديث القائمة...")
+        show_seller_menu(message)
+        return
+
     seller = get_seller_by_telegram(telegram_id)
     
     if not seller:
-        bot.send_message(message.chat.id, "⛔ أنت لست بائعاً مسجلاً!")
+        # Debugging "Not a seller" issue
+        bot.send_message(message.chat.id, f"⛔ أنت لست بائعاً مسجلاً! (Debug ID: {telegram_id})")
         return
     
     user_states[telegram_id] = {
@@ -2453,7 +2526,10 @@ def add_category_step1(message):
         "seller_id": seller[0]
     }
     
-    bot.send_message(message.chat.id, "📁 **إضافة قسم جديد**\n\nيرجى إدخال اسم القسم:")
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row("🏠 الرئيسية")
+    
+    bot.send_message(message.chat.id, "📁 **إضافة قسم جديد**\n\nيرجى إدخال اسم القسم:", reply_markup=markup)
 
 @bot.message_handler(func=lambda message: message.from_user.id in user_states and 
                      user_states[message.from_user.id]["step"] == "add_category")
@@ -2490,6 +2566,13 @@ def add_category_step2(message):
 @bot.message_handler(func=lambda message: message.text == "✏️ تعديل قسم" and is_seller(message.from_user.id))
 def edit_category_step1(message):
     telegram_id = message.from_user.id
+    
+    # safeguard: IF NOT MOCK (Real user click on old button), Redirect to new menu
+    if not getattr(message, 'is_mock', False):
+        bot.send_message(message.chat.id, "🔄 تحديث القائمة...")
+        show_seller_menu(message)
+        return
+
     seller = get_seller_by_telegram(telegram_id)
     
     if not seller:
@@ -2501,6 +2584,11 @@ def edit_category_step1(message):
     if not categories:
         bot.send_message(message.chat.id, "📭 لا توجد أقسام لتعديلها.\n\nيمكنك إضافة قسم جديد أولاً.")
         return
+    
+    # Hide menu first
+    menu_markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    menu_markup.row("🏠 الرئيسية")
+    bot.send_message(message.chat.id, "🔄 **جاري التحميل...**", reply_markup=menu_markup)
     
     markup = types.InlineKeyboardMarkup(row_width=2)
     for category_id, category_name in categories:
@@ -2529,14 +2617,84 @@ def handle_edit_category(call):
             "category_id": category_id
         }
         
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.row("🏠 الرئيسية")
+        
         bot.send_message(call.message.chat.id,
                         f"📁 **تعديل قسم**\n\n"
                         f"القسم الحالي: {category[2]}\n\n"
-                        f"يرجى إدخال الاسم الجديد للقسم:")
+                        f"يرجى إدخال الاسم الجديد للقسم:", reply_markup=markup)
         
         bot.answer_callback_query(call.id)
     except Exception as e:
         bot.answer_callback_query(call.id, f"حدث خطأ: {e}")
+
+# دالة جديدة لعرض قائمة الأقسام للتعديل (بدلاً من تعديل قسم محدد مباشرة)
+def view_edit_category_menu(message):
+    telegram_id = message.from_user.id
+    seller = get_seller_by_telegram(telegram_id)
+    if not seller:
+        bot.send_message(message.chat.id, "⛔ أنت لست بائعاً مسجلاً!")
+        return
+
+    categories = get_categories(seller[0])
+    if not categories:
+        bot.send_message(message.chat.id, "📭 لا توجد أقسام لتعديلها.")
+        return
+
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for cat in categories:
+        # Revert to Tuple Access
+        cid, name = cat[0], cat[1]
+        markup.add(types.InlineKeyboardButton(f"📁 {name}", callback_data=f"view_cat_{cid}"))
+    
+    markup.add(types.InlineKeyboardButton("➕ إضافة قسم جديد", callback_data="dashboard_add_cat"))
+    markup.add(types.InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="back_to_menu"))
+    
+    bot.send_message(message.chat.id, "📁 **أقسام متجرك**\n\nاضغط على القسم للتحكم به.", reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("view_cat_"))
+def handle_view_category_detail(call):
+    try:
+        category_id = int(call.data.split("_")[2])
+        category = get_category_by_id(category_id)
+        
+        if not category:
+            bot.answer_callback_query(call.id, "القسم غير موجود")
+            return
+            
+        cid = category[0]
+        name = category[2]
+        
+        text = f"📁 **{name}**\n\n"
+        text += "يمكنك التحكم في هذا القسم من هنا."
+        
+        markup = types.InlineKeyboardMarkup(row_width=3)
+        markup.add(
+            types.InlineKeyboardButton("➕ إضافة", callback_data="dashboard_add_cat"),
+            types.InlineKeyboardButton("✏️ تعديل", callback_data=f"edit_cat_{cid}"),
+            types.InlineKeyboardButton("🗑️ حذف", callback_data=f"delete_cat_{cid}") # Need to ensure delete_cat handler exists
+        )
+        markup.add(types.InlineKeyboardButton("🔙 رجوع للأقسام", callback_data="back_to_cat_list"))
+        
+        bot.send_message(call.message.chat.id, text, parse_mode='Markdown', reply_markup=markup)
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+         bot.answer_callback_query(call.id, f"Error: {e}")
+
+@bot.callback_query_handler(func=lambda call: call.data == "back_to_cat_list")
+def back_to_cat_list(call):
+    call.message.from_user.id = call.from_user.id
+    view_categories(call.message)
+    bot.answer_callback_query(call.id)
+    
+    markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_menu"))
+    
+    markup_hidden = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup_hidden.row("🏠 الرئيسية")
+    bot.send_message(message.chat.id, "🔄 **جاري التحميل...**", reply_markup=markup_hidden)
+    
+    bot.send_message(message.chat.id, "📁 **تعديل قسم**\n\nاختر القسم الذي تريد تعديله:", reply_markup=markup)
 
 @bot.message_handler(func=lambda message: message.from_user.id in user_states and 
                      user_states[message.from_user.id]["step"] == "edit_category_name")
@@ -2593,21 +2751,31 @@ def view_categories(message):
     
     categories = get_categories(seller[0])
     
-    if not categories:
-        bot.send_message(message.chat.id, "📭 لا توجد أقسام بعد.\n\nيمكنك إضافة قسم جديد من القائمة.")
-        return
+    # Hide menu first
+    menu_markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    menu_markup.row("🏠 الرئيسية")
+    bot.send_message(message.chat.id, "🔄 **جاري التحميل...**", reply_markup=menu_markup)
     
-    text = "📁 **أقسام متجرك:**\n\n"
+    text = "📁 **إدارة الأقسام**\n\n"
+    text += "هنا يمكنك إدارة أقسام متجرك (إضافة، تعديل، حذف، وعرض).\n\n"
+    text += "**الأقسام الحالية:**\n"
     
-    for i, category in enumerate(categories, 1):
-        category_id, category_name = category
-        text += f"{i}. **{category_name}**\n"
-        text += f"   🆔 معرف القسم: {category_id}\n"
-        text += "────\n\n"
+    if categories:
+        for i, category in enumerate(categories, 1):
+            category_id, category_name = category
+            text += f"{i}. **{category_name}**\n"
+            text += f"   🆔 معرف القسم: {category_id}\n"
+            text += "────\n"
+    else:
+        text += "📭 لا توجد أقسام حالياً.\n"
     
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("➕ إضافة قسم جديد", callback_data="add_new_category"))
-    markup.add(types.InlineKeyboardButton("✏️ تعديل قسم", callback_data="go_to_edit_category"))
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("➕ إضافة قسم", callback_data="dashboard_add_cat"),
+        types.InlineKeyboardButton("✏️ تعديل قسم", callback_data="dashboard_edit_cat"),
+        types.InlineKeyboardButton("🗑️ حذف قسم", callback_data="delete_category_menu"),
+        types.InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="back_to_menu")
+    )
     
     bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode='Markdown')
 
@@ -2624,57 +2792,13 @@ def handle_go_to_edit_category(call):
 # ====== معالجة أزرار الحذف النصية (القائمة الرئيسية) ======
 @bot.message_handler(func=lambda message: message.text == "🗑️ حذف منتج" and is_seller(message.from_user.id))
 def handle_delete_product_text(message):
-    telegram_id = message.from_user.id
-    seller = get_seller_by_telegram(telegram_id)
-    
-    if not seller:
-        bot.send_message(message.chat.id, "⛔ أنت لست بائعاً مسجلاً!")
-        return
-        
-    products = get_products(seller_id=seller[0])
-    
-    if not products:
-        bot.send_message(message.chat.id, "📭 لا توجد منتجات لحذفها.")
-        return
-        
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    for product in products:
-        pid, name = product[0], product[1]
-        markup.add(types.InlineKeyboardButton(f"🗑️ {name}", callback_data=f"confirm_delete_prod_{pid}"))
-    
-    markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_menu"))
-    
-    bot.send_message(message.chat.id, 
-                    "🗑️ **حذف منتج**\n\nاضغط على المنتج لحذفه:",
-                    reply_markup=markup,
-                    parse_mode='Markdown')
+    bot.send_message(message.chat.id, "🔄 تحديث القائمة...")
+    show_seller_menu(message)
 
 @bot.message_handler(func=lambda message: message.text == "🗑️ حذف قسم" and is_seller(message.from_user.id))
 def handle_delete_category_text(message):
-    telegram_id = message.from_user.id
-    seller = get_seller_by_telegram(telegram_id)
-    
-    if not seller:
-        bot.send_message(message.chat.id, "⛔ أنت لست بائعاً مسجلاً!")
-        return
-        
-    categories = get_categories(seller[0])
-    
-    if not categories:
-        bot.send_message(message.chat.id, "📭 لا توجد أقسام لحذفها.")
-        return
-        
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    for cat in categories:
-        cid, name = cat[0], cat[1]
-        markup.add(types.InlineKeyboardButton(f"🗑️ {name}", callback_data=f"try_delete_cat_{cid}"))
-    
-    markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_menu"))
-    
-    bot.send_message(message.chat.id, 
-                    "🗑️ **حذف قسم**\n\nاضغط على القسم لحذفه:",
-                    reply_markup=markup,
-                    parse_mode='Markdown')
+    bot.send_message(message.chat.id, "🔄 تحديث القائمة...")
+    show_seller_menu(message)
 
 # ====== حذف متجر (للأدمن) ======
 @bot.message_handler(func=lambda message: message.text == "🗑️ حذف متجر" and is_bot_admin(message.from_user.id))
@@ -2893,6 +3017,13 @@ def handle_do_delete_category(call):
 @bot.message_handler(func=lambda message: message.text == "➕ إضافة منتج" and is_seller(message.from_user.id))
 def add_product_step1(message):
     telegram_id = message.from_user.id
+    
+    # safeguard: IF NOT MOCK (Real user click on old button), Redirect to new menu
+    if not getattr(message, 'is_mock', False):
+        bot.send_message(message.chat.id, "🔄 تحديث القائمة...")
+        show_seller_menu(message)
+        return
+
     seller = get_seller_by_telegram(telegram_id)
     
     if not seller:
@@ -2904,6 +3035,11 @@ def add_product_step1(message):
     if not categories:
         bot.send_message(message.chat.id, "📭 لا توجد أقسام بعد.\n\nيرجى إضافة قسم أولاً قبل إضافة المنتجات.")
         return
+    
+    # Hide menu first
+    menu_markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    menu_markup.row("🏠 الرئيسية")
+    bot.send_message(message.chat.id, "🔄 **جاري التحميل...**", reply_markup=menu_markup)
     
     markup = types.InlineKeyboardMarkup(row_width=2)
     for category_id, category_name in categories:
@@ -2933,9 +3069,12 @@ def handle_select_category_for_product(call):
             "seller_id": seller[0]
         }
         
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.row("🏠 الرئيسية")
+        
         bot.send_message(call.message.chat.id, 
                         "🛒 **إضافة منتج جديد**\n\n"
-                        "الآن، يرجى إدخال اسم المنتج:")
+                        "الآن، يرجى إدخال اسم المنتج:", reply_markup=markup)
         
         bot.answer_callback_query(call.id)
     except Exception as e:
@@ -2979,6 +3118,11 @@ def add_product_step3(message):
     telegram_id = message.from_user.id
     state = user_states[telegram_id]
     
+    if message.text == "🏠 الرئيسية":
+        del user_states[telegram_id]
+        handle_main_menu(message)
+        return
+    
     description = message.text.strip()
     if description.lower() == "تخطي":
         description = ""
@@ -2995,6 +3139,11 @@ def add_product_step3(message):
 def add_product_step4(message):
     telegram_id = message.from_user.id
     state = user_states[telegram_id]
+    
+    if message.text == "🏠 الرئيسية":
+        del user_states[telegram_id]
+        handle_main_menu(message)
+        return
     
     try:
         price = float(message.text)
@@ -3018,6 +3167,11 @@ def add_product_step4(message):
 def add_product_step4b(message):
     telegram_id = message.from_user.id
     state = user_states[telegram_id]
+    
+    if message.text == "🏠 الرئيسية":
+        del user_states[telegram_id]
+        handle_main_menu(message)
+        return
     
     wholesale_price_text = message.text.strip()
     
@@ -3073,6 +3227,11 @@ def add_product_step5(message):
 def add_product_step6(message):
     telegram_id = message.from_user.id
     state = user_states[telegram_id]
+    
+    if message.text == "🏠 الرئيسية":
+        del user_states[telegram_id]
+        handle_main_menu(message)
+        return
     
     if message.text == "📸 إرسال صورة":
         user_states[telegram_id]["step"] = "waiting_for_product_image"
@@ -3197,6 +3356,13 @@ def finish_adding_product(message, image_path=""):
 @bot.message_handler(func=lambda message: message.text == "✏️ تعديل منتج" and is_seller(message.from_user.id))
 def edit_product_step1(message):
     telegram_id = message.from_user.id
+    
+    # safeguard: IF NOT MOCK (Real user click on old button), Redirect to new menu
+    if not getattr(message, 'is_mock', False):
+        bot.send_message(message.chat.id, "🔄 تحديث القائمة...")
+        show_seller_menu(message)
+        return
+
     seller = get_seller_by_telegram(telegram_id)
     
     if not seller:
@@ -3209,9 +3375,15 @@ def edit_product_step1(message):
         bot.send_message(message.chat.id, "📭 لا توجد منتجات لتعديلها.\n\nيمكنك إضافة منتجات أولاً.")
         return
     
+    # Hide menu first
+    menu_markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    menu_markup.row("🏠 الرئيسية")
+    bot.send_message(message.chat.id, "🔄 **جاري التحميل...**", reply_markup=menu_markup)
+    
     markup = types.InlineKeyboardMarkup(row_width=2)
     for product in products[:10]:
-        pid, name, desc, price, wholesale_price, qty, img_path = product
+        pid = product[0]
+        name = product[1]
         markup.add(types.InlineKeyboardButton(f"{name[:15]}...", callback_data=f"edit_product_{pid}"))
     
     markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_menu"))
@@ -3429,6 +3601,11 @@ def process_edit_product_description(message):
     telegram_id = message.from_user.id
     state = user_states[telegram_id]
     
+    if message.text == "🏠 الرئيسية":
+        del user_states[telegram_id]
+        handle_main_menu(message)
+        return
+    
     new_description = message.text.strip()
     
     if new_description.lower() == "حذف":
@@ -3453,6 +3630,11 @@ def process_edit_product_price(message):
     telegram_id = message.from_user.id
     state = user_states[telegram_id]
     
+    if message.text == "🏠 الرئيسية":
+        del user_states[telegram_id]
+        handle_main_menu(message)
+        return
+    
     try:
         new_price = float(message.text)
         if new_price <= 0:
@@ -3476,6 +3658,11 @@ def process_edit_product_price(message):
 def process_edit_product_wholesale(message):
     telegram_id = message.from_user.id
     state = user_states[telegram_id]
+    
+    if message.text == "🏠 الرئيسية":
+        del user_states[telegram_id]
+        handle_main_menu(message)
+        return
     
     wholesale_text = message.text.strip()
     
@@ -3510,6 +3697,11 @@ def process_edit_product_quantity(message):
     telegram_id = message.from_user.id
     state = user_states[telegram_id]
     
+    if message.text == "🏠 الرئيسية":
+        del user_states[telegram_id]
+        handle_main_menu(message)
+        return
+    
     try:
         new_quantity = int(message.text)
         if new_quantity < 0:
@@ -3533,6 +3725,11 @@ def process_edit_product_quantity(message):
 def process_edit_product_image(message):
     telegram_id = message.from_user.id
     state = user_states[telegram_id]
+    
+    if message.text == "🏠 الرئيسية":
+        del user_states[telegram_id]
+        handle_main_menu(message)
+        return
     
     if message.text == "📸 إرسال صورة جديدة":
         user_states[telegram_id]["step"] = "waiting_for_new_product_image"
@@ -3579,6 +3776,13 @@ def handle_new_product_image_photo(message):
                      user_states[message.from_user.id]["step"] == "waiting_for_new_product_image" and 
                      message.content_type == 'text')
 def handle_new_product_image_text(message):
+    telegram_id = message.from_user.id
+    if message.text == "🏠 الرئيسية":
+        if telegram_id in user_states:
+            del user_states[telegram_id]
+        handle_main_menu(message)
+        return
+
     if message.text.lower() in ['إلغاء', 'الغاء', 'cancel']:
         bot.send_message(message.chat.id, "❌ **تم إلغاء تغيير الصورة**")
         telegram_id = message.from_user.id
@@ -3600,7 +3804,12 @@ def view_my_products(message):
     categories = get_categories(seller[0])
     
     if not categories:
-        bot.send_message(message.chat.id, "📭 لا توجد أقسام بعد، وبالتالي لا توجد منتجات.\n\nيمكنك إضافة قسم ثم إضافة منتجات.")
+        bot.send_message(message.chat.id, 
+                        "📭 **لا توجد أقسام بعد**\n\nيجب إنشاء قسم واحد على الأقل قبل إضافة المنتجات.",
+                        reply_markup=types.InlineKeyboardMarkup().add(
+                            types.InlineKeyboardButton("➕ إضافة قسم", callback_data="dashboard_add_cat"),
+                            types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_menu")
+                        ))
         return
     
     all_products = []
@@ -3610,32 +3819,139 @@ def view_my_products(message):
         if products:
             all_products.append((category_name, products))
     
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    
     if not all_products:
-        bot.send_message(message.chat.id, "📭 لا توجد منتجات في متجرك بعد.\n\nيمكنك إضافة منتجات من القائمة.")
-        return
-    
-    text = f"🏪 **منتجات متجرك**\n\n"
-    
-    for category_name, products in all_products:
-        text += f"📁 **{category_name}:**\n"
-        
-        for product in products:
-            pid, name, desc, price, wholesale_price, qty, img_path = product
-            text += f"🛒 **{name}**\n"
-            text += f"   🆔 معرف المنتج: {pid}\n"
-            text += f"   💰 السعر: {price} IQD\n"
-            if wholesale_price:
-                text += f"   💰 سعر الجملة: {wholesale_price} IQD\n"
-            text += f"   📦 الكمية: {qty}\n"
+        text = "📭 **لا توجد منتجات حالياً**\n\nيمكنك إضافة منتجات جديدة باستخدام الأزرار أدناه."
+    else:
+        text = "🏪 **قائمة منتجاتك**\n\nاضغط على المنتج لعرض التفاصيل والتحكم به:\n"
+        for category_name, products in all_products:
+            # Optional: Add category header
+            # markup.add(types.InlineKeyboardButton(f"--- {category_name} ---", callback_data="ignore"))
             
-            if desc:
-                text += f"   📝 الوصف: {desc[:50]}...\n" if len(desc) > 50 else f"   📝 الوصف: {desc}\n"
-            
-            text += "   ────\n"
-        
-        text += "\n"
+            for product in products:
+                # Product tuple: (ProductID, Name, Description, Price, ...)
+                pid = product[0]
+                name = product[1]
+                price = product[3]
+                markup.add(types.InlineKeyboardButton(f"📦 {name} - {price}", callback_data=f"view_prod_{pid}"))
     
-    bot.send_message(message.chat.id, text, parse_mode='Markdown')
+    # Add Control Buttons (Always Visible)
+    markup.row(
+        types.InlineKeyboardButton("➕ إضافة منتج", callback_data="dashboard_add_prod"),
+        types.InlineKeyboardButton("✏️ تعديل", callback_data="dashboard_edit_prod"),
+        types.InlineKeyboardButton("🗑️ حذف", callback_data="delete_product_menu")
+    )
+    markup.add(types.InlineKeyboardButton("🔙 رجوع للوحة التحكم", callback_data="back_to_menu"))
+    
+    # Hide menu first (ensure we are in a clean state)
+    menu_markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    menu_markup.row("🏠 الرئيسية")
+    bot.send_message(message.chat.id, "🔄 **جاري الحصول على المنتجات...**", reply_markup=menu_markup)
+    
+    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("view_prod_"))
+def handle_view_product_detail(call):
+    try:
+        product_id = int(call.data.split("_")[2])
+        # Direct DB Call (Tuple)
+        product = get_product_by_id(product_id)
+        
+        if not product:
+            bot.answer_callback_query(call.id, "المنتج غير موجود")
+            return
+            
+        # Unpack Tuple
+        # Assuming: pid, name, desc, price, wholesale, qty, img...
+        # Need to verify tuple structure from a known select query matching get_product_by_id logic
+        # In bot.py, get_product_by_id select * from Products.
+        # Structure: ProductID(0), Name(1), Description(2), Price(3), WholesalePrice(4), Quantity(5), ImagePath(6), SellerID(7), CategoryID(8)
+        
+        pid = product[0]
+        name = product[1]
+        desc = product[2]
+        price = product[3]
+        qty = product[5]
+        img_path = product[6]
+        
+        text = f"📦 **{name}**\n\n"
+        text += f"💰 السعر: {price} IQD\n"
+        text += f"📦 الكمية: {qty}\n"
+        if desc: text += f"📝 الوصف: {desc}\n"
+        
+        markup = types.InlineKeyboardMarkup(row_width=3)
+        # Action Buttons
+        markup.add(
+            types.InlineKeyboardButton("➕ إضافة جديد", callback_data="dashboard_add_prod"),
+            types.InlineKeyboardButton("✏️ تعديل", callback_data=f"edit_product_{pid}"),
+            types.InlineKeyboardButton("🗑️ حذف", callback_data=f"delete_product_{pid}")
+        )
+        markup.add(types.InlineKeyboardButton("🔙 رجوع للقائمة", callback_data="back_to_prod_list"))
+
+        if img_path and os.path.exists(img_path):
+            with open(img_path, 'rb') as photo:
+                bot.send_photo(call.message.chat.id, photo, caption=text, parse_mode='Markdown', reply_markup=markup)
+        else:
+            bot.send_message(call.message.chat.id, text, parse_mode='Markdown', reply_markup=markup)
+            
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        print(f"Error in view_prod: {e}")
+        bot.answer_callback_query(call.id, "حدث خطأ أثناء عرض المنتج")
+
+@bot.callback_query_handler(func=lambda call: call.data == "back_to_prod_list")
+def back_to_product_list(call):
+    # Call view_my_products but passing the message correctly
+    call.message.from_user.id = call.from_user.id
+    view_my_products(call.message)
+    bot.answer_callback_query(call.id)
+
+# ====== ربط أزرار لوحة التحكم بالوظائف الموجودة ======
+# ====== ربط أزرار لوحة التحكم بالوظائف الموجودة ======
+class MockMessage:
+    def __init__(self, chat, from_user, text):
+        self.chat = chat
+        self.from_user = from_user
+        self.text = text
+        self.content_type = 'text'
+        self.is_mock = True
+
+@bot.callback_query_handler(func=lambda call: call.data == "dashboard_add_prod")
+def bridge_add_product(call):
+    # استخدام MockMessage لضمان تمرير كائن المستخدم الصحيح (الذي ضغط الزر)
+    # بدلاً من كائن البوت الموجود في call.message original
+    mock_msg = MockMessage(call.message.chat, call.from_user, "➕ إضافة منتج")
+    add_product_step1(mock_msg)
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data == "dashboard_edit_prod")
+def bridge_edit_product(call):
+    mock_msg = MockMessage(call.message.chat, call.from_user, "✏️ تعديل منتج")
+    edit_product_step1(mock_msg)
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data == "dashboard_del_prod")
+def bridge_delete_product(call):
+    # دالة الحذف تستخدم call مباشرة، لذا يجب أن تعمل إذا كان الـ id صحيحاً
+    # سنتأكد من تمرير الـ call كما هو
+    handle_delete_product_menu(call)
+
+@bot.callback_query_handler(func=lambda call: call.data == "dashboard_add_cat")
+def bridge_add_category(call):
+    # Debug: Print ID to verify
+    # bot.send_message(call.message.chat.id, f"Debug ID: {call.from_user.id}")
+    mock_msg = MockMessage(call.message.chat, call.from_user, "➕ إضافة قسم")
+    add_category_step1(mock_msg)
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data == "dashboard_edit_cat")
+def bridge_edit_category(call):
+    # Fix: Call the list menu, not the specific handler
+    mock_msg = MockMessage(call.message.chat, call.from_user, "✏️ تعديل قسم")
+    view_edit_category_menu(mock_msg)
+    bot.answer_callback_query(call.id)
+
 
 # ====== زر نسخ رابط المتجر ======
 @bot.message_handler(func=lambda message: message.text == "🔗 رابط المتجر" and (is_seller(message.from_user.id) or is_bot_admin(message.from_user.id)))
@@ -3796,6 +4112,11 @@ def process_credit_customer_name(message):
     telegram_id = message.from_user.id
     state = user_states[telegram_id]
     
+    if message.text == "🏠 الرئيسية":
+        del user_states[telegram_id]
+        handle_main_menu(message)
+        return
+    
     full_name = message.text.strip()
     
     if not full_name:
@@ -3924,6 +4245,11 @@ def process_credit_limit_amount(message):
     telegram_id = message.from_user.id
     state = user_states[telegram_id]
     
+    if message.text == "🏠 الرئيسية":
+        del user_states[telegram_id]
+        handle_main_menu(message)
+        return
+    
     amount_text = message.text.strip().lower()
     
     if amount_text == "تعطيل":
@@ -3959,6 +4285,11 @@ def process_credit_limit_amount(message):
 def process_warning_threshold(message):
     telegram_id = message.from_user.id
     state = user_states[telegram_id]
+    
+    if message.text == "🏠 الرئيسية":
+        del user_states[telegram_id]
+        handle_main_menu(message)
+        return
     
     try:
         warning_percentage = float(message.text)
@@ -4103,6 +4434,11 @@ def process_payment_amount(message):
     telegram_id = message.from_user.id
     state = user_states[telegram_id]
     
+    if message.text == "🏠 الرئيسية":
+        del user_states[telegram_id]
+        handle_main_menu(message)
+        return
+    
     try:
         amount = float(message.text)
         if amount <= 0:
@@ -4156,6 +4492,11 @@ def process_payment_amount(message):
 def confirm_payment(message):
     telegram_id = message.from_user.id
     state = user_states[telegram_id]
+    
+    if message.text == "🏠 الرئيسية":
+        del user_states[telegram_id]
+        handle_main_menu(message)
+        return
     
     if message.text.lower() not in ['نعم', 'yes']:
         bot.send_message(message.chat.id, "❌ تم إلغاء تسجيل الدفعة.")
@@ -4752,7 +5093,7 @@ def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id):
                 markup = types.InlineKeyboardMarkup()
                 # Do not allow adding admin store products to cart
                 if not is_admin_store:
-                    markup.add(types.InlineKeyboardButton("🛒 أضف إلى السلة", callback_data=f"addtocart_{pid}"))
+                    markup = create_product_markup_with_qty(pid, 1)
 
                 send_product_with_image(chat_id, product, markup, store_name)
     else:
@@ -4792,14 +5133,30 @@ def browse_stores(message):
         
         markup = types.InlineKeyboardMarkup(row_width=1)
         for seller in sellers:
-            telegram_id, username, store_name = seller
-            label = f"🏪 {store_name} - {format_seller_mention(username, telegram_id)}"
-            markup.add(types.InlineKeyboardButton(
-                label, 
-                callback_data=f"viewstore_{telegram_id}"
-            ))
+            try:
+                telegram_id, username, store_name = seller
+                
+                # Sanitize store name
+                if not store_name or not store_name.strip():
+                    store_name = "متجر بدون اسم"
+                
+                # Replace replacement character if present
+                store_name = store_name.replace('\ufffd', '?')
+                
+                label = f"🏪 {store_name} - {format_seller_mention(username, telegram_id)}"
+                markup.add(types.InlineKeyboardButton(
+                    label, 
+                    callback_data=f"viewstore_{telegram_id}"
+                ))
+            except Exception as e:
+                print(f"Skipping bad store: {e}")
+                continue
         
-        bot.send_message(message.chat.id, "🛍️ **المتاجر المتاحة:**", reply_markup=markup)
+        try:
+            bot.send_message(message.chat.id, "🛍️ **المتاجر المتاحة:**", reply_markup=markup)
+        except Exception as e:
+            print(f"Error sending stores list: {e}")
+            bot.send_message(message.chat.id, "حدث خطأ في عرض قائمة المتاجر.")
     else:
         # عرض المتاجر للمستخدمين المسجلين
         conn = get_db_connection()
@@ -4865,7 +5222,7 @@ def handle_view_category(call):
             if qty > 0:
                 markup = types.InlineKeyboardMarkup()
                 if not is_admin_store:
-                    markup.add(types.InlineKeyboardButton("🛒 أضف إلى السلة", callback_data=f"addtocart_{pid}"))
+                   markup = create_product_markup_with_qty(pid, 1)
 
                 send_product_with_image(call.message.chat.id, product, markup, seller_name)
         
@@ -4877,7 +5234,17 @@ def handle_view_category(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("addtocart_"))
 def handle_add_to_cart(call):
     try:
-        product_id = int(call.data.split("_")[1])
+        parts = call.data.split("_")
+        product_id = int(parts[1])
+        
+        # New: Parse quantity if present, default to 1
+        quantity = 1
+        if len(parts) > 2:
+            try:
+                quantity = int(parts[2])
+            except:
+                pass
+        
         user_id = call.from_user.id
         
         # ====== التعديل: إزالة شرط التحقق من نوع المستخدم ======
@@ -4912,14 +5279,14 @@ def handle_add_to_cart(call):
         
         price = get_product_price_for_customer(product_id, seller_id, phone, full_name)
         
-        add_to_cart_db(user_id, product_id, 1, price)
+        add_to_cart_db(user_id, product_id, quantity, price)
         
         product_name = product[3]
-        bot.answer_callback_query(call.id, f"✅ تمت إضافة {product_name} إلى السلة")
+        bot.answer_callback_query(call.id, f"✅ تم إضافة {quantity}x {product_name} إلى السلة")
         
     except Exception as e:
         print(f"Error in handle_add_to_cart: {e}")
-        bot.answer_callback_query(call.id, "حدث خطأ في إضافة المنتج للسلة")
+        bot.answer_callback_query(call.id, f"خطأ: {str(e)[:50]}")
 
 # ====== إدارة السلة ======
 @bot.message_handler(func=lambda message: message.text == "سلة المشتريات 🛒")
@@ -4944,53 +5311,102 @@ def view_cart(message, user_id=None):
             bot.send_message(message.chat.id, "🛒 **سلة المشتريات**\n\nالسلة فارغة حالياً.")
             return
         
+        # Build Consolidated Cart View
+        markup = types.InlineKeyboardMarkup(row_width=4)
+        cart_text = "🛒 **سلة المشتريات**\n\n"
+        
         total = 0
-        items_by_seller = {}
+        idx = 1
+        
+        # Group by seller for display structure (optional, but good for organization)
+        # For the consolidated list, we can just list them sequentially but maybe group headers if needed.
+        # Let's simple list them as requested: Image(No) Name Price Qty Total Controls
         
         for item in cart_items:
             product_id, quantity, price, name, desc, img_path, available_qty, seller_id, seller_name = item
             item_total = price * quantity
             total += item_total
             
-            if seller_id not in items_by_seller:
-                items_by_seller[seller_id] = {
-                    'seller_name': seller_name,
-                    'items': [],
-                    'subtotal': 0
-                }
+            # Text Line
+            # 1. Product Name (xQty) - Total
+            cart_text += f"{idx}. **{name}**\n"
+            cart_text += f"   💰 {price:,.0f} x {quantity} = {item_total:,.0f} IQD\n"
+            cart_text += f"   🏪 {seller_name}\n"
+            cart_text += "   ------------------------\n"
             
-            items_by_seller[seller_id]['items'].append(item)
-            items_by_seller[seller_id]['subtotal'] += item_total
+            # Control Row for this item
+            # [ ➖ ] [ Qty ] [ ➕ ] [ 🗑️ ]
+            markup.row(
+                types.InlineKeyboardButton("➖", callback_data=f"decrease_cart_{product_id}"),
+                types.InlineKeyboardButton(f"{quantity}", callback_data="noop"),
+                types.InlineKeyboardButton("➕", callback_data=f"increase_cart_{product_id}"),
+                types.InlineKeyboardButton("🗑️", callback_data=f"remove_cart_{product_id}")
+            )
+            idx += 1
+            
+        cart_text += f"\n📊 **الإجمالي الكلي: {total:,.0f} IQD**\n"
         
-        text = f"🛒 **سلة المشتريات**\n\n"
-        text += f"📋 عدد المنتجات: {len(cart_items)}\n"
-        text += f"💰 الإجمالي: {total:,.0f} IQD\n\n"
-        
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            types.InlineKeyboardButton("✅ إنهاء الطلب", callback_data="checkout_cart"),
+        # Footer Actions
+        markup.row(
             types.InlineKeyboardButton("🗑️ تفريغ السلة", callback_data="clear_cart"),
-            types.InlineKeyboardButton("✏️ تعديل الكميات", callback_data="edit_cart_quantities")
+            types.InlineKeyboardButton("✅ تأكيد الطلب", callback_data="checkout_cart")
         )
+        markup.row(types.InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="back_to_menu"))
         
-        bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode='Markdown')
+        bot.send_message(message.chat.id, cart_text, reply_markup=markup, parse_mode='Markdown')     
+
+    except Exception as e:
+        bot.send_message(message.chat.id, f"⚠️ حدث خطأ أثناء عرض السلة:\n{str(e)}")
+        traceback.print_exc()
+
+def update_cart_view(chat_id, message_id, user_id):
+    """Updates the existing cart message with new state"""
+    try:
+        cart_items = get_cart_items_db(user_id)
         
-        # إرسال كل عنصر في السلة مع صورته
-        for seller_id, seller_data in items_by_seller.items():
-            # seller_text = f"🏪 **{seller_data['seller_name']}**\n\n"
+        if not cart_items:
+            # Cart is empty, edit message to say empty
+            bot.edit_message_text("🛒 **سلة المشتريات**\n\nالسلة فارغة حالياً.", chat_id, message_id, parse_mode='Markdown', reply_markup=None)
+            return
+
+        markup = types.InlineKeyboardMarkup(row_width=4)
+        cart_text = "🛒 **سلة المشتريات**\n\n"
+        
+        total = 0
+        idx = 1
+        
+        for item in cart_items:
+            product_id, quantity, price, name, desc, img_path, available_qty, seller_id, seller_name = item
+            item_total = price * quantity
+            total += item_total
             
-            for item in seller_data['items']:
-                product_id, quantity, price, name, desc, img_path, available_qty, seller_id, seller_name = item
-                # item_total = price * quantity
-                
-                item_markup = types.InlineKeyboardMarkup(row_width=2)
-                item_markup.add(
-                    types.InlineKeyboardButton("➕ زيادة", callback_data=f"increase_cart_{product_id}"),
-                    types.InlineKeyboardButton("➖ تقليل", callback_data=f"decrease_cart_{product_id}"),
-                    types.InlineKeyboardButton("🗑️ حذف", callback_data=f"remove_cart_{product_id}")
-                )
-                
-                send_cart_item_with_image(message.chat.id, item, item_markup)
+            cart_text += f"{idx}. **{name}**\n"
+            cart_text += f"   💰 {price:,.0f} x {quantity} = {item_total:,.0f} IQD\n"
+            cart_text += f"   🏪 {seller_name}\n"
+            cart_text += "   ------------------------\n"
+            
+            markup.row(
+                types.InlineKeyboardButton("➖", callback_data=f"decrease_cart_{product_id}"),
+                types.InlineKeyboardButton(f"{quantity}", callback_data="noop"),
+                types.InlineKeyboardButton("➕", callback_data=f"increase_cart_{product_id}"),
+                types.InlineKeyboardButton("🗑️", callback_data=f"remove_cart_{product_id}")
+            )
+            idx += 1
+            
+        cart_text += f"\n📊 **الإجمالي الكلي: {total:,.0f} IQD**\n"
+        
+        markup.row(
+            types.InlineKeyboardButton("🗑️ تفريغ السلة", callback_data="clear_cart"),
+            types.InlineKeyboardButton("✅ تأكيد الطلب", callback_data="checkout_cart")
+        )
+        markup.row(types.InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="back_to_menu"))
+        
+        bot.edit_message_text(cart_text, chat_id, message_id, reply_markup=markup, parse_mode='Markdown')
+        
+    except Exception as e:
+        print(f"Error updating cart view: {e}")
+        # If edit fails (e.g. same content), ignore
+
 
     except Exception as e:
         bot.send_message(message.chat.id, f"⚠️ حدث خطأ أثناء عرض السلة:\n{str(e)}")
@@ -5748,83 +6164,52 @@ def handle_edit_cart_quantities(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("increase_cart_"))
 def handle_increase_cart(call):
-    try:
-        product_id = int(call.data.split("_")[2])
-        telegram_id = call.from_user.id
-        
-        cart_items = get_cart_items_db(telegram_id)
-        current_quantity = 0
-        current_price = 0
-        
-        for item in cart_items:
-            if item[0] == product_id:
-                current_quantity = item[1]
-                current_price = item[2]
-                break
-        
-        product = get_product_by_id(product_id)
-        if not product:
-            bot.answer_callback_query(call.id, "المنتج غير موجود")
-            return
-        
-        available_qty = product[7]
-        
-        if current_quantity >= available_qty:
-            bot.answer_callback_query(call.id, f"⚠️ الحد الأقصى للكمية المتاحة: {available_qty}")
-            return
-        
-        add_to_cart_db(telegram_id, product_id, 1, current_price)
-        bot.answer_callback_query(call.id, "✅ تم زيادة الكمية")
-        
-        try:
-            bot.delete_message(call.message.chat.id, call.message.message_id)
-        except:
-            pass
-        
-        view_cart(call.message, user_id=telegram_id)
-    except Exception as e:
-        bot.answer_callback_query(call.id, "حدث خطأ")
-        # bot.send_message(call.message.chat.id, f"Error: {e}")
-        print(f"Error in increase_cart: {e}")
+    product_id = int(call.data.split("_")[2])
+    telegram_id = call.from_user.id
+    
+    cart_items = get_cart_items_db(telegram_id)
+    current_qty = 0
+    
+    for item in cart_items:
+        if item[0] == product_id:
+            current_qty = item[1]
+            break
+    
+    product = get_product_by_id(product_id)
+    if not product:
+        bot.answer_callback_query(call.id, "المنتج غير موجود")
+        return
+    
+    available_qty = product[7]
+    
+    if current_qty >= available_qty:
+        bot.answer_callback_query(call.id, f"⚠️ الحد الأقصى للكمية المتاحة: {available_qty}")
+        return
+    
+    update_cart_quantity_db(telegram_id, product_id, current_qty + 1)
+    
+    # Update View
+    update_cart_view(call.message.chat.id, call.message.message_id, telegram_id)
+    bot.answer_callback_query(call.id)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("decrease_cart_"))
 def handle_decrease_cart(call):
-    try:
-        product_id = int(call.data.split("_")[2])
-        telegram_id = call.from_user.id
-        
-        cart_items = get_cart_items_db(telegram_id)
-        current_quantity = 0
-        
-        for item in cart_items:
-            if item[0] == product_id:
-                current_quantity = item[1]
-                break
-        
-        if current_quantity <= 1:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM Carts WHERE UserID=? AND ProductID=?", (telegram_id, product_id))
-            conn.commit()
-            conn.close()
-            bot.answer_callback_query(call.id, "✅ تم حذف المنتج من السلة")
-        else:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute("UPDATE Carts SET Quantity = Quantity - 1 WHERE UserID=? AND ProductID=?", (telegram_id, product_id))
-            conn.commit()
-            conn.close()
-            bot.answer_callback_query(call.id, "✅ تم تقليل الكمية")
-        
-        try:
-            bot.delete_message(call.message.chat.id, call.message.message_id)
-        except:
-            pass
-        
-        view_cart(call.message, user_id=telegram_id)
-    except Exception as e:
-        bot.answer_callback_query(call.id, "حدث خطأ")
-        print(f"Error in decrease_cart: {e}")
+    product_id = int(call.data.split("_")[2])
+    telegram_id = call.from_user.id
+    
+    cart_items = get_cart_items_db(telegram_id)
+    current_qty = 0
+    for item in cart_items:
+        if item[0] == product_id:
+            current_qty = item[1]
+            break
+            
+    if current_qty > 1:
+        update_cart_quantity_db(telegram_id, product_id, current_qty - 1)
+        update_cart_view(call.message.chat.id, call.message.message_id, telegram_id)
+        bot.answer_callback_query(call.id)
+    else:
+        bot.answer_callback_query(call.id, "الحد الأدنى هو 1. للحذف استخدم زر الحذف.")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("remove_cart_"))
 def handle_remove_cart(call):
@@ -5838,14 +6223,8 @@ def handle_remove_cart(call):
         conn.commit()
         conn.close()
         
-        bot.answer_callback_query(call.id, "✅ تم حذف المنتج من السلة")
-        
-        try:
-            bot.delete_message(call.message.chat.id, call.message.message_id)
-        except:
-            pass
-        
-        view_cart(call.message, user_id=telegram_id)
+        update_cart_view(call.message.chat.id, call.message.message_id, telegram_id)
+        bot.answer_callback_query(call.id, "تم حذف المنتج")
     except Exception as e:
         bot.answer_callback_query(call.id, "حدث خطأ")
         print(f"Error in remove_cart: {e}")
@@ -6344,307 +6723,7 @@ def process_edit_user_info(message):
     show_buyer_main_menu(message)
 
 # ====== عرض الطلبات للمشتري ======
-@bot.message_handler(func=lambda message: message.text == "📋 طلباتي")
-def my_orders(message):
-    telegram_id = message.from_user.id
-    
-    # ====== التعديل الجديد ======
-    # التحقق إذا كان المستخدم زائراً (غير مسجل)
-    is_guest = telegram_id in user_states and user_states.get(telegram_id, {}).get('is_guest', False)
-    
-    if is_guest:
-        bot.send_message(message.chat.id,
-                        "📭 **لا توجد طلبات سابقة**\n\n"
-                        "بما أنك زائر (غير مسجل)، لن يتم حفظ سجل طلباتك.\n\n"
-                        "💡 **لحفظ طلباتك ومتابعتها:**\n"
-                        "1. اختر '👤 تسجيل حساب جديد'\n"
-                        "2. سجل معلوماتك\n"
-                        "3. ستتمكن من رؤية جميع طلباتك السابقة")
-        return
-    
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("""
-        SELECT o.*, s.StoreName, s.UserName as SellerUsername
-        FROM Orders o
-        JOIN Sellers s ON o.SellerID = s.SellerID
-        WHERE o.BuyerID = ?
-        ORDER BY o.CreatedAt DESC
-        LIMIT 20
-    """, (telegram_id,))
-    
-    orders = cursor.fetchall()
-    conn.close()
-    
-    if not orders:
-        bot.send_message(message.chat.id, "📭 لا توجد طلبات سابقة.")
-        return
-    
-    text = "📋 **طلباتي السابقة**\n\n"
-    
-    for order in orders:
-        order_id, buyer_id, seller_id, total, status, created_at, delivery_address, notes, payment_method, fully_paid = order[:10]
-        store_name = order[10] if len(order) > 10 else "المتجر"
-        
-        status_emoji = {
-            'Pending': '⏳',
-            'Confirmed': '✅',
-            'Shipped': '🚚',
-            'Delivered': '🎉',
-            'Rejected': '❌'
-        }.get(status, '📝')
-        
-        payment_status = "💵 مدفوع" if fully_paid else "💳 غير مدفوع"
-        
-        text += f"{status_emoji} **الطلب #{order_id}**\n"
-        text += f"🏪 المتجر: {store_name}\n"
-        text += f"💰 الإجمالي: {total} IQD\n"
-        text += f"💳 الدفع: {'نقداً' if payment_method == 'cash' else 'على الحساب'} ({payment_status})\n"
-        text += f"📊 الحالة: {status}\n"
-        text += f"📅 التاريخ: {created_at}\n"
-        text += "────\n\n"
-    
-    markup = types.InlineKeyboardMarkup()
-    markup.add(
-        types.InlineKeyboardButton("📋 تفاصيل الطلبات الأخيرة", callback_data="view_recent_orders"),
-        types.InlineKeyboardButton("📦 طلب إرجاع", callback_data="request_return")
-    )
-    
-    bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode='Markdown')
-
-@bot.callback_query_handler(func=lambda call: call.data == "view_recent_orders")
-def handle_view_recent_orders(call):
-    telegram_id = call.from_user.id
-    
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("""
-        SELECT o.OrderID, o.Total, o.Status, o.CreatedAt, o.PaymentMethod, o.FullyPaid,
-               s.StoreName,
-               (SELECT GROUP_CONCAT(p.Name || ' × ' || oi.Quantity, ', ')
-                FROM OrderItems oi
-                JOIN Products p ON oi.ProductID = p.ProductID
-                WHERE oi.OrderID = o.OrderID) as Products
-        FROM Orders o
-        JOIN Sellers s ON o.SellerID = s.SellerID
-        WHERE o.BuyerID = ?
-        ORDER BY o.CreatedAt DESC
-        LIMIT 5
-    """, (telegram_id,))
-    
-    orders = cursor.fetchall()
-    conn.close()
-    
-    if not orders:
-        bot.answer_callback_query(call.id, "لا توجد طلبات سابقة")
-        return
-    
-    for order in orders:
-        order_id, total, status, created_at, payment_method, fully_paid, store_name, products = order
-        
-        status_emoji = {
-            'Pending': '⏳',
-            'Confirmed': '✅',
-            'Shipped': '🚚',
-            'Delivered': '🎉',
-            'Rejected': '❌'
-        }.get(status, '📝')
-        
-        payment_status = "💵 مدفوع" if fully_paid else "💳 غير مدفوع"
-        
-        text = f"{status_emoji} **الطلب #{order_id}**\n\n"
-        text += f"🏪 المتجر: {store_name}\n"
-        text += f"💰 الإجمالي: {total} IQD\n"
-        text += f"💳 الدفع: {'نقداً' if payment_method == 'cash' else 'على الحساب'} ({payment_status})\n"
-        text += f"📊 الحالة: {status}\n"
-        text += f"📅 التاريخ: {created_at}\n"
-        
-        if products:
-            text += f"\n📦 المنتجات:\n{products}\n"
-        
-        markup = types.InlineKeyboardMarkup()
-        markup.add(
-            types.InlineKeyboardButton("📞 اتصل بالبائع", callback_data=f"contact_seller_{order_id}"),
-            types.InlineKeyboardButton("📦 طلب إرجاع", callback_data=f"request_return_order_{order_id}")
-        )
-        
-        bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode='Markdown')
-    
-    bot.answer_callback_query(call.id)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("request_return_order_"))
-def handle_request_return_order(call):
-    order_id = int(call.data.split("_")[3])
-    telegram_id = call.from_user.id
-    
-    user_states[telegram_id] = {
-        "step": "request_return_order",
-        "order_id": order_id
-    }
-    
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("""
-        SELECT p.ProductID, p.Name, oi.Quantity, oi.Price, oi.ReturnedQuantity
-        FROM OrderItems oi
-        JOIN Products p ON oi.ProductID = p.ProductID
-        WHERE oi.OrderID = ?
-    """, (order_id,))
-    
-    items = cursor.fetchall()
-    conn.close()
-    
-    if not items:
-        bot.answer_callback_query(call.id, "لا توجد منتجات في هذا الطلب")
-        return
-    
-    text = "📦 **طلب إرجاع منتج**\n\n"
-    text += f"🆔 رقم الطلب: {order_id}\n\n"
-    text += "📋 **المنتجات في الطلب:**\n\n"
-    
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    
-    for item in items:
-        product_id, name, quantity, price, returned_qty = item
-        available_qty = quantity - (returned_qty or 0)
-        
-        if available_qty > 0:
-            text += f"🛒 {name}\n"
-            text += f"   📦 الكمية: {quantity} (متاح للإرجاع: {available_qty})\n"
-            text += f"   💰 السعر: {price} IQD\n"
-            
-            markup.add(types.InlineKeyboardButton(f"📦 إرجاع {name[:15]}", callback_data=f"select_return_product_{product_id}_{order_id}"))
-            text += "────\n\n"
-    
-    bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode='Markdown')
-    bot.answer_callback_query(call.id)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("select_return_product_"))
-def handle_select_return_product(call):
-    parts = call.data.split("_")
-    product_id = int(parts[3])
-    order_id = int(parts[4])
-    telegram_id = call.from_user.id
-    
-    user_states[telegram_id] = {
-        "step": "return_quantity",
-        "order_id": order_id,
-        "product_id": product_id
-    }
-    
-    product = get_product_by_id(product_id)
-    if not product:
-        bot.answer_callback_query(call.id, "المنتج غير موجود")
-        return
-    
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("""
-        SELECT oi.Quantity, oi.ReturnedQuantity 
-        FROM OrderItems oi 
-        WHERE oi.OrderID = ? AND oi.ProductID = ?
-    """, (order_id, product_id))
-    
-    item = cursor.fetchone()
-    conn.close()
-    
-    if not item:
-        bot.answer_callback_query(call.id, "المنتج غير موجود في الطلب")
-        return
-    
-    quantity, returned_qty = item
-    available_qty = quantity - (returned_qty or 0)
-    
-    bot.send_message(call.message.chat.id,
-                    f"📦 **إرجاع المنتج**\n\n"
-                    f"🛒 المنتج: {product[3]}\n"
-                    f"📦 الكمية المتاحة للإرجاع: {available_qty}\n\n"
-                    f"يرجى إدخال الكمية المراد إرجاعها:")
-    
-    bot.answer_callback_query(call.id)
-
-@bot.message_handler(func=lambda message: message.from_user.id in user_states and 
-                     user_states[message.from_user.id]["step"] == "return_quantity")
-def process_return_quantity(message):
-    telegram_id = message.from_user.id
-    state = user_states[telegram_id]
-    
-    try:
-        quantity = int(message.text)
-        if quantity <= 0:
-            bot.send_message(message.chat.id, "الرجاء إدخال كمية صحيحة أكبر من صفر.")
-            return
-    except:
-        bot.send_message(message.chat.id, "الرجاء إدخال رقم صحيح للكمية.")
-        return
-    
-    order_id = state["order_id"]
-    product_id = state["product_id"]
-    
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("""
-        SELECT oi.Quantity, oi.ReturnedQuantity 
-        FROM OrderItems oi 
-        WHERE oi.OrderID = ? AND oi.ProductID = ?
-    """, (order_id, product_id))
-    
-    item = cursor.fetchone()
-    conn.close()
-    
-    if not item:
-        bot.send_message(message.chat.id, "المنتج غير موجود في الطلب")
-        del user_states[telegram_id]
-        return
-    
-    total_quantity, returned_qty = item
-    available_qty = total_quantity - (returned_qty or 0)
-    
-    if quantity > available_qty:
-        bot.send_message(message.chat.id, f"⚠️ الكمية المطلوبة للإرجاع ({quantity}) أكبر من الكمية المتاحة ({available_qty})")
-        return
-    
-    state["return_quantity"] = quantity
-    state["step"] = "return_reason"
-    
-    bot.send_message(message.chat.id,
-                    "📝 **سبب الإرجاع**\n\n"
-                    "يرجى إدخال سبب إرجاع المنتج:")
-
-@bot.message_handler(func=lambda message: message.from_user.id in user_states and 
-                     user_states[message.from_user.id]["step"] == "return_reason")
-def process_return_reason(message):
-    telegram_id = message.from_user.id
-    state = user_states[telegram_id]
-    
-    reason = message.text.strip()
-    
-    if not reason:
-        bot.send_message(message.chat.id, "الرجاء إدخال سبب الإرجاع.")
-        return
-    
-    order_id = state["order_id"]
-    product_id = state["product_id"]
-    quantity = state["return_quantity"]
-    
-    success, result = create_return_request(order_id, product_id, quantity, reason, telegram_id)
-    
-    if success:
-        bot.send_message(message.chat.id,
-                        f"✅ **تم تقديم طلب الإرجاع بنجاح!**\n\n"
-                        f"🆔 رقم طلب الإرجاع: {result}\n"
-                        f"📦 الكمية: {quantity}\n"
-                        f"📝 السبب: {reason}\n\n"
-                        f"سيقوم البائع بمراجعة طلبك والرد قريباً.")
-    else:
-        bot.send_message(message.chat.id, f"⚠️ حدث خطأ: {result}")
-    
-    del user_states[telegram_id]
+# (Handlers Removed)
 
 # ====== الأوامر الإضافية ======
 @bot.message_handler(commands=['myid'])
@@ -6743,6 +6822,10 @@ def handle_back_button(message):
 def handle_main_menu(message):
     telegram_id = message.from_user.id
     
+    # Clear any active state when Main Button is pressed!
+    if telegram_id in user_states:
+        del user_states[telegram_id]
+    
     # ====== التعديل الجديد ======
     # التحقق إذا كان المستخدم زائراً (غير مسجل)
     is_guest = telegram_id in user_states and user_states.get(telegram_id, {}).get('is_guest', False)
@@ -6815,9 +6898,8 @@ def send_welcome(message):
         markup = types.InlineKeyboardMarkup(row_width=2)
         btn1 = types.InlineKeyboardButton("🛍️ تصفح المنتجات", callback_data='browse_products')
         btn2 = types.InlineKeyboardButton("🛒 سلة التسوق", callback_data='view_cart')
-        btn3 = types.InlineKeyboardButton("📦 طلباتي", callback_data='my_orders')
         btn4 = types.InlineKeyboardButton("📞 تواصل معنا", callback_data='contact_us')
-        markup.add(btn1, btn2, btn3, btn4)
+        markup.add(btn1, btn2, btn4)
         
         bot.reply_to(message, f"👋 أهلاً بك {full_name} في متجرنا!\n\nيمكنك البدء بالتسوق الآن:", reply_markup=markup)
         
