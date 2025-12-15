@@ -232,7 +232,7 @@ class _DashboardViewState extends State<DashboardView> {
             children: [
               InkWell(
                 onTap: () {
-                   Navigator.push(context, MaterialPageRoute(builder: (_) => StoreDetailScreen(seller: seller, isSellerMode: false)));
+                   Navigator.push(context, MaterialPageRoute(builder: (_) => StoreDetailScreen(seller: seller, isSellerMode: true)));
                 },
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
