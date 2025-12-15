@@ -6516,9 +6516,15 @@ if __name__ == "__main__":
         print("🧹 Clearing Webhooks...")
         bot.remove_webhook()
         
-        print("📡 Starting Polling...")
-        bot.polling(none_stop=True, timeout=60)
-    except Exception as e:
-        print(f"❌ خطأ في تشغيل البوت: {e}")
-        traceback.print_exc()
+    print("📡 Starting Polling...")
+    
+    # Infinite loop to auto-restart on crashes/connection errors
+    while True:
+        try:
+            # infinity_polling handles many errors internally, but this loop catches the rest
+            bot.infinity_polling(timeout=60, long_polling_timeout=60, allowed_updates=['message', 'callback_query', 'my_chat_member'])
+        except Exception as e:
+            print(f"⚠️ Polling Error (Restarting in 5s): {e}")
+            time.sleep(5)
+            continue
 
