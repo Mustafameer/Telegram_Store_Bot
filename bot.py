@@ -1978,6 +1978,10 @@ def handle_create_user_store(message):
 @bot.message_handler(func=lambda message: message.from_user.id in user_states and 
                      user_states[message.from_user.id]["step"] == "create_user_store_name")
 def process_user_store_name(message):
+    # Validation: Ignore if user mistakenly pressed a menu button
+    if message.text in ["🏪 إنشاء متجر جديد", "➕ إضافة قسم", "➕ إضافة منتج", "🔙 رجوع", "🏠 الرئيسية", "تصفح المتاجر 🛍️", "سلة المشتريات 🛒"]:
+        bot.send_message(message.chat.id, "⚠️ الرجاء إدخال اسم المتجر كتابةً.\nلإلغاء العملية، اضغط على '🏠 الرئيسية'.")
+        return
     user_id = message.from_user.id
     store_name = message.text.strip()
     
@@ -2422,6 +2426,10 @@ def add_category_step1(message):
 @bot.message_handler(func=lambda message: message.from_user.id in user_states and 
                      user_states[message.from_user.id]["step"] == "add_category")
 def add_category_step2(message):
+    # Validation: Ignore if user mistakenly pressed a menu button
+    if message.text in ["🏪 إنشاء متجر جديد", "➕ إضافة قسم", "➕ إضافة منتج", "🔙 رجوع", "🏠 الرئيسية", "تصفح المتاجر 🛍️", "سلة المشتريات 🛒"]:
+        bot.send_message(message.chat.id, "⚠️ الرجاء إدخال اسم القسم كتابةً.\nلإلغاء العملية، اضغط على '🏠 الرئيسية'.")
+        return
     telegram_id = message.from_user.id
     state = user_states[telegram_id]
     
@@ -2615,6 +2623,10 @@ def handle_select_category_for_product(call):
 @bot.message_handler(func=lambda message: message.from_user.id in user_states and 
                      user_states[message.from_user.id]["step"] == "add_product_name")
 def add_product_step2(message):
+    # Validation: Ignore if user mistakenly pressed a menu button
+    if message.text in ["🏪 إنشاء متجر جديد", "➕ إضافة قسم", "➕ إضافة منتج", "🔙 رجوع", "🏠 الرئيسية", "تصفح المتاجر 🛍️", "سلة المشتريات 🛒"]:
+        bot.send_message(message.chat.id, "⚠️ الرجاء إدخال اسم المنتج كتابةً.\nلإلغاء العملية، اضغط على '🏠 الرئيسية'.")
+        return
     telegram_id = message.from_user.id
     state = user_states[telegram_id]
     
