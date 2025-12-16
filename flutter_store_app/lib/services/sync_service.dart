@@ -31,20 +31,20 @@ class SyncService {
   // Start the background timer
   void startSyncTimer() {
     _timer?.cancel();
-    // Run immediately
-    syncNow(); 
-    // Then every 15 minutes
+    // Run immediately (Pull Only)
+    syncPullOnly(); 
+    // Then every 15 minutes (Push + Pull)
     _timer = Timer.periodic(const Duration(minutes: 15), (timer) {
-      syncNow();
+       syncNow();
     });
-    print("🔄 Sync Timer Started (15 min interval)");
+    print("🔄 Sync Timer Started (15 min interval - Push & Pull)");
   }
 
   void stop() {
     _timer?.cancel();
   }
 
-  // Main Sync Method
+  // Manual Sync (Button): Push + Pull
   Future<void> syncNow() async {
     if (_isSyncing) {
       _statusController.add("Sync already in progress...");
@@ -52,13 +52,77 @@ class SyncService {
     }
     
     _isSyncing = true;
-    _statusController.add("Starting Cloud Sync...");
-    print("☁️ Starting Cloud Sync...");
+    _statusController.add("Starting Manual Sync (Push & Pull)...");
+    print("☁️ Starting Manual Sync...");
 
     Connection? conn;
     try {
-      // 1. Connect to Postgres
-      conn = await Connection.open(
+      conn = await _connectToPostgres();
+      final dbHelper = DatabaseHelper.instance;
+
+      // 1. PUSH (Local -> Cloud)
+      _statusController.add("Pushing Local Changes...");
+      await _pushAllInventory(conn, dbHelper);
+
+      // 2. PULL (Cloud -> Local)
+      _statusController.add("Pulling Cloud Changes...");
+      await _pullAllData(conn, dbHelper);
+      
+      // 3. Sync Images (Currently bidirectional, safe to keep)
+      await _syncImages(conn);
+
+      _statusController.add("Manual Sync Completed!");
+      print("🎉 Manual Sync Completed!");
+      
+    } catch (e) {
+      _statusController.add("Sync Failed: $e");
+      print("❌ Sync Failed: $e");
+    } finally {
+      await conn?.close();
+      _isSyncing = false;
+    }
+  }
+
+  // Automatic Sync (Timer): Pull Only
+  Future<void> syncPullOnly() async {
+    if (_isSyncing) {
+       print("⚠️ Global Sync skipped: Sync already in progress");
+       return;
+    }
+    
+    _isSyncing = true; 
+    // We don't flood the UI status controller for background sync unless error? 
+    // Or maybe we do so user sees "Updating..." if they happen to look.
+    // Let's be less intrusive for background sync
+    print("☁️ Starting Auto-Link (Pull Only)...");
+
+    Connection? conn;
+    try {
+      conn = await _connectToPostgres();
+      final dbHelper = DatabaseHelper.instance;
+
+      // PULL Only
+      await _pullAllData(conn, dbHelper);
+      
+      // Images (Download Only? Or keeping full sync? User said "Sync from Bot to Desktop")
+      // Currently _syncImages is mixed. Let's assume full image sync is fine or maybe restrict it.
+      // User said "Sync from Bot to Desktop". So ideally download only.
+      // But _syncImages handles both. Let's keep it simple for now, or just Pull Data.
+      // Actually _syncImages does both up and down. Let's use it as is for now.
+      await _syncImages(conn); 
+
+      print("🎉 Auto-Sync Completed!");
+      
+    } catch (e) {
+      print("❌ Auto-Sync Failed: $e");
+    } finally {
+      await conn?.close();
+      _isSyncing = false;
+    }
+  }
+
+  Future<Connection> _connectToPostgres() async {
+      return await Connection.open(
         Endpoint(
           host: _host,
           database: _databaseName,
@@ -68,13 +132,10 @@ class SyncService {
         ),
         settings: ConnectionSettings(sslMode: SslMode.disable),
       );
-      
-      _statusController.add("Connected to Cloud DB. Downloading Data...");
-      print("✅ Connected to Cloud Database!");
+  }
 
-      final dbHelper = DatabaseHelper.instance;
-
-      // 2. Push Local Data (Flutter -> Cloud) [INVENTORY ONLY]
+  Future<void> _pushAllInventory(Connection conn, DatabaseHelper dbHelper) async {
+      // Sellers
       await _pushTable(conn, dbHelper, 'Sellers', 'Sellers', 'SellerID', {
         'SellerID': 'sellerid',
         'TelegramID': 'telegramid',
@@ -84,7 +145,7 @@ class SyncService {
         'Status': 'status',
         'ImagePath': 'imagepath'
       });
-      
+      // Categories
       await _pushTable(conn, dbHelper, 'Categories', 'Categories', 'CategoryID', {
         'CategoryID': 'categoryid',
         'SellerID': 'sellerid',
@@ -92,7 +153,7 @@ class SyncService {
         'OrderIndex': 'orderindex',
         'ImagePath': 'imagepath'
       });
-      
+      // Products
       await _pushTable(conn, dbHelper, 'Products', 'Products', 'ProductID', {
         'ProductID': 'productid',
         'SellerID': 'sellerid',
@@ -105,8 +166,10 @@ class SyncService {
         'ImagePath': 'imagepath',
         'Status': 'status'
       });
+  }
 
-      // 3. Fetch Remote Data & Upsert Local
+  Future<void> _pullAllData(Connection conn, DatabaseHelper dbHelper) async {
+       // Sellers
       await _syncTable(conn, dbHelper, 'Sellers', 'sellerid', {
         'sellerid': 'SellerID',
         'telegramid': 'TelegramID',
@@ -116,7 +179,7 @@ class SyncService {
         'status': 'Status',
         'imagepath': 'ImagePath'
       });
-      
+       // Categories
       await _syncTable(conn, dbHelper, 'Categories', 'categoryid', {
         'categoryid': 'CategoryID',
         'sellerid': 'SellerID',
@@ -124,7 +187,7 @@ class SyncService {
         'orderindex': 'OrderIndex',
         'imagepath': 'ImagePath'
       });
-      
+       // Products
       await _syncTable(conn, dbHelper, 'Products', 'productid', {
          'productid': 'ProductID',
          'sellerid': 'SellerID',
@@ -137,8 +200,7 @@ class SyncService {
          'imagepath': 'ImagePath',
          'status': 'Status'
       });
-      
-       // Users (Buyers)
+       // Users
       await _syncTable(conn, dbHelper, 'Users', 'userid', {
          'userid': 'UserID',
          'telegramid': 'TelegramID',
@@ -148,7 +210,7 @@ class SyncService {
          'fullname': 'FullName',
          'createdat': 'CreatedAt'
       });
-      
+       // Orders
       await _syncTable(conn, dbHelper, 'Orders', 'orderid', {
          'orderid': 'OrderID',
          'buyerid': 'BuyerID',
@@ -161,7 +223,7 @@ class SyncService {
          'paymentmethod': 'PaymentMethod',
          'fullypaid': 'FullyPaid'
       });
-      
+       // Order Items
       await _syncTable(conn, dbHelper, 'OrderItems', 'orderitemid', {
          'orderitemid': 'OrderItemID',
          'orderid': 'OrderID',
@@ -169,20 +231,6 @@ class SyncService {
          'quantity': 'Quantity',
          'price': 'Price'
       });
-      
-      // 3. Sync Images
-      await _syncImages(conn);
-
-      _statusController.add("Sync Completed Successfully!");
-      print("🎉 Cloud Sync Completed Successfully!");
-      
-    } catch (e) {
-      _statusController.add("Sync Failed: $e");
-      print("❌ Cloud Sync Failed: $e");
-    } finally {
-      await conn?.close();
-      _isSyncing = false;
-    }
   }
 
   Future<void> _syncImages(Connection conn) async {

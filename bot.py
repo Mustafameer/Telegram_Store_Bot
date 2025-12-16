@@ -2978,8 +2978,27 @@ def handle_confirm_delete_product(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("do_delete_prod_"))
 def handle_do_delete_product(call):
     product_id = int(call.data.split("_")[3])
+    
+    # 1. Fetch product to get image path BEFORE deletion
+    product = get_product_by_id(product_id)
+    image_path = None
+    if product:
+        # Structure: ProductID(0), ..., ImagePath(8)
+        image_path = product[8]
+
+    # 2. Delete from Database
     delete_product(product_id)
-    bot.answer_callback_query(call.id, "✅ تم حذف المنتج")
+    
+    # 3. Delete Image File if exists
+    if image_path:
+        try:
+            if os.path.exists(image_path):
+                os.remove(image_path)
+                print(f"🗑️ Deleted image file: {image_path}")
+        except Exception as e:
+            print(f"⚠️ Failed to delete image file {image_path}: {e}")
+
+    bot.answer_callback_query(call.id, "✅ تم حذف المنتج والصورة")
     handle_delete_product_menu(call)
 
 @bot.callback_query_handler(func=lambda call: call.data == "delete_category_menu")
