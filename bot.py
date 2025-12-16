@@ -369,6 +369,39 @@ def init_db():
         )
     """)
 
+    # 13. CustomerCredit (Depends on CreditCustomers, Sellers)
+    # Using DEFAULT FALSE for Postgres compatibility (though boolean not used here heavily)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS CustomerCredit (
+            CreditID INTEGER PRIMARY KEY AUTOINCREMENT,
+            CustomerID INTEGER,
+            SellerID INTEGER,
+            TransactionType TEXT,
+            Amount REAL,
+            Description TEXT,
+            BalanceBefore REAL,
+            BalanceAfter REAL,
+            TransactionDate DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (CustomerID) REFERENCES CreditCustomers(CustomerID),
+            FOREIGN KEY (SellerID) REFERENCES Sellers(SellerID)
+        )
+    """)
+    
+    # ----------------- MIGRATIONS -----------------
+    def ensure_column(table, column, definition):
+        try:
+            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            conn.commit()
+            print(f"✅ Migrated: Added {column} to {table}")
+        except Exception as e:
+            # Most likely column already exists
+            pass
+            
+    # Explicitly ensure ImagePath exists for Sync
+    ensure_column('Sellers', 'ImagePath', 'TEXT')
+    ensure_column('Categories', 'ImagePath', 'TEXT')
+    ensure_column('Products', 'ImagePath', 'TEXT')
+    
     conn.commit()
     conn.close()
 

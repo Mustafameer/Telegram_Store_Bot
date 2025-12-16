@@ -74,7 +74,39 @@ class SyncService {
 
       final dbHelper = DatabaseHelper.instance;
 
-      // 2. Fetch Remote Data & Upsert Local
+      // 2. Push Local Data (Flutter -> Cloud) [INVENTORY ONLY]
+      await _pushTable(conn, dbHelper, 'Sellers', 'Sellers', 'SellerID', {
+        'SellerID': 'sellerid',
+        'TelegramID': 'telegramid',
+        'UserName': 'username',
+        'StoreName': 'storename',
+        'CreatedAt': 'createdat',
+        'Status': 'status',
+        'ImagePath': 'imagepath'
+      });
+      
+      await _pushTable(conn, dbHelper, 'Categories', 'Categories', 'CategoryID', {
+        'CategoryID': 'categoryid',
+        'SellerID': 'sellerid',
+        'Name': 'name',
+        'OrderIndex': 'orderindex',
+        'ImagePath': 'imagepath'
+      });
+      
+      await _pushTable(conn, dbHelper, 'Products', 'Products', 'ProductID', {
+        'ProductID': 'productid',
+        'SellerID': 'sellerid',
+        'CategoryID': 'categoryid',
+        'Name': 'name',
+        'Description': 'description',
+        'Price': 'price',
+        'WholesalePrice': 'wholesaleprice',
+        'Quantity': 'quantity',
+        'ImagePath': 'imagepath',
+        'Status': 'status'
+      });
+
+      // 3. Fetch Remote Data & Upsert Local
       await _syncTable(conn, dbHelper, 'Sellers', 'sellerid', {
         'sellerid': 'SellerID',
         'telegramid': 'TelegramID',
@@ -243,6 +275,58 @@ class SyncService {
     }
   }
 
+  // PUSH: Local -> Cloud
+  Future<void> _pushTable(
+      Connection conn, 
+      DatabaseHelper dbHelper, 
+      String localTableName, 
+      String pgTableName,
+      String pgPrimaryKey,
+      Map<String, String> colMap // key: localCol, value: pgCol
+  ) async {
+    try {
+      print("⬆️ Pushing $localTableName...");
+      final db = await dbHelper.database;
+      final localData = await db.query(localTableName);
+      
+      if (localData.isEmpty) return;
+      
+      for (var row in localData) {
+        final pgMap = <String, dynamic>{};
+        
+        // Map Columns
+        colMap.forEach((localKey, pgKey) {
+            if (row.containsKey(localKey)) {
+              var val = row[localKey];
+              // Path Fix: Windows -> Linux
+              if (localKey == 'ImagePath' && val != null && val is String) {
+                  // Only send relative path or server path?
+                  // Server expects: /app/data/Images/filename
+                  final fileName = p.basename(val);
+                  val = '/app/data/Images/$fileName'; 
+              }
+              pgMap[pgKey] = val;
+            }
+        });
+
+        // Build Upsert Query
+        final keys = pgMap.keys.toList();
+        final values = keys.map((k) => '@$k').toList();
+        final updateSet = keys.map((k) => '$k = EXCLUDED.$k').join(', ');
+        
+        final sql = 'INSERT INTO $pgTableName (${keys.join(', ')}) VALUES (${values.join(', ')}) '
+                    'ON CONFLICT ($pgPrimaryKey) DO UPDATE SET $updateSet';
+        
+        await conn.execute(Sql.named(sql), parameters: pgMap);
+      }
+      print("  ✅ Pushed ${localData.length} rows from $localTableName");
+      
+    } catch (e) {
+      print("  ⚠️ Failed to push table $localTableName: $e");
+      _statusController.add("Push Error ($localTableName): $e");
+    }
+  }
+
   Future<void> _syncTable(
       Connection conn, 
       DatabaseHelper dbHelper, 
@@ -268,6 +352,13 @@ class SyncService {
                 var val = pgMap[pgKey];
                 if (val is DateTime) {
                   val = val.toIso8601String();
+                }
+                if (localKey == 'ImagePath' && val != null && val is String) {
+                   // Fix for Windows: Postgrest returns Linux paths (/app/data/...)
+                   // path.basename on Windows might not split '/' correctly.
+                   var normalized = val.replaceAll('/', p.separator).replaceAll('\\', p.separator);
+                   final fileName = p.basename(normalized);
+                   val = p.join(_localImagesPath, fileName);
                 }
                 localMap[localKey] = val;
              }
