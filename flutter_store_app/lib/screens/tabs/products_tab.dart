@@ -32,25 +32,29 @@ class _ProductsTabState extends State<ProductsTab> {
     _refreshData();
   }
 
-  Future<void> _refreshData() async {
+  Future<void> _refreshData({bool force = false}) async {
     setState(() {
       _isLoading = true;
       _errorMessage = null;
     });
     
     try {
-      final cats = await DatabaseHelper.instance.getCategories(widget.sellerId);
-      final prods = await DatabaseHelper.instance.getProducts(widget.sellerId);
-      setState(() {
-        _categories = cats;
-        _products = prods;
-        _isLoading = false;
-      });
+      final cats = await DatabaseHelper.instance.getCategories(widget.sellerId, forceRefresh: force);
+      final prods = await DatabaseHelper.instance.getProducts(widget.sellerId, forceRefresh: force);
+      if (mounted) {
+        setState(() {
+          _categories = cats;
+          _products = prods;
+          _isLoading = false;
+        });
+      }
     } catch (e) {
-      setState(() {
-        _errorMessage = e.toString();
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _errorMessage = e.toString();
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -126,7 +130,20 @@ class _ProductsTabState extends State<ProductsTab> {
   Widget build(BuildContext context) {
     if (_isLoading) return const Center(child: CircularProgressIndicator());
     if (_errorMessage != null) return Center(child: Text('Error: $_errorMessage'));
-    if (_products.isEmpty) return const Center(child: Text('لا يوجد منتجات'));
+    if (_products.isEmpty) {
+        return Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text('لا يوجد منتجات'),
+              if (widget.isEditable) ...[
+                 const SizedBox(height: 16),
+                 ElevatedButton(onPressed: () => _refreshData(force: true), child: const Text('تحديث'))
+              ]
+            ],
+          )
+        );
+    }
 
     // Group Products
     final Map<int, List<Product>> grouped = {};
@@ -142,8 +159,10 @@ class _ProductsTabState extends State<ProductsTab> {
     }
 
     return Scaffold(
-      body: CustomScrollView(
-        slivers: [
+      body: RefreshIndicator(
+        onRefresh: () => _refreshData(force: true),
+        child: CustomScrollView(
+          slivers: [
           SliverPadding(
             padding: const EdgeInsets.all(16),
             sliver: SliverMainAxisGroup(
@@ -224,6 +243,7 @@ class _ProductsTabState extends State<ProductsTab> {
           ),
         ],
       ),
+      ),
       floatingActionButton: widget.isEditable 
         ? FloatingActionButton(
           onPressed: () => _showProductForm(),
@@ -273,6 +293,13 @@ class _ProductsTabState extends State<ProductsTab> {
                     ),
                   ],
                 ),
+                if (widget.isEditable && product.wholesalePrice != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    'جملة: ${product.wholesalePrice} د.ع',
+                    style: const TextStyle(fontSize: 12, color: Colors.green, fontWeight: FontWeight.bold),
+                  ),
+                ],
               ],
             ),
           ),

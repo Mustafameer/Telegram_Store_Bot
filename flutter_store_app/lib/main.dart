@@ -1,17 +1,39 @@
 
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:window_manager/window_manager.dart';
+import 'services/sync_service.dart';
 import 'screens/login_screen.dart';
 
+import 'package:sqflite_common_ffi/sqflite_ffi.dart'; // Add this import
+
 void main() async {
+  // Initialize FFI
+  sqfliteFfiInit();
+  databaseFactory = databaseFactoryFfi;
+  
+  // Force create Images directory
+  try {
+     final imgDir = Directory(r'C:\Users\Hp\Desktop\TelegramStoreBot\data\Images');
+     if (!await imgDir.exists()) {
+       await imgDir.create(recursive: true);
+       print("✅ Created Images Directory in main: ${imgDir.path}");
+     }
+  } catch (e) {
+     print("❌ Failed to create Images directory in main: $e");
+  }
+
   WidgetsFlutterBinding.ensureInitialized();
   await windowManager.ensureInitialized();
 
+  // Start Sync Service
+  SyncService.instance.startSyncTimer();
+
   WindowOptions windowOptions = const WindowOptions(
-    // size: Size(1280, 720), // Removed to allow maximize to work better
-    // center: true,
+    size: Size(1280, 720),
+    center: true,
     backgroundColor: Colors.transparent,
     skipTaskbar: false,
     titleBarStyle: TitleBarStyle.normal,

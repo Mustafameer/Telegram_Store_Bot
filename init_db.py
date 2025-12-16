@@ -79,6 +79,7 @@ def init_db():
             SuspensionReason TEXT,
             SuspendedBy INTEGER,
             SuspendedAt DATETIME,
+            ImagePath TEXT,
             FOREIGN KEY (SuspendedBy) REFERENCES Users(TelegramID)
         )
     """)
@@ -109,6 +110,7 @@ def init_db():
             SellerID INTEGER,
             Name TEXT,
             OrderIndex INTEGER DEFAULT 0,
+            ImagePath TEXT,
             FOREIGN KEY (SellerID) REFERENCES Sellers(SellerID)
         )
     """)

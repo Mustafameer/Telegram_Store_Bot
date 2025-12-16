@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import '../database/database_helper.dart';
+import '../models/database_models.dart';
 import 'home_screen.dart';
 import 'store_detail_screen.dart';
 

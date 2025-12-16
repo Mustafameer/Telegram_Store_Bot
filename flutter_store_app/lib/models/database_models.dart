@@ -18,12 +18,12 @@ class User {
 
   factory User.fromMap(Map<String, dynamic> map) {
     return User(
-      userId: map['userid'],
-      telegramId: map['telegramid'],
-      userName: map['username'],
-      userType: map['usertype'],
-      phoneNumber: map['phonenumber'],
-      fullName: map['fullname'],
+      userId: map['UserID'],
+      telegramId: map['TelegramID'],
+      userName: map['UserName'],
+      userType: map['UserType'],
+      phoneNumber: map['PhoneNumber'],
+      fullName: map['FullName'],
     );
   }
 }
@@ -34,6 +34,7 @@ class Seller {
   final String? userName;
   final String? storeName;
   final String? status;
+  final String? imagePath;
 
   Seller({
     required this.sellerId,
@@ -41,15 +42,35 @@ class Seller {
     this.userName,
     this.storeName,
     this.status,
+    this.imagePath,
   });
 
   factory Seller.fromMap(Map<String, dynamic> map) {
     return Seller(
-      sellerId: map['sellerid'],
-      telegramId: map['telegramid'],
-      userName: map['username'],
-      storeName: map['storename'],
-      status: map['status'],
+      sellerId: map['SellerID'],
+      telegramId: map['TelegramID'],
+      userName: map['UserName'],
+      storeName: map['StoreName'],
+      status: map['Status'],
+      imagePath: map['ImagePath'],
+    );
+  }
+
+  Seller copyWith({
+    int? sellerId,
+    int? telegramId,
+    String? userName,
+    String? storeName,
+    String? status,
+    String? imagePath,
+  }) {
+    return Seller(
+      sellerId: sellerId ?? this.sellerId,
+      telegramId: telegramId ?? this.telegramId,
+      userName: userName ?? this.userName,
+      storeName: storeName ?? this.storeName,
+      status: status ?? this.status,
+      imagePath: imagePath ?? this.imagePath,
     );
   }
 }
@@ -59,20 +80,23 @@ class Category {
   final int sellerId;
   final String name;
   final int orderIndex;
+  final String? imagePath;
 
   Category({
     required this.categoryId,
     required this.sellerId,
     required this.name,
     this.orderIndex = 0,
+    this.imagePath,
   });
 
   factory Category.fromMap(Map<String, dynamic> map) {
     return Category(
-      categoryId: map['categoryid'],
-      sellerId: map['sellerid'],
-      name: map['name'],
-      orderIndex: map['orderindex'] ?? 0,
+      categoryId: map['CategoryID'],
+      sellerId: map['SellerID'],
+      name: map['Name'],
+      orderIndex: map['OrderIndex'] ?? 0,
+      imagePath: map['ImagePath'],
     );
   }
 }
@@ -104,16 +128,16 @@ class Product {
 
   factory Product.fromMap(Map<String, dynamic> map) {
     return Product(
-      productId: map['productid'],
-      sellerId: map['sellerid'],
-      categoryId: map['categoryid'],
-      name: map['name'],
-      description: map['description'],
-      price: (map['price'] as num).toDouble(),
-      wholesalePrice: map['wholesaleprice'] != null ? (map['wholesaleprice'] as num).toDouble() : null,
-      quantity: map['quantity'],
-      imagePath: map['imagepath'],
-      status: map['status'] ?? 'active',
+      productId: map['ProductID'],
+      sellerId: map['SellerID'],
+      categoryId: map['CategoryID'],
+      name: map['Name'],
+      description: map['Description'],
+      price: (map['Price'] as num).toDouble(),
+      wholesalePrice: map['WholesalePrice'] != null ? (map['WholesalePrice'] as num).toDouble() : null,
+      quantity: map['Quantity'],
+      imagePath: map['ImagePath'],
+      status: map['Status'] ?? 'active',
     );
   }
 }
@@ -145,16 +169,16 @@ class Order {
 
   factory Order.fromMap(Map<String, dynamic> map) {
     return Order(
-      orderId: map['orderid'],
-      buyerId: map['buyerid'],
-      sellerId: map['sellerid'],
-      total: (map['total'] as num).toDouble(),
-      status: map['status'] ?? 'Pending',
-      createdAt: map['createdat'],
-      deliveryAddress: map['deliveryaddress'],
-      notes: map['notes'],
-      paymentMethod: map['paymentmethod'] ?? 'cash',
-      fullyPaid: (map['fullypaid'] == 1 || map['fullypaid'] == true),
+      orderId: map['OrderID'],
+      buyerId: map['BuyerID'],
+      sellerId: map['SellerID'],
+      total: (map['Total'] as num).toDouble(),
+      status: map['Status'] ?? 'Pending',
+      createdAt: map['CreatedAt'],
+      deliveryAddress: map['DeliveryAddress'],
+      notes: map['Notes'],
+      paymentMethod: map['PaymentMethod'] ?? 'cash',
+      fullyPaid: (map['FullyPaid'] == 1 || map['FullyPaid'] == true),
     );
   }
 }
@@ -176,11 +200,75 @@ class OrderItem {
 
   factory OrderItem.fromMap(Map<String, dynamic> map) {
     return OrderItem(
-      orderItemId: map['orderitemid'],
-      orderId: map['orderid'],
-      productId: map['productid'],
-      quantity: map['quantity'],
-      price: (map['price'] as num).toDouble(),
+      orderItemId: map['OrderItemID'],
+      orderId: map['OrderID'],
+      productId: map['ProductID'],
+      quantity: map['Quantity'],
+      price: (map['Price'] as num).toDouble(),
+    );
+  }
+}
+
+class CreditCustomer {
+  final int customerId;
+  final int sellerId;
+  final String fullName;
+  final String? phoneNumber;
+  final String? createdAt;
+
+  CreditCustomer({
+    required this.customerId,
+    required this.sellerId,
+    required this.fullName,
+    this.phoneNumber,
+    this.createdAt,
+  });
+
+  factory CreditCustomer.fromMap(Map<String, dynamic> map) {
+    return CreditCustomer(
+      customerId: map['CustomerID'],
+      sellerId: map['SellerID'],
+      fullName: map['FullName'],
+      phoneNumber: map['PhoneNumber'],
+      createdAt: map['CreatedAt'],
+    );
+  }
+}
+
+class CustomerCreditTransaction {
+  final int creditId;
+  final int customerId;
+  final int sellerId;
+  final String transactionType; // 'credit', 'payment'
+  final double amount;
+  final String? description;
+  final double? balanceBefore;
+  final double? balanceAfter;
+  final String? transactionDate;
+
+  CustomerCreditTransaction({
+    required this.creditId,
+    required this.customerId,
+    required this.sellerId,
+    required this.transactionType,
+    required this.amount,
+    this.description,
+    this.balanceBefore,
+    this.balanceAfter,
+    this.transactionDate,
+  });
+
+  factory CustomerCreditTransaction.fromMap(Map<String, dynamic> map) {
+    return CustomerCreditTransaction(
+      creditId: map['CreditID'],
+      customerId: map['CustomerID'],
+      sellerId: map['SellerID'],
+      transactionType: map['TransactionType'],
+      amount: (map['Amount'] as num).toDouble(),
+      description: map['Description'],
+      balanceBefore: map['BalanceBefore'] != null ? (map['BalanceBefore'] as num).toDouble() : null,
+      balanceAfter: map['BalanceAfter'] != null ? (map['BalanceAfter'] as num).toDouble() : null,
+      transactionDate: map['TransactionDate'],
     );
   }
 }

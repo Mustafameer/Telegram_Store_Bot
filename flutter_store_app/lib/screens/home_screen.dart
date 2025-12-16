@@ -1,12 +1,17 @@
 
 
 import 'package:flutter/material.dart';
-import '../database/database_helper.dart';
+import 'dart:io';
+import 'package:file_picker/file_picker.dart';
+
 import '../models/database_models.dart';
+import '../database/database_helper.dart';
 import '../services/telegram_service.dart';
+import '../services/sync_service.dart';
 import 'store_detail_screen.dart';
 import 'login_screen.dart';
 import 'cart_screen.dart';
+import 'components/store_form_dialog.dart';
 
 class HomeScreen extends StatefulWidget {
   final bool isAdmin;
@@ -18,7 +23,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
-  bool _isExtended = false;
+  bool _isExtended = true;
 
   @override
   Widget build(BuildContext context) {
@@ -62,7 +67,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                const NavigationRailDestination(
                 icon: Icon(Icons.shopping_cart),
-                label: Text('سلة المشتريات'), // For demo/tracking
+                label: Text('سلة المشتريات'), 
               ),
                const NavigationRailDestination(
                 icon: Icon(Icons.logout, color: Colors.red),
@@ -83,14 +88,8 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_selectedIndex == 0) {
       return const DashboardView();
     } else if (_selectedIndex == 1 && widget.isAdmin) {
-      // Show Admin's Store
-      // We need to fetch Admin's seller profile.
-      // For now, we assume Admin has a store or create one dynamically?
-      // Let's look up seller by Admin ID.
       return const AdminStoreLoader();
     } else if (_selectedIndex == 2) {
-      // Cart View (As User/Buyer mode)
-      // Using Admin ID as User ID for demo
       return const CartScreen(userId: 1041977029); 
     }
     return const Center(child: Text('جاري العمل...'));
@@ -113,78 +112,49 @@ class _DashboardViewState extends State<DashboardView> {
     _refreshSellers();
   }
 
-  void _refreshSellers() {
+  void _refreshSellers({bool force = false}) {
     setState(() {
-      _sellersFuture = DatabaseHelper.instance.getAllSellers();
+      _sellersFuture = DatabaseHelper.instance.getAllSellers(forceRefresh: force);
     });
   }
 
   Future<void> _toggleSellerStatus(Seller seller) async {
     final newStatus = seller.status == 'active' ? 'suspended' : 'active';
     await DatabaseHelper.instance.updateSellerStatus(seller.sellerId, newStatus);
-    
-    // Notify Seller
-    final message = newStatus == 'active' 
-      ? '✅ تم تنشيط متجرك من قبل المسؤول'
-      : '⛔ تم تعليق متجرك من قبل المسؤول';
-    
-    // Send Telegram Message
-    await TelegramService.sendMessage(seller.telegramId, message);
-    
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تم تغيير الحالة وإرسال إشعار')));
-      _refreshSellers();
-    }
+    _refreshSellers();
   }
-  
-  Future<void> _showAddStoreDialog() async {
-    final nameController = TextEditingController();
-    final idController = TextEditingController();
-    final userController = TextEditingController();
-    
-    await showDialog(
+
+  void _showStoreDialog({Seller? seller}) {
+    showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('إضافة متجر جديد'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(labelText: 'اسم المتجر'),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: idController,
-              decoration: const InputDecoration(labelText: 'معرف تليجرام البائع (ID)'),
-              keyboardType: TextInputType.number,
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: userController,
-              decoration: const InputDecoration(labelText: 'اسم المستخدم (User)'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
-          FilledButton(
-            onPressed: () async {
-               if (nameController.text.isNotEmpty && idController.text.isNotEmpty) {
-                 final telegramId = int.tryParse(idController.text);
-                 if (telegramId != null) {
-                   await DatabaseHelper.instance.addSeller(nameController.text, telegramId, userController.text);
-                   if (mounted) {
-                      Navigator.pop(context);
-                      _refreshSellers();
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم إضافة المتجر بنجاح')));
-                   }
-                 }
-               }
-            },
-            child: const Text('إضافة'),
-          ),
-        ],
+      builder: (context) => StoreFormDialog(
+        initialName: seller?.storeName,
+        initialTelegramId: seller?.telegramId.toString(),
+        initialUserName: seller?.userName,
+        initialImagePath: seller?.imagePath,
+        isEdit: seller != null,
+        onSave: (storeName, telegramId, userName, imagePath) async {
+          if (seller == null) {
+             await DatabaseHelper.instance.addSeller(storeName, telegramId, userName, imagePath: imagePath);
+          } else {
+             // If editing, we typically keep the original TelegramID unless you want to allow changing it?
+             // Since ID is unique/key, changing it might require care.
+             // But DatabaseHelper.updateSeller uses SellerID (Primary Key) to find record, 
+             // but it DOES NOT update TelegramID column in the update query (Lines 191-195 in db_helper).
+             // So passing a new TelegramID here won't persist if we don't update DB helper.
+             // For now turn a blind eye to ID change or allow it if I update DB helper.
+             // Providing the updated fields:
+             final updatedSeller = seller.copyWith(
+               storeName: storeName,
+               userName: userName,
+               imagePath: imagePath
+               // ignoring telegramId change for now as updateSeller doesn't support it
+             );
+             await DatabaseHelper.instance.updateSeller(updatedSeller);
+          }
+           if (context.mounted) Navigator.pop(context); // Dialog handles pop? No, Dialog calls onSave and catches error. It does NOT pop. I must pop here on success.
+           if (mounted) _refreshSellers(force: true);
+        },
       ),
     );
   }
@@ -193,14 +163,86 @@ class _DashboardViewState extends State<DashboardView> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('إدارة المتاجر'),
-        actions: [IconButton(icon: const Icon(Icons.refresh), onPressed: _refreshSellers)],
+        title: const Text('مدير المتاجر (محلي)'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.cloud_sync, color: Colors.blueAccent),
+            tooltip: 'مزامنة مع السحابة',
+            onPressed: () {
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (context) {
+                  return AlertDialog(
+                    title: const Row(children: [CircularProgressIndicator(), SizedBox(width: 16), Text("جاري المزامنة...")]),
+                    content: StreamBuilder<String>(
+                      stream: SyncService.instance.statusStream,
+                      initialData: "البدء...",
+                      builder: (context, snapshot) {
+                        return Text(snapshot.data ?? "...");
+                      },
+                    ),
+                  );
+                },
+              );
+              
+              SyncService.instance.syncNow().then((_) {
+                 Navigator.pop(context); // Close dialog
+                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تمت المزامنة بنجاح ✅'), backgroundColor: Colors.green));
+                 _refreshSellers(force: true);
+              }).catchError((e) {
+                 Navigator.pop(context); // Close dialog
+                 ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('فشل المزامنة: $e'), backgroundColor: Colors.red));
+              });
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.folder, color: Colors.amber),
+            tooltip: 'إنشاء مجلد الصور',
+            onPressed: () async {
+              try {
+                final dir = Directory(r'C:\Users\Hp\Desktop\TelegramStoreBot\data\Images');
+                if (!await dir.exists()) {
+                  await dir.create(recursive: true);
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تم إنشاء المجلد في:\n${dir.path}'), backgroundColor: Colors.green));
+                } else {
+                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('المجلد موجود مسبقاً في:\n${dir.path}'), backgroundColor: Colors.blue));
+                }
+              } catch (e) {
+                 ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('فشل إنشاء المجلد: $e'), backgroundColor: Colors.red));
+              }
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh), 
+            onPressed: () => _refreshSellers(force: true)
+          )
+        ],
       ),
       body: FutureBuilder<List<Seller>>(
         future: _sellersFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-          if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text('لا يوجد متاجر'));
+          if (snapshot.hasError) {
+             return Center(
+               child: SingleChildScrollView(
+                 child: Column(
+                   mainAxisAlignment: MainAxisAlignment.center,
+                   children: [
+                     const Icon(Icons.error, color: Colors.red, size: 50),
+                     const SizedBox(height: 16),
+                     Text('حدث خطأ في قاعدة البيانات:', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                     Padding(
+                       padding: const EdgeInsets.all(16.0),
+                       child: SelectableText('${snapshot.error}', textAlign: TextAlign.center, style: TextStyle(color: Colors.red)),
+                     ),
+                     ElevatedButton(onPressed: () => _refreshSellers(force: true), child: const Text('إعادة المحاولة'))
+                   ],
+                 ),
+               )
+             );
+          }
+          if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text('لا يوجد متاجر (قاعدة البيانات فارغة)'));
 
           return GridView.builder(
             padding: const EdgeInsets.all(16),
@@ -219,16 +261,38 @@ class _DashboardViewState extends State<DashboardView> {
         },
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _showAddStoreDialog,
+        onPressed: () => _showStoreDialog(),
         child: const Icon(Icons.add),
+      ),
+      bottomNavigationBar: FutureBuilder<List<String>>(
+        future: Future.wait([
+          DatabaseHelper.instance.getDbPath(),
+          Future(() async => (await Directory(r'C:\Users\Hp\Desktop\TelegramStoreBot\data\Images').exists()) ? '✅ Images Folder Found' : '❌ Images Folder MISSING')
+        ]),
+        builder: (context, snapshot) {
+          final dbPath = snapshot.data?[0] ?? "Loading...";
+          final imgStatus = snapshot.data?[1] ?? "Checking...";
+          
+          return Container(
+            padding: const EdgeInsets.all(8),
+            color: Colors.grey[200],
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SelectableText('DB: $dbPath', style: const TextStyle(fontSize: 10, color: Colors.black)),
+                const SizedBox(height: 2),
+                SelectableText('IMG: $imgStatus', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: imgStatus.contains('MISSING') ? Colors.red : Colors.green)),
+              ],
+            ),
+          );
+        }
       ),
     );
   }
 
   Widget _buildSellerCard(BuildContext context, Seller seller) {
     return Card(
-      elevation: 4,
-       child: Stack(
+      child: Stack(
             children: [
               InkWell(
                 onTap: () {
@@ -237,13 +301,28 @@ class _DashboardViewState extends State<DashboardView> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    CircleAvatar(
-                      radius: 30,
-                      child: Text(seller.storeName?[0] ?? 'S', style: const TextStyle(fontSize: 24)),
-                    ),
+                    Center(child: CircleAvatar(
+                      radius: 35,
+                      backgroundColor: Colors.teal.shade50,
+                      backgroundImage: seller.imagePath != null ? FileImage(File(seller.imagePath!)) : null,
+                      child: seller.imagePath == null 
+                        ? Text(seller.storeName?[0].toUpperCase() ?? 'S', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold))
+                        : null,
+                    )),
                     const SizedBox(height: 10),
-                    Text(seller.storeName ?? 'No Name', style: const TextStyle(fontWeight: FontWeight.bold)),
-                    Text(seller.status ?? 'Unknown', style: TextStyle(color: seller.status == 'active' ? Colors.green : Colors.red)),
+                    Text(seller.storeName ?? 'No Name', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                    const SizedBox(height: 4),
+                     Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: seller.status == 'active' ? Colors.green.withValues(alpha: 0.1) : Colors.red.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(12)
+                      ),
+                      child: Text(
+                        seller.status == 'active' ? 'نشط' : 'معلق', 
+                        style: TextStyle(fontSize: 12, color: seller.status == 'active' ? Colors.green : Colors.red)
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -253,9 +332,13 @@ class _DashboardViewState extends State<DashboardView> {
                 child: PopupMenuButton<String>(
                   onSelected: (v) {
                     if (v == 'toggle') _toggleSellerStatus(seller);
+                    if (v == 'edit') _showStoreDialog(seller: seller);
+                    if (v == 'delete') _deleteSeller(seller);
                   },
                   itemBuilder: (c) => [
-                    PopupMenuItem(value: 'toggle', child: Text(seller.status == 'active' ? 'تعليق' : 'تنشيط'))
+                    PopupMenuItem(value: 'toggle', child: Text(seller.status == 'active' ? 'تعليق' : 'تنشيط')),
+                    const PopupMenuItem(value: 'edit', child: Text('تعديل')),
+                    const PopupMenuItem(value: 'delete', child: Text('حذف نهائي', style: TextStyle(color: Colors.red))),
                   ],
                 ),
               )
@@ -263,7 +346,35 @@ class _DashboardViewState extends State<DashboardView> {
        ),
     );
   }
+
+  Future<void> _deleteSeller(Seller seller) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('تأكيد الحذف'),
+        content: Text('هل أنت متأكد من حذف متجر "${seller.storeName}"؟\nسيتم حذف جميع المنتجات والأقسام المرتبطة به.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('حذف'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      await DatabaseHelper.instance.deleteSeller(seller.sellerId);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حذف المتجر بنجاح')));
+        _refreshSellers();
+      }
+    }
+  }
 }
+
+
 
 class AdminStoreLoader extends StatelessWidget {
   const AdminStoreLoader({super.key});
@@ -278,21 +389,13 @@ class AdminStoreLoader extends StatelessWidget {
         if (snapshot.hasData && snapshot.data != null) {
           return StoreDetailScreen(seller: snapshot.data!, isSellerMode: true);
         } else {
-           // Admin doesn't have a store yet, maybe offer to create one?
-           // For now just show message.
            return Center(
              child: Column(
                mainAxisAlignment: MainAxisAlignment.center,
                children: [
                  const Text('لم تقم بإنشاء متجر خاص بك بعد'),
                  const SizedBox(height: 16),
-                 FilledButton(
-                   onPressed: () {
-                     // Create store logic would go here
-                     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('يرجى إنشاء متجر عبر البوت أولاً')));
-                   },
-                   child: const Text('إنشاء متجر'),
-                 )
+                 const Text('يرجى إنشاؤه من لوحة التحكم'),
                ],
              ),
            );

@@ -1,178 +1,319 @@
-import 'package:postgres/postgres.dart';
+import 'dart:io';
+import 'package:sqflite/sqflite.dart';
+import 'package:path/path.dart' as p;
 import '../models/database_models.dart';
 
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._init();
-  Connection? _connection;
-
-  // Railway Database Credentials
-  final String _dbHost = 'switchback.proxy.rlwy.net';
-  final int _dbPort = 20266;
-  final String _dbName = 'railway';
-  final String _dbUser = 'postgres';
-  final String _dbPass = 'bqcTJxNXLgwOftDoarrtmjmjYWurEIEh';
+  static Database? _localDatabase;
 
   DatabaseHelper._init();
 
-  Future<Connection> get database async {
-    if (_connection != null && _connection!.isOpen) return _connection!;
-    _connection = await _initDB();
-    return _connection!;
+  Future<Database> get database async {
+    if (_localDatabase != null) return _localDatabase!;
+    _localDatabase = await _initLocalDB('store_local_new.db');
+    return _localDatabase!;
   }
 
-  Future<Connection> _initDB() async {
-    print("Connecting to PostgreSQL...");
-    return await Connection.open(
-      Endpoint(
-        host: _dbHost,
-        port: _dbPort,
-        database: _dbName,
-        username: _dbUser,
-        password: _dbPass,
-      ),
-      settings: ConnectionSettings(sslMode: SslMode.disable),
-    );
+  Future<String> getDbPath() async {
+    final directory = Directory(r'C:\Users\Hp\Desktop\TelegramStoreBot\data');
+    return p.join(directory.path, 'store_local_new.db');
   }
 
-  // --- Helpers to mimic sqflite behavior but with Postgres ---
-  
-  Future<List<Map<String, dynamic>>> _query(String sql, [Map<String, dynamic>? params]) async {
-    final conn = await database;
+  Future<Database> _initLocalDB(String filePath) async {
     try {
-      final result = await conn.execute(Sql.named(sql), parameters: params);
+      final directory = Directory(r'C:\Users\Hp\Desktop\TelegramStoreBot\data');
+      if (!await directory.exists()) {
+        await directory.create(recursive: true);
+      }
       
-      // Convert Result to List<Map<String, dynamic>>
-      // Result is an iterable of ResultRow. ResultRow is indexable but also has column metadata.
-      // We need to map it to Key-Value pairs.
-      return result.map((row) => row.toColumnMap()).toList();
+      final imagesDirectory = Directory(p.join(directory.path, 'Images'));
+      if (!await imagesDirectory.exists()) {
+        await imagesDirectory.create(recursive: true);
+        print("📂 Created Images Directory at: ${imagesDirectory.path}");
+      }
+      
+      final path = p.join(directory.path, filePath);
+      print("📂 Opening Database at: $path");
+
+      return await openDatabase(
+        path, 
+        version: 1, 
+        onCreate: _createLocalDB,
+      );
     } catch (e) {
-      print("Query Error: $e\nSQL: $sql");
+      print("❌ Database Init Error: $e");
       rethrow;
     }
   }
 
-  Future<int> _execute(String sql, [Map<String, dynamic>? params]) async {
-    final conn = await database;
+  Future<String?> _saveImageLocally(String? sourcePath) async {
+    if (sourcePath == null || sourcePath.isEmpty) return null;
     try {
-      final result = await conn.execute(Sql.named(sql), parameters: params);
-      return result.affectedRows;
+      final sourceFile = File(sourcePath);
+      if (!await sourceFile.exists()) return null;
+
+      final directory = Directory(r'C:\Users\Hp\Desktop\TelegramStoreBot\data\Images');
+      if (!await directory.exists()) {
+        await directory.create(recursive: true);
+      }
+
+      final fileName = p.basename(sourcePath);
+      // Generate unique name to prevent overwrite if needed, or keep original. 
+      // Using original name for now, or timestamp prefix.
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      // final extension = extension(sourcePath); // FIX: "extension" usage
+      
+      final newFileName = '${timestamp}_$fileName';
+      final newPath = p.join(directory.path, newFileName);
+      
+      await sourceFile.copy(newPath);
+      print("🖼️ Saved Image to: $newPath");
+      return newPath;
     } catch (e) {
-      print("Execute Error: $e\nSQL: $sql");
-      rethrow;
+      print("❌ Failed to save image: $e");
+      return sourcePath; // Fallback to original path if copy fails
     }
   }
+
+  Future<void> _createLocalDB(Database db, int version) async {
+    print("Creating Local DB Tables...");
+    
+    // Sellers
+    await db.execute('''
+      CREATE TABLE Sellers (
+        SellerID INTEGER PRIMARY KEY AUTOINCREMENT,
+        TelegramID INTEGER UNIQUE,
+        UserName TEXT,
+        StoreName TEXT,
+        CreatedAt TEXT,
+        Status TEXT DEFAULT 'active',
+        ImagePath TEXT
+      )
+    ''');
+
+    // Categories
+    await db.execute('''
+      CREATE TABLE Categories (
+        CategoryID INTEGER PRIMARY KEY AUTOINCREMENT,
+        SellerID INTEGER,
+        Name TEXT,
+        OrderIndex INTEGER DEFAULT 0,
+        ImagePath TEXT
+      )
+    ''');
+
+    // Products
+    await db.execute('''
+      CREATE TABLE Products (
+        ProductID INTEGER PRIMARY KEY AUTOINCREMENT,
+        SellerID INTEGER,
+        CategoryID INTEGER,
+        Name TEXT,
+        Description TEXT,
+        Price REAL,
+        WholesalePrice REAL,
+        Quantity INTEGER,
+        ImagePath TEXT,
+        Status TEXT DEFAULT 'active'
+      )
+    ''');
+
+    // Orders
+    await db.execute('''
+      CREATE TABLE Orders (
+        OrderID INTEGER PRIMARY KEY AUTOINCREMENT,
+        BuyerID INTEGER,
+        SellerID INTEGER,
+        Total REAL,
+        Status TEXT,
+        CreatedAt TEXT,
+        DeliveryAddress TEXT,
+        Notes TEXT,
+        PaymentMethod TEXT,
+        FullyPaid INTEGER
+      )
+    ''');
+    
+    // OrderItems
+    await db.execute('''
+      CREATE TABLE OrderItems (
+        OrderItemID INTEGER PRIMARY KEY AUTOINCREMENT,
+        OrderID INTEGER,
+        ProductID INTEGER,
+        Quantity INTEGER,
+        Price REAL
+      )
+    ''');
+    
+    // Carts
+    await db.execute('''
+      CREATE TABLE Carts (
+        CartID INTEGER PRIMARY KEY AUTOINCREMENT,
+        UserID INTEGER,
+        ProductID INTEGER,
+        Quantity INTEGER,
+        Price REAL,
+        AddedAt TEXT,
+        UNIQUE(UserID, ProductID)
+      )
+    ''');
+
+    // CreditCustomers
+    await db.execute('''
+      CREATE TABLE CreditCustomers (
+        CustomerID INTEGER PRIMARY KEY AUTOINCREMENT,
+        SellerID INTEGER,
+        FullName TEXT,
+        PhoneNumber TEXT,
+        CreatedAt TEXT
+      )
+    ''');
+    
+     // CustomerCredit
+     await db.execute('''
+      CREATE TABLE CustomerCredit (
+        CreditID INTEGER PRIMARY KEY AUTOINCREMENT,
+        CustomerID INTEGER,
+        SellerID INTEGER,
+        TransactionType TEXT,
+        Amount REAL,
+        Description TEXT,
+        BalanceBefore REAL,
+        BalanceAfter REAL,
+        TransactionDate TEXT
+      )
+    ''');
+    
+    // Messages
+    await db.execute('''
+      CREATE TABLE Messages (
+        MessageID INTEGER PRIMARY KEY AUTOINCREMENT,
+        OrderID INTEGER,
+        SellerID INTEGER,
+        MessageType TEXT,
+        MessageText TEXT,
+        IsRead INTEGER DEFAULT 0,
+        CreatedAt TEXT
+      )
+    ''');
+  }
+
+  // --- CRUD Methods (Pure Local SQLite) ---
   
-  Future<dynamic> _insertReturningId(String table, Map<String, dynamic> values, String pkName) async {
-    final columns = values.keys.join(', ');
-    final placeholders = values.keys.map((k) => '@$k').join(', ');
-    
-    final sql = 'INSERT INTO "$table" ($columns) VALUES ($placeholders) RETURNING "$pkName"';
-    
-    // Ensure all values are mapped correctly for Postgres
-    // Dates might need to be DateTime objects or ISO strings.
-    
-    final result = await _query(sql, values);
-    if (result.isNotEmpty) {
-      return result.first[pkName];
-    }
-    return null;
+  Future<List<Seller>> getAllSellers({bool forceRefresh = false}) async {
+    final db = await database;
+    final result = await db.query('Sellers');
+    return result.map((e) => Seller.fromMap(e)).toList();
   }
   
-  Future<void> _insert(String table, Map<String, dynamic> values) async {
-    final columns = values.keys.join(', ');
-    final placeholders = values.keys.map((k) => '@$k').join(', ');
-    
-    final sql = 'INSERT INTO "$table" ($columns) VALUES ($placeholders)';
-    await _execute(sql, values);
-  }
-
-  Future<void> _update(String table, Map<String, dynamic> values, String where, Map<String, dynamic> whereArgs) async {
-    final updates = values.keys.map((k) => '$k = @$k').join(', ');
-    
-    // Merge values and whereArgs
-    final params = {...values, ...whereArgs};
-    
-    final sql = 'UPDATE "$table" SET $updates WHERE $where';
-    await _execute(sql, params);
-  }
-  
-  Future<void> _delete(String table, String where, Map<String, dynamic> whereArgs) async {
-    final sql = 'DELETE FROM "$table" WHERE $where';
-    await _execute(sql, whereArgs);
-  }
-
-  // --- Users ---
-  Future<List<User>> getAllUsers() async {
-    final result = await _query('SELECT * FROM Users');
-    return result.map((json) => User.fromMap(json)).toList();
-  }
-
-  // --- Sellers ---
-  Future<List<Seller>> getAllSellers() async {
-    final result = await _query('SELECT * FROM Sellers');
-    return result.map((json) => Seller.fromMap(json)).toList();
-  }
-
-  // --- Categories ---
-  Future<List<Category>> getCategories(int sellerId) async {
-    final result = await _query(
-      'SELECT * FROM Categories WHERE SellerID = @id ORDER BY OrderIndex',
-      {'id': sellerId}
-    );
-    return result.map((json) => Category.fromMap(json)).toList();
-  }
-
-  // --- Login Helpers ---
   Future<Seller?> getSellerByTelegramId(int telegramId) async {
-    final result = await _query(
-      'SELECT * FROM Sellers WHERE TelegramID = @id',
-      {'id': telegramId}
-    );
-    if (result.isNotEmpty) {
-      return Seller.fromMap(result.first);
-    }
+    final db = await database;
+    final result = await db.query('Sellers', where: 'TelegramID = ?', whereArgs: [telegramId]);
+    if (result.isNotEmpty) return Seller.fromMap(result.first);
     return null;
   }
-
-  // --- Seller Management ---
-  Future<void> updateSellerStatus(int sellerId, String status) async {
-    await _update(
-      'Sellers', 
-      {'Status': status}, 
-      'SellerID = @id', 
-      {'id': sellerId}
-    );
-  }
-
-  Future<void> addSeller(String storeName, int telegramId, String userName) async {
-    await _insert('Sellers', {
+  
+  Future<void> addSeller(String storeName, int telegramId, String userName, {String? imagePath}) async {
+    final db = await database;
+    final localImagePath = await _saveImageLocally(imagePath);
+    await db.insert('Sellers', {
       'TelegramID': telegramId,
       'StoreName': storeName,
       'UserName': userName,
       'Status': 'active',
+      'ImagePath': localImagePath,
       'CreatedAt': DateTime.now().toIso8601String(),
     });
   }
+  
+  Future<void> updateSeller(Seller seller) async {
+     final db = await database;
+     
+     // Check if image path changed? Or just always try to save?
+     // If path is already in 'data/Images', _saveImageLocally will create a copy?
+     // We should check if it's already local.
+     // Optimization: If path starts with our data dir, skip.
+     String? newPath = seller.imagePath;
+     if (seller.imagePath != null && !seller.imagePath!.contains(r'TelegramStoreBot\data\Images')) {
+        newPath = await _saveImageLocally(seller.imagePath);
+     }
+     
+     await db.update('Sellers', {
+       'StoreName': seller.storeName,
+       'UserName': seller.userName,
+       'ImagePath': newPath,
+     }, where: 'SellerID = ?', whereArgs: [seller.sellerId]);
+  }
 
-  // --- Products ---
-  Future<List<Product>> getProducts(int sellerId, {int? categoryId}) async {
-    String sql = 'SELECT * FROM Products WHERE SellerID = @sid';
-    Map<String, dynamic> params = {'sid': sellerId};
+  Future<void> updateSellerStatus(int sellerId, String status) async {
+    final db = await database;
+     await db.update('Sellers', {
+       'Status': status
+     }, where: 'SellerID = ?', whereArgs: [sellerId]);
+  }
+  
+  Future<void> deleteSeller(int sellerId) async {
+     final db = await database;
+     await db.delete('Sellers', where: 'SellerID = ?', whereArgs: [sellerId]);
+  }
 
-    if (categoryId != null) {
-      sql += ' AND CategoryID = @cid';
-      params['cid'] = categoryId;
+  Future<List<Category>> getCategories(int sellerId, {bool forceRefresh = false}) async {
+    final db = await database;
+    final result = await db.query('Categories', where: 'SellerID = ?', orderBy: 'OrderIndex', whereArgs: [sellerId]);
+    return result.map((e) => Category.fromMap(e)).toList();
+  }
+  
+   Future<void> ensureCategorySchema() async {
+    // No-op for Local DB
+  }
+
+  Future<void> addCategory(Category category) async {
+    final db = await database;
+    final localPath = await _saveImageLocally(category.imagePath);
+    await db.insert('Categories', {
+      'SellerID': category.sellerId,
+      'Name': category.name,
+      'OrderIndex': category.orderIndex, 
+      'ImagePath': localPath,
+    });
+  }
+
+  Future<void> updateCategory(Category category) async {
+    final db = await database;
+    String? newPath = category.imagePath;
+    if (category.imagePath != null && !category.imagePath!.contains(r'TelegramStoreBot\data\Images')) {
+       newPath = await _saveImageLocally(category.imagePath);
     }
+    await db.update('Categories', {
+      'Name': category.name,
+      'ImagePath': newPath,
+    }, where: 'CategoryID = ?', whereArgs: [category.categoryId]);
+  }
+  
+   Future<void> deleteCategory(int categoryId) async {
+     final db = await database;
+     await db.delete('Categories', where: 'CategoryID = ?', whereArgs: [categoryId]);
+  }
 
-    final result = await _query(sql, params);
-    return result.map((json) => Product.fromMap(json)).toList();
+  Future<List<Product>> getProducts(int sellerId, {int? categoryId, bool forceRefresh = false}) async {
+     final db = await database;
+     String where = 'SellerID = ?';
+     List<dynamic> args = [sellerId];
+     
+     if (categoryId != null) {
+       where += ' AND CategoryID = ?';
+       args.add(categoryId);
+     }
+     
+     final result = await db.query('Products', where: where, whereArgs: args);
+     return result.map((e) => Product.fromMap(e)).toList();
   }
 
   Future<void> addProduct(Product product) async {
-    // Note: conflictAlgorithm replace is not simple in Postgres (ON CONFLICT). 
-    // Assuming INSERT is enough or we check existence. 
-    // For now, standard INSERT.
-    await _insert('Products', {
+    final db = await database;
+    final localPath = await _saveImageLocally(product.imagePath);
+    await db.insert('Products', {
         'SellerID': product.sellerId,
         'CategoryID': product.categoryId,
         'Name': product.name,
@@ -180,75 +321,120 @@ class DatabaseHelper {
         'Price': product.price,
         'WholesalePrice': product.wholesalePrice,
         'Quantity': product.quantity,
-        'ImagePath': product.imagePath,
+        'ImagePath': localPath,
         'Status': product.status,
     });
   }
-  
+
   Future<void> updateProduct(Product product) async {
-    await _update('Products',
-      {
+     final db = await database;
+     String? newPath = product.imagePath;
+     if (product.imagePath != null && !product.imagePath!.contains(r'TelegramStoreBot\data\Images')) {
+        newPath = await _saveImageLocally(product.imagePath);
+     }
+     await db.update('Products', {
         'CategoryID': product.categoryId,
         'Name': product.name,
         'Description': product.description,
         'Price': product.price,
         'WholesalePrice': product.wholesalePrice,
         'Quantity': product.quantity,
-        'ImagePath': product.imagePath,
+        'ImagePath': newPath,
         'Status': product.status,
-      },
-      'ProductID = @id',
-      {'id': product.productId}
-    );
+     }, where: 'ProductID = ?', whereArgs: [product.productId]);
   }
 
   Future<void> deleteProduct(int productId) async {
-    await _delete('Products', 'ProductID = @id', {'id': productId});
-  }
-
-  // --- Categories Management ---
-  Future<void> addCategory(Category category) async {
-    await _insert('Categories', {
-      'SellerID': category.sellerId,
-      'Name': category.name,
-      'OrderIndex': category.orderIndex
-    });
-  }
-
-  Future<void> updateCategory(Category category) async {
-    await _update(
-      'Categories',
-      {'Name': category.name},
-      'CategoryID = @id',
-      {'id': category.categoryId}
-    );
-  }
-
-  Future<void> deleteCategory(int categoryId) async {
-    await _delete('Categories', 'CategoryID = @id', {'id': categoryId});
-  }
-
-  // --- Orders ---
-  Future<List<Order>> getOrders(int sellerId) async {
-    final result = await _query(
-      'SELECT * FROM Orders WHERE SellerID = @id ORDER BY CreatedAt DESC',
-      {'id': sellerId}
-    );
-    return result.map((json) => Order.fromMap(json)).toList();
-  }
-
-  Future<void> updateOrderStatus(int orderId, String status) async {
-    await _update(
-      'Orders',
-      {'Status': status},
-      'OrderID = @id',
-      {'id': orderId}
-    );
+    final db = await database;
+    await db.delete('Products', where: 'ProductID = ?', whereArgs: [productId]);
   }
   
-  // --- Messages ---
+   // --- Cart ---
+  Future<void> addToCart(int userId, int productId, int quantity, double price) async {
+    final db = await database;
+    await db.insert('Carts', {
+      'UserID': userId,
+      'ProductID': productId,
+      'Quantity': quantity,
+      'Price': price,
+      'AddedAt': DateTime.now().toIso8601String()
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<List<Map<String, dynamic>>> getCartItems(int userId) async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT c.*, p.Name, p.ImagePath, p.SellerID, s.StoreName
+      FROM Carts c
+      JOIN Products p ON c.ProductID = p.ProductID
+      JOIN Sellers s ON p.SellerID = s.SellerID
+      WHERE c.UserID = ?
+    ''', [userId]);
+  }
+
+  Future<void> updateCartQuantity(int cartId, int quantity) async {
+    final db = await database;
+    if (quantity <= 0) {
+      await removeFromCart(cartId);
+    } else {
+      await db.update('Carts', {'Quantity': quantity}, where: 'CartID = ?', whereArgs: [cartId]);
+    }
+  }
+
+  Future<void> removeFromCart(int cartId) async {
+    final db = await database;
+    await db.delete('Carts', where: 'CartID = ?', whereArgs: [cartId]);
+  }
+
+  Future<void> clearCart(int userId) async {
+    final db = await database;
+    await db.delete('Carts', where: 'UserID = ?', whereArgs: [userId]);
+  }
+
+
+   // --- Orders --- 
+  Future<List<Order>> getOrders(int sellerId) async {
+     final db = await database;
+     final result = await db.query('Orders', where: 'SellerID = ?', orderBy: 'CreatedAt DESC', whereArgs: [sellerId]);
+     return result.map((e) => Order.fromMap(e)).toList();
+  }
+  
+  Future<void> updateOrderStatus(int orderId, String status) async {
+    final db = await database;
+    await db.update('Orders', {'Status': status}, where: 'OrderID = ?', whereArgs: [orderId]);
+  }
+  
+  Future<int> createOrder(int buyerId, int sellerId, double total, String address, String notes, List<Map<String, dynamic>> items) async {
+    final db = await database;
+    return await db.transaction((txn) async {
+       final orderId = await txn.insert('Orders', {
+         'BuyerID': buyerId,
+         'SellerID': sellerId,
+         'Total': total,
+         'Status': 'Pending',
+         'CreatedAt': DateTime.now().toIso8601String(),
+         'DeliveryAddress': address,
+         'Notes': notes,
+         'PaymentMethod': 'cash',
+         'FullyPaid': 0
+       });
+       
+       for (var item in items) {
+          await txn.insert('OrderItems', {
+            'OrderID': orderId,
+            'ProductID': item['ProductID'],
+            'Quantity': item['Quantity'],
+            'Price': item['Price']
+          });
+       }
+       return orderId;
+    });
+  }
+  
+  // Messages
   Future<void> addMessage(int orderId, int sellerId, String messageType, String messageText) async {
-    await _insert('Messages', {
+    final db = await database;
+    await db.insert('Messages', {
       'OrderID': orderId,
       'SellerID': sellerId,
       'MessageType': messageType,
@@ -257,110 +443,69 @@ class DatabaseHelper {
       'CreatedAt': DateTime.now().toIso8601String(),
     });
   }
+  
+  // Credit Customers
+  Future<List<CreditCustomer>> getCreditCustomers(int sellerId) async {
+    final db = await database;
+    final result = await db.query('CreditCustomers', where: 'SellerID = ?', orderBy: 'FullName', whereArgs: [sellerId]);
+    return result.map((e) => CreditCustomer.fromMap(e)).toList();
+  }
 
-  // --- Cart ---
-  Future<void> addToCart(int userId, int productId, int quantity, double price) async {
-    // Upsert logic for Carts (UNIQUE UserID, ProductID)
-    // Postgres: ON CONFLICT (UserID, ProductID) DO UPDATE...
-    
-    final sql = '''
-      INSERT INTO Carts (UserID, ProductID, Quantity, Price, AddedAt)
-      VALUES (@uid, @pid, @qty, @price, @date)
-      ON CONFLICT (UserID, ProductID) 
-      DO UPDATE SET Quantity = Carts.Quantity + @qty, Price = @price
-    ''';
-    
-    await _execute(sql, {
-      'uid': userId,
-      'pid': productId,
-      'qty': quantity,
-      'price': price,
-      'date': DateTime.now().toIso8601String()
+  Future<int?> addCreditCustomer(int sellerId, String fullName, String phoneNumber) async {
+    final db = await database;
+    return await db.insert('CreditCustomers', {
+      'SellerID': sellerId,
+      'FullName': fullName,
+      'PhoneNumber': phoneNumber,
+      'CreatedAt': DateTime.now().toIso8601String(),
     });
   }
 
-  Future<List<Map<String, dynamic>>> getCartItems(int userId) async {
-    final sql = '''
-      SELECT c.*, p.Name, p.ImagePath, p.SellerID, s.StoreName
-      FROM Carts c
-      JOIN Products p ON c.ProductID = p.ProductID
-      JOIN Sellers s ON p.SellerID = s.SellerID
-      WHERE c.UserID = @uid
-    ''';
-    
-    return await _query(sql, {'uid': userId});
+  Future<List<CustomerCreditTransaction>> getCustomerTransactions(int customerId) async {
+     final db = await database;
+     final result = await db.query('CustomerCredit', where: 'CustomerID = ?', orderBy: 'TransactionDate DESC', whereArgs: [customerId]);
+     return result.map((e) => CustomerCreditTransaction.fromMap(e)).toList();
   }
 
-  Future<void> updateCartQuantity(int cartId, int quantity) async {
-    if (quantity <= 0) {
-      await removeFromCart(cartId);
-    } else {
-      await _update(
-        'Carts',
-        {'Quantity': quantity},
-        'CartID = @id',
-        {'id': cartId}
-      );
-    }
-  }
-
-  Future<void> removeFromCart(int cartId) async {
-    await _delete('Carts', 'CartID = @id', {'id': cartId});
-  }
-
-  Future<void> clearCart(int userId) async {
-    await _delete('Carts', 'UserID = @id', {'id': userId});
-  }
-
-  // --- Create Order ---
-  Future<int> createOrder(int buyerId, int sellerId, double total, String address, String notes, List<Map<String, dynamic>> items) async {
-    final conn = await database;
-    
-    // Transaction
-    return await conn.runTx((ctx) async {
-       // Insert Order
-       // Return ID
-       // Note: Helper methods usually use global _execute which calls conn.execute.
-       // Inside transaction, we must use ctx.execute.
-       // So we can't easily use the helpers here unless we refactor helpers to accept connection context.
-       // I'll write raw SQL for transaction safety.
+  Future<void> addCreditTransaction({
+    required int customerId,
+    required int sellerId,
+    required String transactionType, 
+    required double amount,
+    String? description,
+  }) async {
+    final db = await database;
+    await db.transaction((txn) async {
+       // Get balance
+       final balanceRes = await txn.query('CustomerCredit', 
+        where: 'CustomerID = ?', 
+        orderBy: 'CreditID DESC', 
+        limit: 1, 
+        whereArgs: [customerId]
+       );
        
-       final orderSql = '''
-         INSERT INTO Orders 
-         (BuyerID, SellerID, Total, Status, CreatedAt, DeliveryAddress, Notes, PaymentMethod, FullyPaid)
-         VALUES (@bid, @sid, @total, 'Pending', @date, @addr, @notes, 'cash', 0)
-         RETURNING OrderID
-       ''';
-       
-       final orderParams = {
-         'bid': buyerId,
-         'sid': sellerId,
-         'total': total,
-         'date': DateTime.now().toString(),
-         'addr': address,
-         'notes': notes
-       };
-       
-       final result = await ctx.execute(Sql.named(orderSql), parameters: orderParams);
-       final orderId = result.first[0] as int;
-
-       // Insert Items
-       for (var item in items) {
-         await ctx.execute(
-           Sql.named('''
-             INSERT INTO OrderItems (OrderID, ProductID, Quantity, Price)
-             VALUES (@oid, @pid, @qty, @price)
-           '''),
-           parameters: {
-             'oid': orderId,
-             'pid': item['ProductID'],
-             'qty': item['Quantity'],
-             'price': item['Price']
-           }
-         );
+       double currentBalance = 0.0;
+       if (balanceRes.isNotEmpty) {
+         currentBalance = (balanceRes.first['BalanceAfter'] as num).toDouble();
        }
        
-       return orderId;
+       double newBalance = currentBalance;
+       if (transactionType == 'credit') {
+         newBalance += amount;
+       } else if (transactionType == 'payment') {
+         newBalance -= amount;
+       }
+       
+       await txn.insert('CustomerCredit', {
+         'CustomerID': customerId,
+         'SellerID': sellerId,
+         'TransactionType': transactionType,
+         'Amount': amount,
+         'Description': description,
+         'BalanceBefore': currentBalance,
+         'BalanceAfter': newBalance,
+         'TransactionDate': DateTime.now().toIso8601String()
+       });
     });
   }
 }

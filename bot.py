@@ -3862,18 +3862,17 @@ def handle_view_product_detail(call):
             bot.answer_callback_query(call.id, "المنتج غير موجود")
             return
             
-        # Unpack Tuple
-        # Assuming: pid, name, desc, price, wholesale, qty, img...
-        # Need to verify tuple structure from a known select query matching get_product_by_id logic
-        # In bot.py, get_product_by_id select * from Products.
-        # Structure: ProductID(0), Name(1), Description(2), Price(3), WholesalePrice(4), Quantity(5), ImagePath(6), SellerID(7), CategoryID(8)
+        print(f"DEBUG PRODUCT DATA: {product}") # Debugging
+
+            
+        # Structure: ProductID(0), SellerID(1), CategoryID(2), Name(3), Description(4), Price(5), WholesalePrice(6), Quantity(7), ImagePath(8)
         
         pid = product[0]
-        name = product[1]
-        desc = product[2]
-        price = product[3]
-        qty = product[5]
-        img_path = product[6]
+        name = product[3]
+        desc = product[4]
+        price = product[5]
+        qty = product[7]
+        img_path = product[8]
         
         text = f"📦 **{name}**\n\n"
         text += f"💰 السعر: {price} IQD\n"
@@ -3890,8 +3889,12 @@ def handle_view_product_detail(call):
         markup.add(types.InlineKeyboardButton("🔙 رجوع للقائمة", callback_data="back_to_prod_list"))
 
         if img_path and os.path.exists(img_path):
-            with open(img_path, 'rb') as photo:
-                bot.send_photo(call.message.chat.id, photo, caption=text, parse_mode='Markdown', reply_markup=markup)
+            try:
+                with open(img_path, 'rb') as photo:
+                    bot.send_photo(call.message.chat.id, photo, caption=text, parse_mode='Markdown', reply_markup=markup)
+            except Exception as img_error:
+                print(f"⚠️ Error sending photo for product {pid}: {img_error}")
+                bot.send_message(call.message.chat.id, text, parse_mode='Markdown', reply_markup=markup)
         else:
             bot.send_message(call.message.chat.id, text, parse_mode='Markdown', reply_markup=markup)
             

@@ -20,6 +20,7 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
   late TextEditingController _nameController;
   late TextEditingController _descController;
   late TextEditingController _priceController;
+  late TextEditingController _wholesalePriceController;
   late TextEditingController _qtyController;
   String? _imagePath;
   int? _selectedCategoryId;
@@ -32,6 +33,7 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
     _nameController = TextEditingController(text: widget.product?.name ?? '');
     _descController = TextEditingController(text: widget.product?.description ?? '');
     _priceController = TextEditingController(text: widget.product?.price.toString() ?? '');
+    _wholesalePriceController = TextEditingController(text: widget.product?.wholesalePrice?.toString() ?? '');
     _qtyController = TextEditingController(text: widget.product?.quantity.toString() ?? '');
     _imagePath = widget.product?.imagePath;
     _selectedCategoryId = widget.product?.categoryId;
@@ -61,25 +63,32 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
 
   Future<void> _save() async {
     if (_formKey.currentState!.validate()) {
-      final product = Product(
-        productId: widget.product?.productId ?? 0, // 0 for new
-        sellerId: widget.sellerId,
-        categoryId: _selectedCategoryId,
-        name: _nameController.text,
-        description: _descController.text,
-        price: double.tryParse(_priceController.text) ?? 0.0,
-        quantity: int.tryParse(_qtyController.text) ?? 0,
-        imagePath: _imagePath,
-        status: 'active',
-      );
+      try {
+        final product = Product(
+          productId: widget.product?.productId ?? 0, 
+          sellerId: widget.sellerId,
+          categoryId: _selectedCategoryId,
+          name: _nameController.text,
+          description: _descController.text,
+          price: double.tryParse(_priceController.text) ?? 0.0,
+          wholesalePrice: double.tryParse(_wholesalePriceController.text),
+          quantity: int.tryParse(_qtyController.text) ?? 0,
+          imagePath: _imagePath,
+          status: 'active',
+        );
 
-      if (widget.product == null) {
-        await DatabaseHelper.instance.addProduct(product);
-      } else {
-        await DatabaseHelper.instance.updateProduct(product);
+        if (widget.product == null) {
+          await DatabaseHelper.instance.addProduct(product);
+        } else {
+          await DatabaseHelper.instance.updateProduct(product);
+        }
+
+        if (mounted) Navigator.pop(context, true);
+      } catch (e) {
+        if (mounted) {
+           ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ في الحفظ: $e'), backgroundColor: Colors.red));
+        }
       }
-
-      if (mounted) Navigator.pop(context, true);
     }
   }
 
@@ -133,17 +142,25 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
                   maxLines: 2,
                 ),
                 const SizedBox(height: 12),
-                Row(
+                  Row(
                   children: [
                     Expanded(
                       child: TextFormField(
                         controller: _priceController,
-                        decoration: const InputDecoration(labelText: 'السعر', border: OutlineInputBorder()),
+                        decoration: const InputDecoration(labelText: 'سعر البيع', border: OutlineInputBorder()),
                         keyboardType: TextInputType.number,
                         validator: (v) => v!.isEmpty ? 'مطلوب' : null,
                       ),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextFormField(
+                        controller: _wholesalePriceController,
+                        decoration: const InputDecoration(labelText: 'سعر الجملة', border: OutlineInputBorder()),
+                        keyboardType: TextInputType.number,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
                     Expanded(
                       child: TextFormField(
                         controller: _qtyController,
