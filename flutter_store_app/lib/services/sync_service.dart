@@ -31,20 +31,20 @@ class SyncService {
   // Start the background timer
   void startSyncTimer() {
     _timer?.cancel();
-    // Run immediately (Pull Only)
-    syncPullOnly(); 
-    // Then every 15 minutes (Push + Pull)
+    // Run immediately (Startup Logic: Pull All)
+    syncStartup(); 
+    // Then every 15 minutes (Push Inventory + Pull Orders)
     _timer = Timer.periodic(const Duration(minutes: 15), (timer) {
        syncNow();
     });
-    print("🔄 Sync Timer Started (15 min interval - Push & Pull)");
+    print("🔄 Sync Timer Started (15 min interval)");
   }
 
   void stop() {
     _timer?.cancel();
   }
 
-  // Manual Sync (Button): Push + Pull
+  // Manual Sync (Button) & Timer: Push Inventory, Pull Orders (No Inventory Overwrite)
   Future<void> syncNow() async {
     if (_isSyncing) {
       _statusController.add("Sync already in progress...");
@@ -52,27 +52,29 @@ class SyncService {
     }
     
     _isSyncing = true;
-    _statusController.add("Starting Manual Sync (Push & Pull)...");
-    print("☁️ Starting Manual Sync...");
+    _statusController.add("Starting Sync (Flutter -> Bot)...");
+    print("☁️ Starting Sync (Flutter -> Bot)...");
 
     Connection? conn;
     try {
       conn = await _connectToPostgres();
       final dbHelper = DatabaseHelper.instance;
 
-      // 1. PUSH (Local -> Cloud)
-      _statusController.add("Pushing Local Changes...");
+      // 1. PUSH INVENTORY (Local -> Cloud)
+      _statusController.add("Pushing Local Inventory...");
       await _pushAllInventory(conn, dbHelper);
 
-      // 2. PULL (Cloud -> Local)
-      _statusController.add("Pulling Cloud Changes...");
-      await _pullAllData(conn, dbHelper);
+      // 2. PULL ORDERS ONLY (Cloud -> Local) 
+      // User requested "Flutter to Bot not opposite", implying we shouldn't overwrite local inventory.
+      // But we MUST pull orders/users to see new sales.
+      _statusController.add("Pulling New Orders...");
+      await _pullOrders(conn, dbHelper);
       
-      // 3. Sync Images (Currently bidirectional, safe to keep)
+      // 3. Sync Images (Bidirectional check)
       await _syncImages(conn);
 
-      _statusController.add("Manual Sync Completed!");
-      print("🎉 Manual Sync Completed!");
+      _statusController.add("Sync Completed!");
+      print("🎉 Sync Completed!");
       
     } catch (e) {
       _statusController.add("Sync Failed: $e");
@@ -83,38 +85,31 @@ class SyncService {
     }
   }
 
-  // Automatic Sync (Timer): Pull Only
-  Future<void> syncPullOnly() async {
+  // Startup Sync: Pull Everything (Ensure fresh state)
+  Future<void> syncStartup() async {
     if (_isSyncing) {
-       print("⚠️ Global Sync skipped: Sync already in progress");
+       print("⚠️ Startup Sync skipped: Sync already in progress");
        return;
     }
     
     _isSyncing = true; 
-    // We don't flood the UI status controller for background sync unless error? 
-    // Or maybe we do so user sees "Updating..." if they happen to look.
-    // Let's be less intrusive for background sync
-    print("☁️ Starting Auto-Link (Pull Only)...");
+    print("☁️ Starting Startup Sync (Pull All)...");
 
     Connection? conn;
     try {
       conn = await _connectToPostgres();
       final dbHelper = DatabaseHelper.instance;
 
-      // PULL Only
-      await _pullAllData(conn, dbHelper);
+      // PULL ALL (Inventory + Orders)
+      await _pullInventory(conn, dbHelper);
+      await _pullOrders(conn, dbHelper);
       
-      // Images (Download Only? Or keeping full sync? User said "Sync from Bot to Desktop")
-      // Currently _syncImages is mixed. Let's assume full image sync is fine or maybe restrict it.
-      // User said "Sync from Bot to Desktop". So ideally download only.
-      // But _syncImages handles both. Let's keep it simple for now, or just Pull Data.
-      // Actually _syncImages does both up and down. Let's use it as is for now.
       await _syncImages(conn); 
 
-      print("🎉 Auto-Sync Completed!");
+      print("🎉 Startup Sync Completed!");
       
     } catch (e) {
-      print("❌ Auto-Sync Failed: $e");
+      print("❌ Startup Sync Failed: $e");
     } finally {
       await conn?.close();
       _isSyncing = false;
@@ -168,7 +163,7 @@ class SyncService {
       });
   }
 
-  Future<void> _pullAllData(Connection conn, DatabaseHelper dbHelper) async {
+  Future<void> _pullInventory(Connection conn, DatabaseHelper dbHelper) async {
        // Sellers
       await _syncTable(conn, dbHelper, 'Sellers', 'sellerid', {
         'sellerid': 'SellerID',
@@ -200,6 +195,9 @@ class SyncService {
          'imagepath': 'ImagePath',
          'status': 'Status'
       });
+  }
+
+  Future<void> _pullOrders(Connection conn, DatabaseHelper dbHelper) async {
        // Users
       await _syncTable(conn, dbHelper, 'Users', 'userid', {
          'userid': 'UserID',

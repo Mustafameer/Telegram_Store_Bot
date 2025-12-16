@@ -100,18 +100,31 @@ class _CategoriesTabState extends State<CategoriesTab> {
           
           final categories = snapshot.data ?? [];
           
-          if (categories.isEmpty) {
-             return Center(
-               child: Column(
-                 mainAxisAlignment: MainAxisAlignment.center,
-                 children: [
-                   const Text('لا يوجد فئات'),
-                   const SizedBox(height: 10),
-                   ElevatedButton(onPressed: () => _refreshCategories(force: true), child: const Text('تحديث'))
-                 ],
-               )
-             );
-          }
+           if (categories.isEmpty) {
+              return Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Text('لا يوجد فئات'),
+                    const SizedBox(height: 10),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        ElevatedButton(onPressed: () => _refreshCategories(force: true), child: const Text('تحديث')),
+                        if (widget.isEditable) ...[
+                          const SizedBox(width: 16),
+                          FilledButton.icon(
+                            onPressed: () => _showCategoryDialog(),
+                            icon: const Icon(Icons.add),
+                            label: const Text('إضافة فئة'),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
+                )
+              );
+           }
 
           return RefreshIndicator(
             onRefresh: () => _refreshCategories(force: true),

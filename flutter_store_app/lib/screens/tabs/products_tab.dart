@@ -138,7 +138,18 @@ class _ProductsTabState extends State<ProductsTab> {
               const Text('لا يوجد منتجات'),
               if (widget.isEditable) ...[
                  const SizedBox(height: 16),
-                 ElevatedButton(onPressed: () => _refreshData(force: true), child: const Text('تحديث'))
+                 Row(
+                   mainAxisAlignment: MainAxisAlignment.center,
+                   children: [
+                     ElevatedButton(onPressed: () => _refreshData(force: true), child: const Text('تحديث')),
+                     const SizedBox(width: 16),
+                     FilledButton.icon(
+                        onPressed: () => _showProductForm(),
+                        icon: const Icon(Icons.add),
+                        label: const Text('إضافة منتج'),
+                     ),
+                   ],
+                 ),
               ]
             ],
           )

@@ -6896,6 +6896,86 @@ def handle_main_menu(message):
     else:
         show_buyer_main_menu(message)
 
+# ====== تنظيف الصور غير المستخدمة ======
+@bot.message_handler(commands=['clean_images'])
+def clean_unused_images(message):
+    if not is_bot_admin(message.from_user.id):
+        return
+
+    try:
+        bot.send_message(message.chat.id, "🔄 **جاري فحص الصور غير المستخدمة...**")
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # 1. Get all used images from DB
+        used_images = set()
+        
+        # Products
+        cursor.execute("SELECT ImagePath FROM Products WHERE ImagePath IS NOT NULL AND ImagePath != ''")
+        for row in cursor.fetchall():
+            used_images.add(os.path.basename(row[0])) # Store filename only
+            
+        # Categories
+        cursor.execute("SELECT ImagePath FROM Categories WHERE ImagePath IS NOT NULL AND ImagePath != ''")
+        for row in cursor.fetchall():
+            used_images.add(os.path.basename(row[0]))
+            
+        # Sellers
+        cursor.execute("SELECT ImagePath FROM Sellers WHERE ImagePath IS NOT NULL AND ImagePath != ''")
+        for row in cursor.fetchall():
+            used_images.add(os.path.basename(row[0]))
+            
+        conn.close()
+        
+        # 2. Scan Directory
+        images_dir = os.path.join(DATA_DIR, 'Images')
+        if not os.path.exists(images_dir):
+            bot.send_message(message.chat.id, "📂 مجلد الصور غير موجود.")
+            return
+
+        all_files = os.listdir(images_dir)
+        deleted_count = 0
+        reclaimed_space = 0
+        
+        for filename in all_files:
+            file_path = os.path.join(images_dir, filename)
+            
+            # Skip valid usage
+            if filename in used_images:
+                continue
+                
+            # Skip non-files (directories)
+            if not os.path.isfile(file_path):
+                continue
+                
+            # DELETE ORPHAN
+            try:
+                file_size = os.path.getsize(file_path)
+                os.remove(file_path)
+                deleted_count += 1
+                reclaimed_space += file_size
+                print(f"🗑️ Cleaned orphan image: {filename}")
+            except Exception as e:
+                print(f"⚠️ Failed to delete {filename}: {e}")
+        
+        # Convert bytes to readable
+        size_str = f"{reclaimed_space} B"
+        if reclaimed_space > 1024:
+            size_str = f"{reclaimed_space / 1024:.2f} KB"
+        if reclaimed_space > 1024 * 1024:
+            size_str = f"{reclaimed_space / (1024 * 1024):.2f} MB"
+
+        bot.send_message(message.chat.id, 
+                        f"✅ **تم تنظيف الصور!**\n\n"
+                        f"🗑️ عدد الصور المحذوفة: {deleted_count}\n"
+                        f"💾 المساحة المسترجعة: {size_str}\n"
+                        f"🖼️ الصور النشطة المتبقية: {len(used_images)}")
+
+    except Exception as e:
+        bot.send_message(message.chat.id, f"⚠️ حدث خطأ: {e}")
+        print(f"Clean Images Error: {e}")
+
 # ====== تشغيل البوت ======
 print("🚀 بدأ تشغيل بوت متجرنا...")
 print("✅ النظام الجديد شامل جميع الميزات:")
