@@ -6945,7 +6945,7 @@ def handle_main_menu(message):
         show_buyer_main_menu(message)
 
 # ====== تنظيف الصور غير المستخدمة ======
-@bot.message_handler(commands=['clean_images'])
+@bot.message_handler(commands=['clean_images', 'clear_images'])
 def clean_unused_images(message):
     if not is_bot_admin(message.from_user.id):
         return

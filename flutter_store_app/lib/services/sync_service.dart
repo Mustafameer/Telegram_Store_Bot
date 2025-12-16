@@ -82,7 +82,7 @@ class SyncService {
     }
   }
 
-  // Startup Sync: Pull Everything (Ensure fresh state)
+  // Startup Sync: Pull All (Mirror Cloud State - Handles Deletions)
   Future<void> syncStartup() async {
     if (_isSyncing) {
        print("⚠️ Startup Sync skipped: Sync already in progress");
@@ -90,19 +90,20 @@ class SyncService {
     }
     
     _isSyncing = true; 
-    print("☁️ Starting Startup Sync (Pull All)...");
+    print("☁️ Starting Startup Sync (Pull All & Prune)...");
 
     Connection? conn;
     try {
       conn = await _connectToPostgres();
       final dbHelper = DatabaseHelper.instance;
 
-      // PULL ALL (Inventory + Orders)
-      await _pullInventory(conn, dbHelper);
+      // PULL ALL with PRUNE (Delete local if deleted in cloud)
+      await _pullInventory(conn, dbHelper, prune: true);
       await _pullOrders(conn, dbHelper);
       
-      // Bidirectional Image Sync
-      await _syncImages(conn, uploadOnly: false); 
+      // Sync Images with Prune (Delete local files if not in cloud)
+      // Upload: False (Trust Cloud as Master on Startup)
+      await _syncImages(conn, uploadOnly: false, pruneLocal: true); 
 
       print("🎉 Startup Sync Completed!");
       
@@ -161,7 +162,7 @@ class SyncService {
       });
   }
 
-  Future<void> _pullInventory(Connection conn, DatabaseHelper dbHelper) async {
+  Future<void> _pullInventory(Connection conn, DatabaseHelper dbHelper, {bool prune = false}) async {
        // Sellers
       await _syncTable(conn, dbHelper, 'Sellers', 'sellerid', {
         'sellerid': 'SellerID',
@@ -171,7 +172,7 @@ class SyncService {
         'createdat': 'CreatedAt',
         'status': 'Status',
         'imagepath': 'ImagePath'
-      });
+      }, prune: prune);
        // Categories
       await _syncTable(conn, dbHelper, 'Categories', 'categoryid', {
         'categoryid': 'CategoryID',
@@ -179,7 +180,7 @@ class SyncService {
         'name': 'Name',
         'orderindex': 'OrderIndex',
         'imagepath': 'ImagePath'
-      });
+      }, prune: prune);
        // Products
       await _syncTable(conn, dbHelper, 'Products', 'productid', {
          'productid': 'ProductID',
@@ -192,7 +193,7 @@ class SyncService {
          'quantity': 'Quantity',
          'imagepath': 'ImagePath',
          'status': 'Status'
-      });
+      }, prune: prune);
   }
 
   Future<void> _pullOrders(Connection conn, DatabaseHelper dbHelper) async {
@@ -229,64 +230,66 @@ class SyncService {
       });
   }
 
-  Future<void> _syncImages(Connection conn, {bool uploadOnly = false}) async {
+  Future<void> _syncImages(Connection conn, {bool uploadOnly = false, bool pruneLocal = false}) async {
     try {
       _statusController.add("Checking Image Storage (${uploadOnly ? 'Upload Only' : 'Sync'})...");
-      print("🖼️ Starting Image Sync (${uploadOnly ? 'Upload Only' : 'Bidirectional'})...");
+      print("🖼️ Starting Image Sync (Prune: $pruneLocal)...");
       
       // Ensure Table Exists
       try {
         await conn.execute("CREATE TABLE IF NOT EXISTS ImageStorage (FileName TEXT PRIMARY KEY, FileData BYTEA, UpdatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
       } catch (e) {
-         print("⚠️ Table Creation Warning: $e");
-         // It might exist, proceed.
+         // print("⚠️ Table Creation Warning: $e");
       }
       
       final imgDir = Directory(_localImagesPath);
       if (!await imgDir.exists()) await imgDir.create(recursive: true);
       
-      // A. Upload: Local -> Cloud
       final localFiles = imgDir.listSync().whereType<File>().toList();
-      print("  Local Files Found: ${localFiles.length}");
-      _statusController.add("Found ${localFiles.length} local images.");
       
-      int uploadedCount = 0;
-      for (var file in localFiles) {
-        final fileName = p.basename(file.path);
-        
-        try {
-           // efficient check
-           final check = await conn.execute(Sql.named('SELECT 1 FROM ImageStorage WHERE FileName = @name'), parameters: {'name': fileName});
-           
-           if (check.isEmpty) {
-              _statusController.add("Uploading $fileName...");
-              final bytes = await file.readAsBytes();
-              await conn.execute(
-                Sql.named('INSERT INTO ImageStorage (FileName, FileData) VALUES (@name, @data)'), 
-                parameters: {
-                  'name': fileName, 
-                  'data': TypedValue(Type.byteArray, bytes)
-                }
-              );
-              uploadedCount++;
-              print("  ✅ Uploaded $fileName");
-           }
-        } catch (e) {
-           print("  ❌ Failed to upload $fileName: $e");
-           _statusController.add("Error uploading $fileName. Skipping.");
-        }
+      // A. Upload: Local -> Cloud (Only if NOT uploadOnly=false AND pruneLocal=true, 
+      // actually if pruneLocal=true (Startup), we trust cloud, so maybe skip upload? 
+      // Safe bet: Upload if it's explicitly strictly new? 
+      // User complaint: "Deleted in Cloud returned to Disk". This means we shouldn't download deleted stuff.
+      // But complaint "Local deleted stuff stays" requires Prune.
+      
+      // If uploadOnly is true (Button), we just Upload.
+      // If we are in Startup (pruneLocal=true), we probably shouldn't upload indiscriminately if we want to mirror.
+      // But let's keep upload logic for now unless it causes issues.
+      // Wait, if pruneLocal is TRUE, we are doing a "Download Mirror".
+      
+      if (!pruneLocal) {
+          int uploadedCount = 0;
+          for (var file in localFiles) {
+            final fileName = p.basename(file.path);
+            try {
+              final check = await conn.execute(Sql.named('SELECT 1 FROM ImageStorage WHERE FileName = @name'), parameters: {'name': fileName});
+              if (check.isEmpty) {
+                  _statusController.add("Uploading $fileName...");
+                  final bytes = await file.readAsBytes();
+                  await conn.execute(
+                    Sql.named('INSERT INTO ImageStorage (FileName, FileData) VALUES (@name, @data)'), 
+                    parameters: {'name': fileName, 'data': TypedValue(Type.byteArray, bytes)}
+                  );
+                  uploadedCount++;
+              }
+            } catch (e) { print("Upload error $fileName: $e"); }
+          }
+          if (uploadedCount > 0) _statusController.add("Uploaded $uploadedCount images.");
       }
-      if (uploadedCount > 0) _statusController.add("Uploaded $uploadedCount images.");
       
-      // B. Download: Cloud -> Local (SKIP IF UPLOAD ONLY)
-      int downloadedCount = 0;
+      // B. Download / Prune: Cloud -> Local
       if (!uploadOnly) {
         _statusController.add("Checking Cloud Images...");
         final cloudFilesResult = await conn.execute('SELECT FileName FROM ImageStorage');
-        print("  Cloud Files Found: ${cloudFilesResult.length}");
+        final Set<String> cloudFileNames = {};
+        
+        int downloadedCount = 0;
+        int prunedCount = 0;
         
         for (var row in cloudFilesResult) {
           final cloudName = row[0] as String;
+          cloudFileNames.add(cloudName);
           final localFile = File(p.join(imgDir.path, cloudName));
           
           if (!await localFile.exists()) {
@@ -296,26 +299,35 @@ class SyncService {
                  Sql.named('SELECT FileData FROM ImageStorage WHERE FileName = @name'),
                  parameters: {'name': cloudName}
                );
-               
-               if (dataResult.isNotEmpty) {
-                 final binaryData = dataResult.first[0];
-                 if (binaryData != null) {
-                   await localFile.writeAsBytes(binaryData as List<int>);
+               if (dataResult.isNotEmpty && dataResult.first[0] != null) {
+                   await localFile.writeAsBytes(dataResult.first[0] as List<int>);
                    downloadedCount++;
-                   print("  ✅ Downloaded $cloudName");
-                 }
                }
-             } catch (e) {
-                print("  ❌ Failed to download $cloudName: $e");
-             }
+             } catch (e) { print("Download error $cloudName: $e"); }
           }
         }
+        
+        // PRUNE LOCAL
+        if (pruneLocal) {
+            for (var file in localFiles) {
+                final localName = p.basename(file.path);
+                if (!cloudFileNames.contains(localName)) {
+                    try {
+                        await file.delete();
+                        prunedCount++;
+                        print("🗑️ Pruned local image: $localName");
+                    } catch (e) {
+                        print("⚠️ Failed to prune $localName: $e");
+                    }
+                }
+            }
+             if (prunedCount > 0) _statusController.add("Pruned $prunedCount obsolete local images.");
+        }
+
         if (downloadedCount > 0) _statusController.add("Downloaded $downloadedCount images.");
-      } else {
-        print("  ⏩ Skipping Download (Upload Only Mode)");
       }
       
-      print("✅ Image Sync Done! Up: $uploadedCount, Down: $downloadedCount");
+      print("✅ Image Sync Done!");
       
     } catch (e) {
       print("❌ Image Sync Critical Failure: $e");
@@ -380,11 +392,55 @@ class SyncService {
       DatabaseHelper dbHelper, 
       String pgTableName, 
       String pgPrimaryKey, 
-      Map<String, String> colMap
+      Map<String, String> colMap,
+      {bool prune = false}
   ) async {
      try {
-       print("⬇️ Pulling $pgTableName...");
+       print("⬇️ Pulling $pgTableName (Prune: $prune)...");
        final result = await conn.execute('SELECT * FROM $pgTableName');
+       
+       // Handle Pruning (Delete local records not in Cloud)
+       if (prune) {
+           final localPrimaryKey = colMap[pgPrimaryKey]; 
+           if (localPrimaryKey != null) {
+               // Get Cloud IDs
+               final cloudIds = <String>{}; // Using string for generality
+               for (final row in result) {
+                   final pgMap = row.toColumnMap();
+                   if (pgMap[pgPrimaryKey] != null) {
+                       cloudIds.add(pgMap[pgPrimaryKey].toString());
+                   }
+               }
+               
+               // Usually we want to map Table Name... simpler to assume 'pgTableName' maps to 'localTableName' = 'pgTableName' 
+               // (Except casing, but dbHelper handles that?)
+               // dbHelper usually takes table name.
+               // Assuming table names match
+               final db = await dbHelper.database;
+               
+               // We need dynamic table name. All my calls use same name (Sellers, Products...)
+               // Just be careful with 'OrderItems' -> 'OrderItems'
+               
+               // Fetch all Local IDs
+               final localTable = pgTableName; // Assumption holds for this app
+               final localRows = await db.query(localTable, columns: [localPrimaryKey]);
+               
+               int deletedCount = 0;
+               final batchDelete = db.batch();
+               
+               for (var row in localRows) {
+                   final id = row[localPrimaryKey].toString();
+                   if (!cloudIds.contains(id)) {
+                       batchDelete.delete(localTable, where: '$localPrimaryKey = ?', whereArgs: [row[localPrimaryKey]]);
+                       deletedCount++;
+                   }
+               }
+               if (deletedCount > 0) {
+                   await batchDelete.commit(noResult: true);
+                   print("🗑️ Pruned $deletedCount records from $localTable");
+               }
+           }
+       }
        
        if (result.isEmpty) return;
        
@@ -402,8 +458,6 @@ class SyncService {
                   val = val.toIso8601String();
                 }
                 if (localKey == 'ImagePath' && val != null && val is String) {
-                   // Fix for Windows: Postgrest returns Linux paths (/app/data/...)
-                   // path.basename on Windows might not split '/' correctly.
                    var normalized = val.replaceAll('/', p.separator).replaceAll('\\', p.separator);
                    final fileName = p.basename(normalized);
                    val = p.join(_localImagesPath, fileName);
