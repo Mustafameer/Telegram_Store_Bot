@@ -7031,12 +7031,19 @@ def clean_unused_images(message):
         if reclaimed_space > 1024 * 1024:
             size_str = f"{reclaimed_space / (1024 * 1024):.2f} MB"
 
-        bot.send_message(message.chat.id, 
-                        f"✅ **تم تنظيف الصور!**\n\n"
-                        f"🗑️ محذوف من السحابة (DB): {deleted_db_count}\n"
-                        f"🗑️ محذوف من القرص (Disk): {deleted_disk_count}\n"
-                        f"💾 مساحة القرص المسترجعة: {size_str}\n"
-                        f"🖼️ الصور النشطة المتبقية: {len(used_images)}")
+        msg = (f"✅ **تم تنظيف الصور!**\n\n"
+               f"🗑️ محذوف من السحابة (DB): {deleted_db_count}\n"
+               f"🗑️ محذوف من القرص (Disk): {deleted_disk_count}\n"
+               f"💾 مساحة القرص المسترجعة: {size_str}\n"
+               f"🖼️ الصور النشطة المتبقية: {len(used_images)}")
+
+        if used_images:
+            msg += "\n\n📂 **قائمة الصور النشطة:**\n"
+            # Show first 20 images
+            for img in list(used_images)[:20]:
+                msg += f"- `{img}`\n"
+                
+        bot.send_message(message.chat.id, msg, parse_mode='Markdown')
 
     except Exception as e:
         bot.send_message(message.chat.id, f"⚠️ حدث خطأ: {e}")
