@@ -3987,13 +3987,24 @@ def handle_delete_product_direct(call):
             types.InlineKeyboardButton("✅ نعم، احذف", callback_data=f"confirm_delete_prod_{product_id}"),
             types.InlineKeyboardButton("❌ إلغاء", callback_data=f"view_prod_{product_id}")
         )
-        bot.edit_message_text(
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            text="⚠️ **هل أنت متأكد من حذف هذا المنتج؟**\nسيتم حذفه من القائمة نهائياً.",
-            parse_mode='Markdown',
-            reply_markup=markup
-        )
+        # Handle different message types (Photo vs Text)
+        if call.message.content_type == 'photo':
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+            bot.send_message(
+                call.message.chat.id,
+                "⚠️ **هل أنت متأكد من حذف هذا المنتج؟**\nسيتم حذفه من القائمة نهائياً.",
+                parse_mode='Markdown',
+                reply_markup=markup
+            )
+        else:
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text="⚠️ **هل أنت متأكد من حذف هذا المنتج؟**\nسيتم حذفه من القائمة نهائياً.",
+                parse_mode='Markdown',
+                reply_markup=markup
+            )
+            
         bot.answer_callback_query(call.id)
     except Exception as e:
         print(f"Error in delete product direct: {e}")
