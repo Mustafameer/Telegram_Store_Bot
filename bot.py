@@ -3997,7 +3997,8 @@ def handle_delete_product_direct(call):
         bot.answer_callback_query(call.id)
     except Exception as e:
         print(f"Error in delete product direct: {e}")
-        bot.answer_callback_query(call.id, "حدث خطأ")
+        # Show actual error to user for debugging
+        bot.answer_callback_query(call.id, f"حدث خطأ: {str(e)[:50]}", show_alert=True)
 
 # ====== ربط أزرار لوحة التحكم بالوظائف الموجودة ======
 class MockMessage:
