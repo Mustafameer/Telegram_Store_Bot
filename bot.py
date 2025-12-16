@@ -7050,6 +7050,59 @@ def clean_unused_images(message):
         print(f"Clean Images Error: {e}")
         traceback.print_exc()
 
+@bot.message_handler(commands=['find_image'])
+def find_image_usage(message):
+    try:
+        args = message.text.split()
+        if len(args) < 2:
+            bot.reply_to(message, "Usage: /find_image <filename>")
+            return
+            
+        target_name = args[1]
+        bot.reply_to(message, f"🔍 Searching for '{target_name}'...")
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        found_msg = ""
+        
+        # Products
+        if IS_POSTGRES:
+            cursor.execute("SELECT ProductID, Name FROM Products WHERE ImagePath LIKE %s", (f"%{target_name}%",))
+        else:
+            cursor.execute("SELECT ProductID, Name FROM Products WHERE ImagePath LIKE ?", (f"%{target_name}%",))
+            
+        for row in cursor.fetchall():
+            found_msg += f"📦 **Product:** {row[1]} (ID: {row[0]})\n"
+            
+        # Categories
+        if IS_POSTGRES:
+            cursor.execute("SELECT CategoryID, Name FROM Categories WHERE ImagePath LIKE %s", (f"%{target_name}%",))
+        else:
+            cursor.execute("SELECT CategoryID, Name FROM Categories WHERE ImagePath LIKE ?", (f"%{target_name}%",))
+            
+        for row in cursor.fetchall():
+            found_msg += f"📂 **Category:** {row[1]} (ID: {row[0]})\n"
+            
+        # Sellers
+        if IS_POSTGRES:
+            cursor.execute("SELECT SellerID, StoreName FROM Sellers WHERE ImagePath LIKE %s", (f"%{target_name}%",))
+        else:
+            cursor.execute("SELECT SellerID, StoreName FROM Sellers WHERE ImagePath LIKE ?", (f"%{target_name}%",))
+            
+        for row in cursor.fetchall():
+            found_msg += f"🏪 **Seller:** {row[1]} (ID: {row[0]})\n"
+            
+        conn.close()
+        
+        if found_msg:
+             bot.reply_to(message, f"✅ **Found References:**\n{found_msg}", parse_mode='Markdown')
+        else:
+             bot.reply_to(message, "❌ Image not found in any active table.")
+             
+    except Exception as e:
+        bot.reply_to(message, f"Error: {e}")
+
 # ====== تشغيل البوت ======
 print("🚀 بدأ تشغيل بوت متجرنا...")
 print("✅ النظام الجديد شامل جميع الميزات:")
