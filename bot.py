@@ -6908,7 +6908,7 @@ def clean_unused_images(message):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # 1. Get all used images from DB
+        # 1. Get all used images from DB (Sellers, Categories, Products)
         used_images = set()
         
         # Products
@@ -6926,38 +6926,55 @@ def clean_unused_images(message):
         for row in cursor.fetchall():
             used_images.add(os.path.basename(row[0]))
             
+        # 2. Clean ImageStorage Table (Cloud Backup)
+        # We need to delete rows where FileName is NOT in used_images
+        # Since we are using DBWrapper/CursorWrapper, we should check if table exists first
+        deleted_db_count = 0
+        try:
+            # Get all stored images
+            cursor.execute("SELECT FileName FROM ImageStorage")
+            stored_files = cursor.fetchall()
+            
+            for row in stored_files:
+                file_name = row[0]
+                if file_name not in used_images:
+                     cursor.execute("DELETE FROM ImageStorage WHERE FileName = ?", (file_name,))
+                     deleted_db_count += 1
+                     print(f"🗑️ Cleaned cloud image: {file_name}")
+            
+            conn.commit()
+        except Exception as db_e:
+            print(f"⚠️ ImageStorage cleanup skipped (Table might not exist): {db_e}")
+
         conn.close()
         
-        # 2. Scan Directory
+        # 3. Clean Local Disk (Images Folder)
         images_dir = os.path.join(DATA_DIR, 'Images')
-        if not os.path.exists(images_dir):
-            bot.send_message(message.chat.id, "📂 مجلد الصور غير موجود.")
-            return
-
-        all_files = os.listdir(images_dir)
-        deleted_count = 0
+        deleted_disk_count = 0
         reclaimed_space = 0
         
-        for filename in all_files:
-            file_path = os.path.join(images_dir, filename)
-            
-            # Skip valid usage
-            if filename in used_images:
-                continue
+        if os.path.exists(images_dir):
+            all_files = os.listdir(images_dir)
+            for filename in all_files:
+                file_path = os.path.join(images_dir, filename)
                 
-            # Skip non-files (directories)
-            if not os.path.isfile(file_path):
-                continue
-                
-            # DELETE ORPHAN
-            try:
-                file_size = os.path.getsize(file_path)
-                os.remove(file_path)
-                deleted_count += 1
-                reclaimed_space += file_size
-                print(f"🗑️ Cleaned orphan image: {filename}")
-            except Exception as e:
-                print(f"⚠️ Failed to delete {filename}: {e}")
+                # Skip valid usage
+                if filename in used_images:
+                    continue
+                    
+                # Skip non-files
+                if not os.path.isfile(file_path):
+                    continue
+                    
+                # DELETE ORPHAN
+                try:
+                    file_size = os.path.getsize(file_path)
+                    os.remove(file_path)
+                    deleted_disk_count += 1
+                    reclaimed_space += file_size
+                    print(f"🗑️ Cleaned disk image: {filename}")
+                except Exception as e:
+                    print(f"⚠️ Failed to delete {filename}: {e}")
         
         # Convert bytes to readable
         size_str = f"{reclaimed_space} B"
@@ -6968,13 +6985,15 @@ def clean_unused_images(message):
 
         bot.send_message(message.chat.id, 
                         f"✅ **تم تنظيف الصور!**\n\n"
-                        f"🗑️ عدد الصور المحذوفة: {deleted_count}\n"
-                        f"💾 المساحة المسترجعة: {size_str}\n"
+                        f"🗑️ محذوف من السحابة (DB): {deleted_db_count}\n"
+                        f"🗑️ محذوف من القرص (Disk): {deleted_disk_count}\n"
+                        f"💾 مساحة القرص المسترجعة: {size_str}\n"
                         f"🖼️ الصور النشطة المتبقية: {len(used_images)}")
 
     except Exception as e:
         bot.send_message(message.chat.id, f"⚠️ حدث خطأ: {e}")
         print(f"Clean Images Error: {e}")
+        traceback.print_exc()
 
 # ====== تشغيل البوت ======
 print("🚀 بدأ تشغيل بوت متجرنا...")
