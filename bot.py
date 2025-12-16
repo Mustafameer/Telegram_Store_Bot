@@ -3940,9 +3940,24 @@ def handle_view_product_detail(call):
         )
         markup.add(types.InlineKeyboardButton("🔙 رجوع للقائمة", callback_data="back_to_prod_list"))
 
-        if img_path and os.path.exists(img_path):
+        # Try to resolve valid image path
+        final_img_path = None
+        if img_path:
+            # 1. Check exact path from DB
+            if os.path.exists(img_path):
+                final_img_path = img_path
+            else:
+                # 2. Check local Images folder (Fix for OS path mismatch)
+                filename = os.path.basename(img_path)
+                local_path = os.path.join(IMAGES_FOLDER, filename)
+                if os.path.exists(local_path):
+                    final_img_path = local_path
+                else:
+                    print(f"⚠️ Image not found: DB={img_path}, Local={local_path}")
+
+        if final_img_path:
             try:
-                with open(img_path, 'rb') as photo:
+                with open(final_img_path, 'rb') as photo:
                     bot.send_photo(call.message.chat.id, photo, caption=text, parse_mode='Markdown', reply_markup=markup)
             except Exception as img_error:
                 print(f"⚠️ Error sending photo for product {pid}: {img_error}")
