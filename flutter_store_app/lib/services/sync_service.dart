@@ -44,7 +44,7 @@ class SyncService {
     _timer?.cancel();
   }
 
-  // Manual Sync (Button) & Timer: Push Inventory, Pull Orders (No Inventory Overwrite)
+  // Manual Sync (Button) & Timer: STRICT PUSH (Desktop -> Cloud ONLY)
   Future<void> syncNow() async {
     if (_isSyncing) {
       _statusController.add("Sync already in progress...");
@@ -52,8 +52,8 @@ class SyncService {
     }
     
     _isSyncing = true;
-    _statusController.add("Starting Sync (Flutter -> Bot)...");
-    print("☁️ Starting Sync (Flutter -> Bot)...");
+    _statusController.add("Starting Sync (Desktop -> Cloud ONLY)...");
+    print("☁️ Starting Push Sync...");
 
     Connection? conn;
     try {
@@ -64,17 +64,14 @@ class SyncService {
       _statusController.add("Pushing Local Inventory...");
       await _pushAllInventory(conn, dbHelper);
 
-      // 2. PULL ORDERS ONLY (Cloud -> Local) 
-      // User requested "Flutter to Bot not opposite", implying we shouldn't overwrite local inventory.
-      // But we MUST pull orders/users to see new sales.
-      _statusController.add("Pulling New Orders...");
-      await _pullOrders(conn, dbHelper);
+      // 2. SKIP Pull Orders (User requested Strict Push)
+      // await _pullOrders(conn, dbHelper);
       
-      // 3. Sync Images (Bidirectional check)
-      await _syncImages(conn);
+      // 3. Sync Images (Upload Only)
+      await _syncImages(conn, uploadOnly: true);
 
-      _statusController.add("Sync Completed!");
-      print("🎉 Sync Completed!");
+      _statusController.add("Push Sync Completed!");
+      print("🎉 Push Sync Completed!");
       
     } catch (e) {
       _statusController.add("Sync Failed: $e");
@@ -104,7 +101,8 @@ class SyncService {
       await _pullInventory(conn, dbHelper);
       await _pullOrders(conn, dbHelper);
       
-      await _syncImages(conn); 
+      // Bidirectional Image Sync
+      await _syncImages(conn, uploadOnly: false); 
 
       print("🎉 Startup Sync Completed!");
       
@@ -231,10 +229,10 @@ class SyncService {
       });
   }
 
-  Future<void> _syncImages(Connection conn) async {
+  Future<void> _syncImages(Connection conn, {bool uploadOnly = false}) async {
     try {
-      _statusController.add("Checking Image Storage...");
-      print("🖼️ Starting Image Sync...");
+      _statusController.add("Checking Image Storage (${uploadOnly ? 'Upload Only' : 'Sync'})...");
+      print("🖼️ Starting Image Sync (${uploadOnly ? 'Upload Only' : 'Bidirectional'})...");
       
       // Ensure Table Exists
       try {
@@ -280,38 +278,42 @@ class SyncService {
       }
       if (uploadedCount > 0) _statusController.add("Uploaded $uploadedCount images.");
       
-      // B. Download: Cloud -> Local
-      _statusController.add("Checking Cloud Images...");
-      final cloudFilesResult = await conn.execute('SELECT FileName FROM ImageStorage');
-      print("  Cloud Files Found: ${cloudFilesResult.length}");
-      
+      // B. Download: Cloud -> Local (SKIP IF UPLOAD ONLY)
       int downloadedCount = 0;
-      for (var row in cloudFilesResult) {
-        final cloudName = row[0] as String;
-        final localFile = File(p.join(imgDir.path, cloudName));
+      if (!uploadOnly) {
+        _statusController.add("Checking Cloud Images...");
+        final cloudFilesResult = await conn.execute('SELECT FileName FROM ImageStorage');
+        print("  Cloud Files Found: ${cloudFilesResult.length}");
         
-        if (!await localFile.exists()) {
-           try {
-             _statusController.add("Downloading $cloudName...");
-             final dataResult = await conn.execute(
-               Sql.named('SELECT FileData FROM ImageStorage WHERE FileName = @name'),
-               parameters: {'name': cloudName}
-             );
-             
-             if (dataResult.isNotEmpty) {
-               final binaryData = dataResult.first[0];
-               if (binaryData != null) {
-                 await localFile.writeAsBytes(binaryData as List<int>);
-                 downloadedCount++;
-                 print("  ✅ Downloaded $cloudName");
+        for (var row in cloudFilesResult) {
+          final cloudName = row[0] as String;
+          final localFile = File(p.join(imgDir.path, cloudName));
+          
+          if (!await localFile.exists()) {
+             try {
+               _statusController.add("Downloading $cloudName...");
+               final dataResult = await conn.execute(
+                 Sql.named('SELECT FileData FROM ImageStorage WHERE FileName = @name'),
+                 parameters: {'name': cloudName}
+               );
+               
+               if (dataResult.isNotEmpty) {
+                 final binaryData = dataResult.first[0];
+                 if (binaryData != null) {
+                   await localFile.writeAsBytes(binaryData as List<int>);
+                   downloadedCount++;
+                   print("  ✅ Downloaded $cloudName");
+                 }
                }
+             } catch (e) {
+                print("  ❌ Failed to download $cloudName: $e");
              }
-           } catch (e) {
-              print("  ❌ Failed to download $cloudName: $e");
-           }
+          }
         }
+        if (downloadedCount > 0) _statusController.add("Downloaded $downloadedCount images.");
+      } else {
+        print("  ⏩ Skipping Download (Upload Only Mode)");
       }
-      if (downloadedCount > 0) _statusController.add("Downloaded $downloadedCount images.");
       
       print("✅ Image Sync Done! Up: $uploadedCount, Down: $downloadedCount");
       

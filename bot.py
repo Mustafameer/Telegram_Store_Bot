@@ -3977,7 +3977,28 @@ def back_to_product_list(call):
     view_my_products(call.message)
     bot.answer_callback_query(call.id)
 
-# ====== ربط أزرار لوحة التحكم بالوظائف الموجودة ======
+@bot.callback_query_handler(func=lambda call: call.data.startswith("delete_product_"))
+def handle_delete_product_direct(call):
+    try:
+        product_id = int(call.data.split("_")[2])
+        # Confirm deletion
+        markup = types.InlineKeyboardMarkup()
+        markup.add(
+            types.InlineKeyboardButton("✅ نعم، احذف", callback_data=f"confirm_delete_prod_{product_id}"),
+            types.InlineKeyboardButton("❌ إلغاء", callback_data=f"view_prod_{product_id}")
+        )
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="⚠️ **هل أنت متأكد من حذف هذا المنتج؟**\nسيتم حذفه من القائمة نهائياً.",
+            parse_mode='Markdown',
+            reply_markup=markup
+        )
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        print(f"Error in delete product direct: {e}")
+        bot.answer_callback_query(call.id, "حدث خطأ")
+
 # ====== ربط أزرار لوحة التحكم بالوظائف الموجودة ======
 class MockMessage:
     def __init__(self, chat, from_user, text):
