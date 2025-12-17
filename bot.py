@@ -1734,6 +1734,42 @@ def send_product_with_image(chat_id, product, markup=None, seller_name=""):
                 else:
                     bot.send_message(chat_id, caption, parse_mode='Markdown')
         
+        elif img_path:
+            # Fallback: Try to get from Cloud DB (ImageStorage)
+            try:
+                # Extract filename from path (e.g. data/Images/xyz.jpg -> xyz.jpg)
+                filename = os.path.basename(img_path)
+                
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                
+                cursor.execute("SELECT FileData FROM ImageStorage WHERE FileName = %s" if IS_POSTGRES else "SELECT FileData FROM ImageStorage WHERE FileName = ?", (filename,))
+                result = cursor.fetchone()
+                conn.close()
+                
+                if result and result[0]:
+                    photo_data = result[0]
+                    # If Postgres, it might be a memoryview, convert to bytes
+                    if isinstance(photo_data, memoryview):
+                        photo_data = bytes(photo_data)
+                        
+                    if markup:
+                        bot.send_photo(chat_id, photo_data, caption=caption, reply_markup=markup, parse_mode='Markdown')
+                    else:
+                        bot.send_photo(chat_id, photo_data, caption=caption, parse_mode='Markdown')
+                else:
+                     # Image not found in Cloud DB either
+                     if markup:
+                        bot.send_message(chat_id, caption, reply_markup=markup, parse_mode='Markdown')
+                     else:
+                        bot.send_message(chat_id, caption, parse_mode='Markdown')
+            except Exception as db_img_err:
+                 print(f"⚠️ Error fetching cloud image {img_path}: {db_img_err}")
+                 if markup:
+                    bot.send_message(chat_id, caption, reply_markup=markup, parse_mode='Markdown')
+                 else:
+                    bot.send_message(chat_id, caption, parse_mode='Markdown')
+        
         else:
             # إذا لم توجد صورة
             if markup:
