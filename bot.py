@@ -5187,6 +5187,8 @@ def callback_handler(call):
             handle_set_quantity(call)
         elif call.data.startswith("skip_seller_"):
              handle_skip_seller(call)
+        elif call.data.startswith("payment_cash_"):
+             handle_payment_cash(call)
         elif call.data in ["edit_name", "edit_phone"]:
             handle_edit_user_info(call)
         else:
