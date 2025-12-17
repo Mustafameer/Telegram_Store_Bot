@@ -5705,29 +5705,9 @@ def handle_checkout_cart(call):
             bot.answer_callback_query(call.id, "السلة فارغة")
             return
 
-        # إزالة منتجات متجر الأدمن من السلة إن وُجدت
-        cleaned_cart = []
-        removed_any = False
-        for item in cart_items:
-            pid = item[0]
-            prod = get_product_by_id(pid)
-            if not prod:
-                continue
-            prod_seller_id = prod[1]
-            seller = get_seller_by_id(prod_seller_id)
-            if seller and seller[1] == BOT_ADMIN_ID:
-                # حذف من السلة
-                conn = get_db_connection()
-                cursor = conn.cursor()
-                cursor.execute("DELETE FROM Carts WHERE UserID=? AND ProductID= ?", (telegram_id, pid))
-                conn.commit()
-                conn.close()
-                removed_any = True
-                continue
-            cleaned_cart.append(item)
-
-        if removed_any:
-            bot.answer_callback_query(call.id, "⚠️ تمت إزالة منتجات من متجر الإدارة من السلة")
+        # Admin store filtering removed to allow purchases
+        cleaned_cart = cart_items
+        # removed_any = False logic removed
 
         if not cleaned_cart:
             bot.send_message(call.message.chat.id, "⛔ السلة لا تحتوي على منتجات قابلة للشراء حالياً.")
