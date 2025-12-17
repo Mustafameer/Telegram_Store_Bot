@@ -5540,12 +5540,10 @@ def handle_add_to_cart(call):
             bot.answer_callback_query(call.id, "المنتج غير موجود")
             return
 
-        # منع الشراء من متجر الأدمن
+        # منع الشراء من متجر الأدمن - REMOVED
         seller_id = product[1]
-        seller = get_seller_by_id(seller_id)
-        if seller and seller[1] == BOT_ADMIN_ID:
-            bot.answer_callback_query(call.id, "⛔ لا يمكن الشراء من متجر الإدارة")
-            return
+        # seller = get_seller_by_id(seller_id)
+        # Check removed to allow buying from admin
         
         if product[7] <= 0:
             bot.answer_callback_query(call.id, "⛔ المنتج غير متوفر حالياً")
