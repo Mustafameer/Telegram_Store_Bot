@@ -3979,11 +3979,14 @@ def handle_view_product_detail(call):
         name = product[3]
         desc = product[4]
         price = product[5]
+        wholesale_price = product[6]
         qty = product[7]
         img_path = product[8]
         
         text = f"📦 **{name}**\n\n"
         text += f"💰 السعر: {price} IQD\n"
+        if wholesale_price:
+            text += f"💰 سعر الجملة: {wholesale_price} IQD\n"
         text += f"📦 الكمية: {qty}\n"
         if desc: text += f"📝 الوصف: {desc}\n"
         
