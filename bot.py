@@ -47,6 +47,27 @@ IS_POSTGRES = (os.environ.get('DATABASE_URL') is not None) and (psycopg2 is not 
 # إضافة معرف صاحب البوت (أدمن) - للتحكم التقني فقط
 BOT_ADMIN_ID = 1041977029  # ضع هنا معرف التليجرام الخاص بأدمن البوت
 
+@bot.message_handler(commands=['sys_info'])
+def sys_info(message):
+    try:
+        import sys
+        info = f"🤖 **System Diagnostics**\n\n"
+        info += f"🐍 Python: {sys.version.split()[0]}\n"
+        info += f"📦 IS_POSTGRES: `{IS_POSTGRES}`\n"
+        info += f"🔑 DATABASE_URL: {'✅ Found' if os.environ.get('DATABASE_URL') else '❌ Missing'}\n"
+        info += f"🐘 psycopg2: {'✅ Imported' if psycopg2 else '❌ Missing'}\n"
+        
+        # Check explicit import
+        try:
+            import psycopg2
+            info += "🐘 Import Test: OK\n"
+        except ImportError as e:
+            info += f"🐘 Import Test: ❌ {e}\n"
+            
+        bot.reply_to(message, info, parse_mode='Markdown')
+    except Exception as e:
+        bot.reply_to(message, f"Error: {e}")
+
 # Use absolute path to ensure consistency
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -1610,8 +1631,43 @@ def save_photo_from_message(message):
             ext = ".jpg"
         filename = f"{int(time.time())}_{uuid.uuid4().hex}{ext}"
         path = os.path.join(IMAGES_FOLDER, filename)
+        # Save to Disk
         with open(path, "wb") as f:
             f.write(downloaded)
+            
+        # 🟢 SYNC SUPPORT: Save to Postgres Blob Storage
+        if IS_POSTGRES:
+            try:
+                # bot.send_message(message.chat.id, "🔍 Debug: Attempting Cloud Upload...")
+                import psycopg2 
+                conn_pg = get_db_connection()
+                # Unwrap DBWrapper
+                raw_conn = conn_pg.conn 
+                cur_pg = raw_conn.cursor()
+                
+                # Verify table exists
+                cur_pg.execute("CREATE TABLE IF NOT EXISTS ImageStorage (FileName TEXT PRIMARY KEY, FileData BYTEA, UpdatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+                
+                cur_pg.execute(
+                    "INSERT INTO ImageStorage (FileName, FileData) VALUES (%s, %s) ON CONFLICT (FileName) DO NOTHING",
+                    (filename, psycopg2.Binary(downloaded))
+                )
+                raw_conn.commit()
+                raw_conn.close()
+                print(f"✅ [Sync] Saved image {filename} to Cloud DB")
+                # bot.send_message(message.chat.id, "✅ Debug: Cloud Upload Success!")
+            except Exception as pg_e:
+                error_msg = f"⚠️ [Sync] Cloud Upload Failed: {pg_e}"
+                print(error_msg)
+                try:
+                    bot.send_message(message.chat.id, error_msg)
+                except: pass
+        else:
+             print("⚠️ [Sync] IS_POSTGRES is False. Skipping Cloud Upload.")
+             # try:
+             #    bot.send_message(message.chat.id, "⚠️ Debug: IS_POSTGRES is False. Database URL ignored?")
+             # except: pass
+        
         return path
     except Exception as e:
         print(f"⚠️ خطأ في حفظ الصورة: {e}")
