@@ -28,8 +28,8 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await windowManager.ensureInitialized();
 
-  // Start Sync Service
-  SyncService.instance.startSyncTimer();
+  // Start Sync Service MOVED to Login/Home Screen to show UI progress
+  // SyncService.instance.startSyncTimer();
 
   WindowOptions windowOptions = const WindowOptions(
     size: Size(1280, 720),
@@ -43,6 +43,7 @@ void main() async {
     await windowManager.show();
     await windowManager.maximize();
     await windowManager.focus();
+    await windowManager.setPreventClose(true); // Prevent default close to handle sync
   });
 
   runApp(const MyApp());
@@ -101,7 +102,65 @@ class MyApp extends StatelessWidget {
         ),
       ),
       themeMode: ThemeMode.system,
+      builder: (context, child) {
+        return WindowSyncManager(child: child!);
+      },
       home: const LoginScreen(),
     );
+  }
+}
+
+class WindowSyncManager extends StatefulWidget {
+  final Widget child;
+  const WindowSyncManager({super.key, required this.child});
+
+  @override
+  State<WindowSyncManager> createState() => _WindowSyncManagerState();
+}
+
+class _WindowSyncManagerState extends State<WindowSyncManager> with WindowListener {
+  @override
+  void initState() {
+    super.initState();
+    windowManager.addListener(this);
+  }
+
+  @override
+  void dispose() {
+    windowManager.removeListener(this);
+    super.dispose();
+  }
+
+  @override
+  void onWindowClose() async {
+    // Show Sync Dialog
+    bool isSyncing = true;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Row(children: [
+           CircularProgressIndicator(), 
+           SizedBox(width: 16),
+           Text("جاري المزامنة قبل الخروج...")
+        ]),
+        content: const Text("يرجى الانتظار حتى يتم رفع التغييرات للسحابة."),
+      ),
+    );
+
+    try {
+      // Run Sync
+      await SyncService.instance.syncNow();
+    } catch (e) {
+      print("Exit Sync Failed: $e");
+    } finally {
+      // Close window
+      await windowManager.destroy();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return widget.child;
   }
 }

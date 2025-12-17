@@ -27,6 +27,15 @@ class SyncService {
   // Public stream for UI to listen to sync status/errors
   final _statusController = StreamController<String>.broadcast();
   Stream<String> get statusStream => _statusController.stream;
+  
+  String _lastStatus = "Waiting...";
+  String get currentStatus => _lastStatus;
+
+  Future<void> _updateStatus(String status) async {
+    _lastStatus = status;
+    _statusController.add(status);
+    await Future.delayed(const Duration(seconds: 5)); // User requested slow mode
+  }
 
   // Start the background timer
   void startSyncTimer() {
@@ -47,13 +56,13 @@ class SyncService {
   // Manual Sync (Button) & Timer: STRICT PUSH (Desktop -> Cloud ONLY)
   Future<void> syncNow() async {
     if (_isSyncing) {
-      _statusController.add("Sync already in progress...");
+      await _updateStatus("⏳ Sync already in progress...");
       return;
     }
     
     _isSyncing = true;
-    _statusController.add("Starting Sync (Desktop -> Cloud ONLY)...");
-    print("☁️ Starting Push Sync...");
+    await _updateStatus("⬆️ Starting Push Sync (Desktop -> Cloud)...");
+    print("⬆️ Starting Push Sync...");
 
     Connection? conn;
     try {
@@ -61,36 +70,37 @@ class SyncService {
       final dbHelper = DatabaseHelper.instance;
 
       // 1. PUSH INVENTORY (Local -> Cloud)
-      _statusController.add("Pushing Local Inventory...");
+      await _updateStatus("⬆️ Pushing Local Inventory...");
       await _pushAllInventory(conn, dbHelper);
 
-      // 2. SKIP Pull Orders (User requested Strict Push)
+      // 2. SKIP Pull Orders (User requested Strict Push Only)
       // await _pullOrders(conn, dbHelper);
       
       // 3. Sync Images (Upload Only)
+      await _updateStatus("⬆️ Checking Images to Upload...");
       await _syncImages(conn, uploadOnly: true);
 
-      _statusController.add("Push Sync Completed!");
+      await _updateStatus("✅ Push Sync Completed!");
       print("🎉 Push Sync Completed!");
       
     } catch (e) {
-      _statusController.add("Sync Failed: $e");
-      print("❌ Sync Failed: $e");
+      await _updateStatus("❌ Push Sync Failed: $e");
+      print("❌ Push Sync Failed: $e");
     } finally {
       await conn?.close();
       _isSyncing = false;
     }
   }
 
-  // Startup Sync: Pull All (Mirror Cloud State - Handles Deletions)
+  // Startup Sync: PULL ONLY (Cloud -> Desktop) + Pruning
   Future<void> syncStartup() async {
     if (_isSyncing) {
-       print("⚠️ Startup Sync skipped: Sync already in progress");
        return;
     }
     
     _isSyncing = true; 
-    print("☁️ Starting Startup Sync (Pull All & Prune)...");
+    await _updateStatus("⬇️ Starting Startup Sync (Cloud -> Desktop)...");
+    print("⬇️ Starting Startup Sync (Pull All & Prune)...");
 
     Connection? conn;
     try {
@@ -98,16 +108,22 @@ class SyncService {
       final dbHelper = DatabaseHelper.instance;
 
       // PULL ALL with PRUNE (Delete local if deleted in cloud)
+      await _updateStatus("⬇️ Downloading & Pruning Inventory...");
       await _pullInventory(conn, dbHelper, prune: true);
+      
+      await _updateStatus("⬇️ Downloading Orders...");
       await _pullOrders(conn, dbHelper);
       
       // Sync Images with Prune (Delete local files if not in cloud)
       // Upload: False (Trust Cloud as Master on Startup)
+      await _updateStatus("⬇️ Synchronizing & Pruning Images...");
       await _syncImages(conn, uploadOnly: false, pruneLocal: true); 
 
+      await _updateStatus("✅ Startup Sync Completed!");
       print("🎉 Startup Sync Completed!");
       
     } catch (e) {
+      await _updateStatus("❌ Startup Sync Failed: $e");
       print("❌ Startup Sync Failed: $e");
     } finally {
       await conn?.close();
@@ -232,7 +248,7 @@ class SyncService {
 
   Future<void> _syncImages(Connection conn, {bool uploadOnly = false, bool pruneLocal = false}) async {
     try {
-      _statusController.add("Checking Image Storage (${uploadOnly ? 'Upload Only' : 'Sync'})...");
+      await _updateStatus("Checking Image Storage (${uploadOnly ? 'Upload Only' : 'Sync'})...");
       print("🖼️ Starting Image Sync (Prune: $pruneLocal)...");
       
       // Ensure Table Exists
@@ -260,30 +276,48 @@ class SyncService {
       
       if (!pruneLocal) {
           int uploadedCount = 0;
+          print("🔍 [ImageSync] Found ${localFiles.length} local files to check.");
+          
           for (var file in localFiles) {
             final fileName = p.basename(file.path);
             try {
+              // print("🔍 [ImageSync] Checking $fileName in Cloud...");
               final check = await conn.execute(Sql.named('SELECT 1 FROM ImageStorage WHERE FileName = @name'), parameters: {'name': fileName});
+              
               if (check.isEmpty) {
-                  _statusController.add("Uploading $fileName...");
+                  await _updateStatus("Uploading $fileName...");
+                  print("📤 [ImageSync] Uploading $fileName...");
+                  
                   final bytes = await file.readAsBytes();
+                  
+                  // Use robust parameter interpolation
                   await conn.execute(
                     Sql.named('INSERT INTO ImageStorage (FileName, FileData) VALUES (@name, @data)'), 
                     parameters: {'name': fileName, 'data': TypedValue(Type.byteArray, bytes)}
                   );
+                  
+                  print("✅ [ImageSync] Upload Success: $fileName");
                   uploadedCount++;
+              } else {
+                  // print("⏭️ [ImageSync] Skipped $fileName (Exists in Cloud)");
               }
-            } catch (e) { print("Upload error $fileName: $e"); }
+            } catch (e) { 
+                print("❌ [ImageSync] Upload Error ($fileName): $e");
+                await _updateStatus("❌ Upload err $fileName: $e");
+                await Future.delayed(const Duration(seconds: 2));
+            }
           }
-          if (uploadedCount > 0) _statusController.add("Uploaded $uploadedCount images.");
+          if (uploadedCount > 0) await _updateStatus("Uploaded $uploadedCount images.");
       }
       
       // B. Download / Prune: Cloud -> Local
       if (!uploadOnly) {
-        _statusController.add("Checking Cloud Images...");
+        await _updateStatus("Checking Cloud Images...");
         final cloudFilesResult = await conn.execute('SELECT FileName FROM ImageStorage');
         final Set<String> cloudFileNames = {};
         
+        await _updateStatus("☁️ Cloud has ${cloudFilesResult.length} images.");
+
         int downloadedCount = 0;
         int prunedCount = 0;
         
@@ -293,19 +327,34 @@ class SyncService {
           final localFile = File(p.join(imgDir.path, cloudName));
           
           if (!await localFile.exists()) {
+             // await _updateStatus("Downloading $cloudName..."); // Verbose?
              try {
-               _statusController.add("Downloading $cloudName...");
                final dataResult = await conn.execute(
                  Sql.named('SELECT FileData FROM ImageStorage WHERE FileName = @name'),
                  parameters: {'name': cloudName}
                );
+               
                if (dataResult.isNotEmpty && dataResult.first[0] != null) {
-                   await localFile.writeAsBytes(dataResult.first[0] as List<int>);
+                   final bytes = dataResult.first[0] as List<int>; // Correct cast? Postgres driver returns Uint8List usually? 
+                   // Driver returns List<int> or Uint8List.
+                   // Let's safe cast.
+                   await localFile.writeAsBytes(bytes);
                    downloadedCount++;
+                   // await _updateStatus("✅ Downloaded $cloudName");
+               } else {
+                   print("⚠️ Image $cloudName has NO DATA in Cloud.");
                }
-             } catch (e) { print("Download error $cloudName: $e"); }
+             } catch (e) { 
+                print("Download error $cloudName: $e");
+                await _updateStatus("❌ Err DL $cloudName: $e");
+                await Future.delayed(const Duration(seconds: 5)); // Pause so user can read
+             }
+          } else {
+             // File exists.
           }
         }
+
+
         
         // PRUNE LOCAL
         if (pruneLocal) {
@@ -321,21 +370,22 @@ class SyncService {
                     }
                 }
             }
-             if (prunedCount > 0) _statusController.add("Pruned $prunedCount obsolete local images.");
+             if (prunedCount > 0) await _updateStatus("Pruned $prunedCount obsolete local images.");
         }
 
-        if (downloadedCount > 0) _statusController.add("Downloaded $downloadedCount images.");
+        if (downloadedCount > 0) await _updateStatus("Downloaded $downloadedCount images.");
       }
       
       print("✅ Image Sync Done!");
       
     } catch (e) {
       print("❌ Image Sync Critical Failure: $e");
-      _statusController.add("Image Sync Critical Error: $e");
+      await _updateStatus("❌ Image Sync Critical Error: $e");
+      await Future.delayed(const Duration(seconds: 10)); // Long pause for critical error
     }
   }
 
-  // PUSH: Local -> Cloud
+  // PUSH: Local -> Cloud (With Deletion)
   Future<void> _pushTable(
       Connection conn, 
       DatabaseHelper dbHelper, 
@@ -349,41 +399,89 @@ class SyncService {
       final db = await dbHelper.database;
       final localData = await db.query(localTableName);
       
-      if (localData.isEmpty) return;
+      // 1. Collect Local IDs for Diffing
+      final Set<String> localIds = {};
       
-      for (var row in localData) {
-        final pgMap = <String, dynamic>{};
-        
-        // Map Columns
-        colMap.forEach((localKey, pgKey) {
-            if (row.containsKey(localKey)) {
-              var val = row[localKey];
-              // Path Fix: Windows -> Linux
-              if (localKey == 'ImagePath' && val != null && val is String) {
-                  // Only send relative path or server path?
-                  // Server expects: /app/data/Images/filename
-                  final fileName = p.basename(val);
-                  val = '/app/data/Images/$fileName'; 
-              }
-              pgMap[pgKey] = val;
-            }
-        });
-
-        // Build Upsert Query
-        final keys = pgMap.keys.toList();
-        final values = keys.map((k) => '@$k').toList();
-        final updateSet = keys.map((k) => '$k = EXCLUDED.$k').join(', ');
-        
-        final sql = 'INSERT INTO $pgTableName (${keys.join(', ')}) VALUES (${values.join(', ')}) '
-                    'ON CONFLICT ($pgPrimaryKey) DO UPDATE SET $updateSet';
-        
-        await conn.execute(Sql.named(sql), parameters: pgMap);
+      // Determine Local Primary Key from Map
+      String? localPrimaryKeyName;
+      colMap.forEach((localKey, pgKey) {
+          if (pgKey == pgPrimaryKey) {
+              localPrimaryKeyName = localKey;
+          }
+      });
+      
+      if (localPrimaryKeyName == null) {
+          // Fallback if not found in map (assume similar name lowercased)
+           localPrimaryKeyName = colMap.keys.firstWhere((k) => colMap[k] == pgPrimaryKey, orElse: () => '');
       }
-      print("  ✅ Pushed ${localData.length} rows from $localTableName");
+
+      if (localData.isNotEmpty) {
+        for (var row in localData) {
+            if (localPrimaryKeyName != null && row.containsKey(localPrimaryKeyName)) {
+                localIds.add(row[localPrimaryKeyName].toString());
+            }
+
+            final pgMap = <String, dynamic>{};
+            
+            // Map Columns
+            colMap.forEach((localKey, pgKey) {
+                if (row.containsKey(localKey)) {
+                  var val = row[localKey];
+                  // Path Fix: Windows -> Linux
+                  if (localKey == 'ImagePath' && val != null && val is String) {
+                      final fileName = p.basename(val);
+                      val = '/app/data/Images/$fileName'; 
+                  }
+                  pgMap[pgKey] = val;
+                }
+            });
+
+            // Build Upsert Query
+            final keys = pgMap.keys.toList();
+            final values = keys.map((k) => '@$k').toList();
+            final updateSet = keys.map((k) => '$k = EXCLUDED.$k').join(', ');
+            
+            final sql = 'INSERT INTO $pgTableName (${keys.join(', ')}) VALUES (${values.join(', ')}) '
+                        'ON CONFLICT ($pgPrimaryKey) DO UPDATE SET $updateSet';
+            
+            await conn.execute(Sql.named(sql), parameters: pgMap);
+        }
+        print("  ✅ Pushed (Upserted) ${localData.length} rows from $localTableName");
+      }
+
+      // 2. DELETE MISSING RECORDS (Sync Deletions)
+      // Only delete if we actually have local data or if the table is supposed to be empty?
+      // If localData is empty, we should clear the cloud table? Yes, likely.
+      
+      print("  🧹 Checking for deletions in $pgTableName...");
+      // Fetch all Cloud IDs
+      final cloudIdResult = await conn.execute('SELECT $pgPrimaryKey FROM $pgTableName');
+      int deletedCount = 0;
+      
+      for (var row in cloudIdResult) {
+          final cloudId = row[0].toString();
+          if (!localIds.contains(cloudId)) {
+              // Not in local, so delete from cloud
+              await conn.execute(
+                  Sql.named('DELETE FROM $pgTableName WHERE $pgPrimaryKey = @id'),
+                  parameters: {'id': cloudId} // Fix: Pass safe parameter (string or int depending on DB, usually string works for Postgres param)
+                  // Actually, Postgres driver infers type. Let's send as whatever it is? 
+                  // row[0] retains type.
+              );
+              // Or better:
+              // await conn.execute(Sql.named('DELETE FROM $pgTableName WHERE $pgPrimaryKey = @id'), parameters: {'id': row[0]});
+              deletedCount++;
+          }
+      }
+      
+      if (deletedCount > 0) {
+          print("  🗑️ Deleted $deletedCount rows from Cloud $pgTableName (Missing locally)");
+          await _updateStatus("🗑️ Deleted $deletedCount from $pgTableName");
+      }
       
     } catch (e) {
       print("  ⚠️ Failed to push table $localTableName: $e");
-      _statusController.add("Push Error ($localTableName): $e");
+      await _updateStatus("Push Error ($localTableName): $e");
     }
   }
 
@@ -398,31 +496,27 @@ class SyncService {
      try {
        print("⬇️ Pulling $pgTableName (Prune: $prune)...");
        final result = await conn.execute('SELECT * FROM $pgTableName');
+       await _updateStatus("⬇️ $pgTableName: Found ${result.length} items in Cloud");
        
        // Handle Pruning (Delete local records not in Cloud)
        if (prune) {
            final localPrimaryKey = colMap[pgPrimaryKey]; 
            if (localPrimaryKey != null) {
-               // Get Cloud IDs
-               final cloudIds = <String>{}; // Using string for generality
+               final cloudIds = <String>{}; 
                for (final row in result) {
                    final pgMap = row.toColumnMap();
-                   if (pgMap[pgPrimaryKey] != null) {
-                       cloudIds.add(pgMap[pgPrimaryKey].toString());
+                   // Fix Case Sensitivity: Try exact key first, then lowercase
+                   var pkVal = pgMap[pgPrimaryKey] ?? pgMap[pgPrimaryKey.toLowerCase()];
+                   if (pkVal != null) {
+                       cloudIds.add(pkVal.toString());
                    }
                }
                
-               // Usually we want to map Table Name... simpler to assume 'pgTableName' maps to 'localTableName' = 'pgTableName' 
-               // (Except casing, but dbHelper handles that?)
-               // dbHelper usually takes table name.
-               // Assuming table names match
+               // Debug to UI
+               // await _updateStatus("$pgTableName: Cloud has ${cloudIds.length} items");
+
                final db = await dbHelper.database;
-               
-               // We need dynamic table name. All my calls use same name (Sellers, Products...)
-               // Just be careful with 'OrderItems' -> 'OrderItems'
-               
-               // Fetch all Local IDs
-               final localTable = pgTableName; // Assumption holds for this app
+               final localTable = pgTableName; 
                final localRows = await db.query(localTable, columns: [localPrimaryKey]);
                
                int deletedCount = 0;
@@ -437,6 +531,7 @@ class SyncService {
                }
                if (deletedCount > 0) {
                    await batchDelete.commit(noResult: true);
+                   await _updateStatus("🗑️ Pruned $deletedCount from $pgTableName"); // Show Prune Action
                    print("🗑️ Pruned $deletedCount records from $localTable");
                }
            }
@@ -470,9 +565,11 @@ class SyncService {
        }
        
        await batch.commit(noResult: true);
+       await _updateStatus("✅ Saved ${result.length} items to $pgTableName");
        
      } catch (e) {
        print("  ⚠️ Failed to sync table $pgTableName: $e");
+       await _updateStatus("❌ Error syncing $pgTableName: $e");
      }
   }
 }
