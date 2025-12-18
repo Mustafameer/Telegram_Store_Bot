@@ -32,8 +32,8 @@ if not TOKEN:
     print("❌ FATAL ERROR: TELEGRAM_BOT_TOKEN environment variable is NOT set!")
     sys.exit(1) # Fail fast
 else:
-    print(f"✅ DEBUG: TELEGRAM_BOT_TOKEN found. Starts with: {TOKEN[:10]}... Ends with: ...{TOKEN[-5:]}")
-    print(f"✅ DEBUG: Token Length: {len(TOKEN)}")
+    print(f"[OK] DEBUG: TELEGRAM_BOT_TOKEN found. Starts with: {TOKEN[:10]}... Ends with: ...{TOKEN[-5:]}")
+    print(f"[OK] DEBUG: Token Length: {len(TOKEN)}")
 
 # --- DEBUGGING BLOCK: PRINT ALL ENV VARS ---
 # print("\n🔍 DEBUGGING ENVIRONMENT VARIABLES:")
@@ -79,7 +79,7 @@ DATA_DIR = os.path.join(BASE_DIR, "data")
 SEED_DIR = os.path.join(BASE_DIR, "seed_data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
-DB_FILE = os.path.join(DATA_DIR, "store.db")
+DB_FILE = os.path.join(DATA_DIR, "store_local_new.db")
 IMAGES_FOLDER = os.path.join(DATA_DIR, "Images")
 os.makedirs(IMAGES_FOLDER, exist_ok=True)
 
@@ -190,7 +190,7 @@ if not os.path.exists(DB_FILE) and os.path.exists(os.path.join(SEED_DIR, "store.
          if os.path.exists(IMAGES_FOLDER):
              shutil.rmtree(IMAGES_FOLDER)
          shutil.copytree(os.path.join(SEED_DIR, "Images"), IMAGES_FOLDER)
-    print("✅ تم استعادة البيانات بنجاح!")
+    print("[OK] Data restored successfully!")
 
 # ===================== قاعدة البيانات =====================
 # ===================== قاعدة البيانات =====================
@@ -413,7 +413,7 @@ def init_db():
         try:
             cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
             conn.commit()
-            print(f"✅ Migrated: Added {column} to {table}")
+            print(f"[OK] Migrated: Added {column} to {table}")
         except Exception as e:
             # Most likely column already exists
             pass
@@ -423,10 +423,15 @@ def init_db():
     ensure_column('Categories', 'ImagePath', 'TEXT')
     ensure_column('Products', 'ImagePath', 'TEXT')
     
+    # Ensure Suspension columns exist
+    ensure_column('Sellers', 'SuspensionReason', 'TEXT')
+    ensure_column('Sellers', 'SuspendedBy', 'INTEGER')
+    ensure_column('Sellers', 'SuspendedAt', 'DATETIME')
+    
     conn.commit()
     conn.close()
 
-# init_db()
+init_db()
 
 def check_and_fix_db():
     # ... logic skipped ...
@@ -2279,6 +2284,24 @@ def process_user_store_name(message):
                     f"👤 المالك: {format_seller_mention(username, user_id)}\n\n"
                     f"يمكنك الآن البدء بإضافة المنتجات وإدارة متجرك.")
     
+    # --- Notify Admin ---
+    try:
+        # Generate link if possible
+        store_link = generate_store_link(user_id)
+        links_text = f"\n🔗 **رابط المتجر:**\n`{store_link}`" if store_link else ""
+        
+        bot.send_message(BOT_ADMIN_ID, 
+                f"🆕 **تم تسجيل متجر جديد!**\n\n"
+                f"🏪 المتجر: {store_name}\n"
+                f"👤 المالك: {format_seller_mention(username, user_id)}\n"
+                f"🆔 المعرف: {user_id}\n"
+                f"{links_text}\n\n"
+                f"يرجى مراجعة المتجر وتفعيله (إذا كان التفعيل اليدوي مطلوباً).",
+                parse_mode='Markdown')
+    except Exception as e:
+        print(f"Failed to notify admin about new store: {e}")
+    # --------------------
+    
     del user_states[user_id]
     show_seller_menu(message)
 
@@ -2639,35 +2662,39 @@ def start(message):
 
 @bot.message_handler(func=lambda message: message.text == "📋 قائمة المتاجر" and is_bot_admin(message.from_user.id))
 def list_stores(message):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT s.*, 
-               CASE WHEN s.Status = 'active' THEN '✅' ELSE '⏸️' END as StatusIcon
-        FROM Sellers s
-        ORDER BY s.CreatedAt DESC
-    """)
-    stores = cursor.fetchall()
-    conn.close()
-    
-    if not stores:
-        bot.send_message(message.chat.id, "لا توجد متاجر مسجلة بعد.")
-        return
-    
-    text = "📋 **قائمة جميع المتاجر:**\n\n"
-    
-    for store in stores:
-        seller_id, telegram_id, username, store_name, created_at, status = store[:6]
-        status_icon = store[6] if len(store) > 6 else ""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        # Explicitly select columns to avoid index errors if schema changes
+        cursor.execute("""
+            SELECT SellerID, TelegramID, UserName, StoreName, CreatedAt, Status
+            FROM Sellers
+            ORDER BY CreatedAt DESC
+        """)
+        stores = cursor.fetchall()
+        conn.close()
         
-        text += f"{status_icon} **المتجر:** {store_name}\n"
-        text += f"👤 المالك: {format_seller_mention(username, telegram_id)}\n"
-        text += f"🆔 المعرف: {telegram_id}\n"
-        text += f"📅 تاريخ الإنشاء: {created_at}\n"
-        text += f"📊 الحالة: {'نشط' if status == 'active' else 'معلق'}\n"
-        text += "────\n\n"
-    
-    bot.send_message(message.chat.id, text, parse_mode='Markdown')
+        if not stores:
+            bot.send_message(message.chat.id, "لا توجد متاجر مسجلة بعد.")
+            return
+        
+        text = "📋 **قائمة جميع المتاجر:**\n\n"
+        
+        for store in stores:
+            seller_id, telegram_id, username, store_name, created_at, status = store
+            status_icon = "✅" if status == 'active' else "⏸️"
+            
+            text += f"{status_icon} **المتجر:** {store_name}\n"
+            text += f"👤 المالك: {format_seller_mention(username, telegram_id)}\n"
+            text += f"🆔 المعرف: {telegram_id}\n"
+            text += f"📅 تاريخ الإنشاء: {created_at}\n"
+            text += f"📊 الحالة: {'نشط' if status == 'active' else 'معلق'}\n"
+            text += "────\n\n"
+        
+        bot.send_message(message.chat.id, text, parse_mode='Markdown')
+    except Exception as e:
+        traceback.print_exc()
+        bot.send_message(message.chat.id, f"⚠️ حدث خطأ أثناء عرض القائمة:\n{e}")
 
 @bot.message_handler(func=lambda message: message.text == "🛍️ وضع المشتري")
 def admin_switch_to_buyer_mode(message):
