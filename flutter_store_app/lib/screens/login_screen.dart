@@ -5,6 +5,7 @@ import '../database/database_helper.dart';
 import '../models/database_models.dart';
 import 'home_screen.dart';
 import 'store_detail_screen.dart';
+import '../services/sync_service.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -20,6 +21,15 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // Hardcoded Admin ID from bot.py
   static const int adminId = 1041977029; 
+
+  @override
+  void initState() {
+    super.initState();
+    // Start Sync Immediately on Launch (Startup Sync)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+       SyncService.instance.startSyncTimer();
+    });
+  }
 
   Future<void> _login() async {
     setState(() {
@@ -65,7 +75,7 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
-      // 3. If neither (could be a user, but this app is for management)
+      // 3. If neither
       setState(() {
         _errorMessage = 'لم يتم العثور على حساب بائع أو مسؤول بهذا المعرف';
       });
@@ -137,6 +147,32 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ],
           ),
+        ),
+      ),
+      bottomNavigationBar: Container(
+        padding: const EdgeInsets.all(12),
+        color: Colors.grey.shade100,
+        child: StreamBuilder<String>(
+          stream: SyncService.instance.statusStream,
+          initialData: "جاري الانتظار...",
+          builder: (context, snapshot) {
+            final status = snapshot.data ?? "";
+            Color statusColor = Colors.grey;
+            if (status.contains("⬇️")) statusColor = Colors.blue;
+            if (status.contains("⬆️")) statusColor = Colors.green;
+            if (status.contains("❌")) statusColor = Colors.red;
+            if (status.contains("✅")) statusColor = Colors.teal;
+
+            return Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (status.contains("Starting") || status.contains("Downloading") || status.contains("Pushing") || status.contains("Synchronizing"))
+                   const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                const SizedBox(width: 8),
+                Text(status, style: TextStyle(color: statusColor, fontWeight: FontWeight.bold, fontSize: 12)),
+              ],
+            );
+          },
         ),
       ),
     );

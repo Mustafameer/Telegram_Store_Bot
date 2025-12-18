@@ -296,7 +296,7 @@ class _ProductsTabState extends State<ProductsTab> {
                   children: [
                     Text(
                       '${product.price} د.ع',
-                      style: TextStyle(color: Theme.of(context).primaryColor, fontWeight: FontWeight.bold),
+                      style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold),
                     ),
                     Text(
                       'الكمية: ${product.quantity}',

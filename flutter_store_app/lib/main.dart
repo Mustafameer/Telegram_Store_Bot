@@ -4,15 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:window_manager/window_manager.dart';
-import 'services/sync_service.dart';
+// import 'services/sync_service.dart';
 import 'screens/login_screen.dart';
 
-import 'package:sqflite_common_ffi/sqflite_ffi.dart'; // Add this import
-
 void main() async {
-  // Initialize FFI
-  sqfliteFfiInit();
-  databaseFactory = databaseFactoryFfi;
   
   // Force create Images directory
   try {
@@ -28,8 +23,8 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await windowManager.ensureInitialized();
 
-  // Start Sync Service
-  SyncService.instance.startSyncTimer();
+  // Cloud Mode: Direct Connection (No Sync Service)
+
 
   WindowOptions windowOptions = const WindowOptions(
     size: Size(1280, 720),

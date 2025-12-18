@@ -7,6 +7,7 @@ import 'tabs/orders_tab.dart';
 import 'tabs/categories_tab.dart';
 import 'credit_customers_screen.dart';
 import 'credit_customers_screen.dart';
+import 'messages_screen.dart';
 import 'login_screen.dart';
 import 'components/store_form_dialog.dart';
 import '../database/database_helper.dart';
@@ -68,9 +69,9 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
 
     // Calculate Exit Tab Index
     // Tabs: Products(0), Orders(1), Categories(2)
-    // If SellerMode: CreditCustomers(3)
+    // If SellerMode: CreditCustomers(3), Messages(4), AccountStatements(5)
     // Exit is last.
-    final int exitIndex = widget.isSellerMode ? 4 : 3;
+    final int exitIndex = widget.isSellerMode ? 6 : 3;
 
     return Scaffold(
       body: Row(
@@ -135,7 +136,17 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
               if (widget.isSellerMode)
                 const NavigationRailDestination(
                   icon: Icon(Icons.people),
-                  label: Text('الزبائن الآجل'),
+                  label: Text('ادارة الزبائن'),
+                ),
+              if (widget.isSellerMode)
+                const NavigationRailDestination(
+                  icon: Icon(Icons.description),
+                  label: Text('كشف حساب'),
+                ),
+              if (widget.isSellerMode)
+                const NavigationRailDestination(
+                  icon: Icon(Icons.message),
+                  label: Text('الرسائل'),
                 ),
               NavigationRailDestination(
                 icon: Icon(
@@ -154,10 +165,18 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
             child: Column(
               children: [
                 AppBar(
-                  title: Text(widget.seller.storeName ?? 'تفاصيل المتجر'),
+                  title: Text('${widget.seller.storeName ?? 'تفاصيل المتجر'} ${widget.isSellerMode ? '(Admin)' : '(Buyer)'}'),
                   centerTitle: false,
                   automaticallyImplyLeading: false, // Handled by Rail
                   actions: [
+                     if (widget.isSellerMode)
+                       IconButton(
+                         icon: const Icon(Icons.visibility),
+                         tooltip: 'وضع المشتري',
+                         onPressed: () {
+                           Navigator.push(context, MaterialPageRoute(builder: (_) => StoreDetailScreen(seller: widget.seller, isSellerMode: false)));
+                         },
+                       ),
                      if (widget.isSellerMode)
                        IconButton(
                          icon: const Icon(Icons.edit),
@@ -188,6 +207,18 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
       case 3:
         if (widget.isSellerMode) {
           return CreditCustomersScreen(sellerId: widget.seller.sellerId);
+        }
+        return const Center(child: Text('غير مصرح'));
+      case 4:
+         if (widget.isSellerMode) {
+          // Reusing CreditCustomersScreen but user knows they clicked "Statement"
+          // Ideally we would pass a mode, but for now the list is the entry point for statements anyway.
+           return CreditCustomersScreen(sellerId: widget.seller.sellerId);
+        }
+        return const Center(child: Text('غير مصرح'));
+      case 5:
+         if (widget.isSellerMode) {
+          return MessagesScreen(sellerId: widget.seller.sellerId);
         }
         return const Center(child: Text('غير مصرح'));
       default:

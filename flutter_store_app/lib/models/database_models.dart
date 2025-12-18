@@ -272,3 +272,36 @@ class CustomerCreditTransaction {
     );
   }
 }
+
+class Message {
+  final int messageId;
+  final int? orderId;
+  final int sellerId;
+  final String messageType;
+  final String? messageText;
+  final bool isRead;
+  final String? createdAt;
+
+  Message({
+    required this.messageId,
+    this.orderId,
+    required this.sellerId,
+    required this.messageType,
+    this.messageText,
+    this.isRead = false,
+    this.createdAt,
+  });
+
+  factory Message.fromMap(Map<String, dynamic> map) {
+    return Message(
+      messageId: map['MessageID'],
+      orderId: map['OrderID'],
+      sellerId: map['SellerID'],
+      messageType: map['MessageType'],
+      messageText: map['MessageText'],
+      isRead: (map['IsRead'] == 1 || map['IsRead'] == true),
+      createdAt: map['CreatedAt'],
+    );
+  }
+}
+
