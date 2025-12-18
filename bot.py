@@ -1737,16 +1737,22 @@ def get_bot_info():
         print(f"⚠️ خطأ في الحصول على معلومات البوت: {e}")
         return {'id': None, 'username': None, 'first_name': 'Bot'}
 
+def escape_markdown_v1(text):
+    """Escape special characters for legacy Markdown."""
+    if not text:
+        return ""
+    return str(text).replace("_", "\\_").replace("*", "\\*").replace("`", "\\`").replace("[", "\\[")
+
 def format_seller_mention(username, seller_telegram_id):
     """Return a safe display for seller username. Do not prefix @ for admin store."""
     try:
         if not username:
             return ''
         if seller_telegram_id == BOT_ADMIN_ID:
-            return username
-        return f"@{username}"
+            return escape_markdown_v1(username)
+        return f"@{escape_markdown_v1(username)}"
     except:
-        return username or ''
+        return escape_markdown_v1(username) or ''
 
 def generate_store_link(telegram_id):
     """توليد رابط المتجر"""
@@ -2684,7 +2690,10 @@ def list_stores(message):
             seller_id, telegram_id, username, store_name, created_at, status = store
             status_icon = "✅" if status == 'active' else "⏸️"
             
-            text += f"{status_icon} **المتجر:** {store_name}\n"
+            # Escape store name to prevent markdown errors
+            safe_store_name = escape_markdown_v1(store_name)
+            
+            text += f"{status_icon} **المتجر:** {safe_store_name}\n"
             text += f"👤 المالك: {format_seller_mention(username, telegram_id)}\n"
             text += f"🆔 المعرف: {telegram_id}\n"
             text += f"📅 تاريخ الإنشاء: {created_at}\n"
@@ -5247,7 +5256,9 @@ def list_active_stores_callback(call):
         seller_id, telegram_id, username, store_name, created_at, status = store[:6]
         status_icon = store[6] if len(store) > 6 else ""
         
-        text += f"{status_icon} **المتجر:** {store_name}\n"
+        safe_store_name = escape_markdown_v1(store_name)
+        
+        text += f"{status_icon} **المتجر:** {safe_store_name}\n"
         text += f"👤 {format_seller_mention(username, telegram_id)}\n"
         text += f"🆔 المعرف: {telegram_id}\n"
         text += f"📅 تاريخ الإنشاء: {created_at}\n"
@@ -5271,11 +5282,14 @@ def list_suspended_stores_callback(call):
         suspended_at = store[8]
         suspender_name = store[9] if store[9] else "غير معروف"
         
-        text += f"⏸️ **المتجر:** {store_name}\n"
+        safe_store_name = escape_markdown_v1(store_name)
+        safe_reason = escape_markdown_v1(reason)
+        
+        text += f"⏸️ **المتجر:** {safe_store_name}\n"
         text += f"👤 {format_seller_mention(username, telegram_id)}\n"
         text += f"🆔 المعرف: {telegram_id}\n"
-        text += f"📋 السبب: {reason}\n"
-        text += f"👮 معلق بواسطة: {suspender_name}\n"
+        text += f"📋 السبب: {safe_reason}\n"
+        text += f"👮 معلق بواسطة: {escape_markdown_v1(suspender_name)}\n"
         text += f"⏰ تاريخ التعليق: {suspended_at}\n"
         text += "────\n\n"
     
