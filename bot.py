@@ -2066,12 +2066,12 @@ def show_bot_admin_menu(message):
     # Row 2: Customer & Orders
     markup.row("📊 كشف حساب الزبائن", "🏪 إدارة الزبائن الآجلين")
     # Row 3: Utility
-    markup.row(f"📩 الرسائل{messages_badge}", "🔗 رابط المتجر")
+    markup.row(f"📩 الرسائل{messages_badge}", "📦 الطلبات", "🔗 رابط المتجر")
     # Row 4: Admin Controls
     markup.row("🗑️ حذف متجر", "➕ إضافة متجر", "📋 قائمة المتاجر")
     markup.row("👑 إدارة الحسابات", "📊 إحصائيات النظام")
     # Row 5: Other
-    markup.row("📦 إرجاع المنتجات", "🏠 الرئيسية", "🛍️ وضع المشتري")
+    markup.row("🏠 الرئيسية", "🛍️ وضع المشتري")
     
     welcome_msg = f"👑🏪 **مرحباً بأدمن البوت وصاحب المتجر!**\n\n"
     welcome_msg += f"🏪 متجرك: {store_name}\n"
@@ -2130,7 +2130,7 @@ def show_seller_menu(message):
     # Row 2: Customer & Orders
     markup.row("📊 كشف حساب الزبائن", "🏪 إدارة الزبائن الآجلين")
     # Row 3: Utility
-    markup.row(f"📩 الرسائل{messages_badge}", "🔗 رابط المتجر")
+    markup.row(f"📩 الرسائل{messages_badge}", "📦 الطلبات", "🔗 رابط المتجر")
     # Row 4: Other
     markup.row("🏠 الرئيسية", "🛍️ وضع المشتري")
     
@@ -2140,6 +2140,64 @@ def show_seller_menu(message):
         welcome_msg += f"\n\nلديك {unread_count} رسالة غير مقروءة!"
     
     bot.send_message(message.chat.id, welcome_msg, reply_markup=markup)
+
+# ====== عرض الطلبات للبائع ======
+@bot.message_handler(func=lambda message: message.text == "📦 الطلبات" and is_seller(message.from_user.id))
+def handle_seller_orders_menu(message):
+    telegram_id = message.from_user.id
+    seller = get_seller_by_telegram(telegram_id)
+    
+    if not seller:
+        bot.send_message(message.chat.id, "⛔ أنت لست بائعاً مسجلاً!")
+        return
+        
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 0:OrderID, 1:Total, 2:Status, 3:Date, 4:BuyerName, 5:BuyerPhone
+    # Use fallback for BuyerName logic
+    query = """
+        SELECT o.OrderID, o.Total, o.Status, o.OrderDate, 
+               COALESCE(u.FullName, 'زائر') as BuyerName,
+               COALESCE(u.PhoneNumber, 'غير متوفر') as BuyerPhone
+        FROM Orders o
+        LEFT JOIN Users u ON o.BuyerID = u.TelegramID
+        WHERE o.SellerID = ?
+        ORDER BY o.OrderDate DESC
+        LIMIT 10
+    """
+    
+    cursor.execute(query, (seller[0],))
+    orders = cursor.fetchall()
+    conn.close()
+    
+    if not orders:
+        bot.send_message(message.chat.id, "📭 لا توجد طلبات حالياً.")
+        return
+        
+    text = f"📦 **قائمة الطلبات**\n🏪 {seller[3]}\n\n"
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    
+    for order in orders:
+        order_id, total, status, date, buyer_name, buyer_phone = order
+        
+        status_icon = {
+            'Pending': '⏳',
+            'Confirmed': '✅',
+            'Shipped': '🚚',
+            'Delivered': '🎉',
+            'Rejected': '❌'
+        }.get(status, '❓')
+        
+        try:
+            total_fmt = f"{float(total):,.0f}"
+        except:
+            total_fmt = str(total)
+            
+        button_text = f"{status_icon} #{order_id} {buyer_name} ({total_fmt})"
+        markup.add(types.InlineKeyboardButton(button_text, callback_data=f"order_details_{order_id}"))
+
+    bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode='Markdown')
 
 def show_buyer_main_menu(message):
     telegram_id = message.from_user.id
@@ -2165,7 +2223,8 @@ def show_buyer_main_menu(message):
     
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row("تصفح المتاجر 🛍️", "سلة المشتريات 🛒")
-    # markup.row("📋 طلباتي", "📦 مرتجعاتي") - Removed
+    markup.row("📋 طلباتي", "📦 مرتجعاتي")
+    markup.row("💰 كشف حسابي الآجل", "👤 تعديل بياناتي")
     markup.row("💰 كشف حسابي الآجل", "👤 تعديل بياناتي")
     # إضافة زر إنشاء متجر جديد
     markup.row("🏪 إنشاء متجر جديد")
@@ -7014,7 +7073,125 @@ def process_edit_user_info(message):
     show_buyer_main_menu(message)
 
 # ====== عرض الطلبات للمشتري ======
-# (Handlers Removed)
+@bot.message_handler(func=lambda message: message.text == "📋 طلباتي")
+def handle_my_orders(message):
+    telegram_id = message.from_user.id
+    print(f"DEBUG: handle_my_orders processing for {telegram_id}") # Confirm handler is reached
+    
+    try:
+        # التحقق إذا كان المستخدم مسجلاً
+        user = get_user(telegram_id)
+        if not user:
+            bot.send_message(message.chat.id, "⚠️ يجب عليك تسجيل الدخول أولاً.")
+            return
+            
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # جلب الطلبات الخاصة بالمشتري (BuyerID)
+        # استخدام BuyerID (TelegramID)
+        query = """
+            SELECT o.OrderID, s.StoreName, o.Total, o.Status, o.OrderDate
+            FROM Orders o
+            JOIN Sellers s ON o.SellerID = s.SellerID
+            WHERE o.BuyerID = ? OR o.BuyerID = ?
+            ORDER BY o.OrderDate DESC
+            LIMIT 10
+        """
+        
+        cursor.execute(query, (telegram_id, str(telegram_id)))
+        orders = cursor.fetchall()
+        conn.close()
+        
+        if not orders:
+            bot.send_message(message.chat.id, "📭 لا توجد لديك طلبات سابقة.")
+            return
+            
+        text = "📋 **قائمة طلباتي**\n\n"
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        
+        for order in orders:
+            order_id, store_name, total, status, date = order
+            
+            status_icon = {
+                'Pending': '⏳',
+                'Confirmed': '✅',
+                'Shipped': '🚚',
+                'Delivered': '🎉',
+                'Rejected': '❌'
+            }.get(status, '❓')
+            
+            # Formating Total
+            try:
+                total_fmt = f"{float(total):,.0f}"
+            except:
+                total_fmt = str(total)
+
+            button_text = f"{status_icon} طلب #{order_id} - {store_name} ({total_fmt} IQD)"
+            markup.add(types.InlineKeyboardButton(button_text, callback_data=f"my_order_{order_id}"))
+            
+        bot.send_message(message.chat.id, "اختر طلباً لعرض التفاصيل:", reply_markup=markup)
+        
+    except Exception as e:
+        print(f"ERROR in handle_my_orders: {e}")
+        traceback.print_exc()
+        bot.send_message(message.chat.id, f"⚠️ حدث خطأ تقني:\n{str(e)}")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("my_order_"))
+def handle_buyer_order_details(call):
+    try:
+        order_id = int(call.data.split("_")[2])
+        
+        order_details, items = get_order_details(order_id)
+        
+        if not order_details:
+            bot.answer_callback_query(call.id, "الطلب غير موجود")
+            return
+            
+        # order_details structure based on get_order_details return:
+        # 0:OrderID, 1:BuyerID, 2:SellerID, 3:Total, 4:Status, 5:OrderDate, 6:Address, 7:Phone, 8:PaymentMethod, 9:FullyPaid
+        
+        store_name = "المتجر" 
+        # نحتاج لجلب اسم المتجر، الدالة get_order_details لا ترجعه مباشرة بـ JOIN
+        # سنحاول جلبه بشكل منفصل أو الاعتماد على seller_id
+        seller_id = order_details[2]
+        seller = get_seller_by_id(seller_id)
+        if seller:
+            store_name = seller[3]
+            
+        text = f"📋 **تفاصيل طلبي #{order_id}**\n\n"
+        text += f"🏪 المتجر: {store_name}\n"
+        text += f"📅 التاريخ: {order_details[5]}\n"
+        text += f"📊 الحالة: {order_details[4]}\n"
+        text += f"💰 الإجمالي: {order_details[3]} IQD\n"
+        
+        payment_method = 'نقداً' if order_details[8] == 'cash' else 'آجل'
+        payment_status = 'مدفوع' if order_details[9] else 'غير مدفوع'
+        text += f"💳 الدفع: {payment_method} ({payment_status})\n"
+        
+        if order_details[6]:
+            text += f"📍 العنوان: {order_details[6]}\n"
+            
+        text += "\n📦 **المنتجات:**\n"
+        
+        for item in items:
+            # item: ID, OrderID, ProductID, Qty, Price, RetQty, RetReason, RetDate, ProductName
+            prod_name = item[8]
+            qty = item[3]
+            price = item[4]
+            total_item = qty * price
+            
+            text += f"- {prod_name} (x{qty}) = {total_item:,.0f}\n"
+            
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_menu")) # or back to list?
+        
+        bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode='Markdown')
+        bot.answer_callback_query(call.id)
+        
+    except Exception as e:
+        bot.answer_callback_query(call.id, "حدث خطأ")
+        print(f"Error in buyer order details: {e}")
 
 # ====== الأوامر الإضافية ======
 @bot.message_handler(commands=['myid'])
