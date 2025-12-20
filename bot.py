@@ -2172,7 +2172,9 @@ def handle_seller_orders_menu(message):
     conn.close()
     
     if not orders:
-        bot.send_message(message.chat.id, "📭 لا توجد طلبات حالياً.")
+        db_type = "PostgreSQL" if IS_POSTGRES else "SQLite"
+        debug_msg = f"📭 لا توجد طلبات حالياً.\n\n🔍 **تشخيص:**\n🆔 معرف البائع: `{seller[0]}`\n🗄️ نوع القاعدة: `{db_type}`"
+        bot.send_message(message.chat.id, debug_msg, parse_mode='Markdown')
         return
         
     text = f"📦 **قائمة الطلبات**\n🏪 {seller[3]}\n\n"
