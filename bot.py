@@ -1649,36 +1649,33 @@ def notify_seller_of_order(order_id, buyer_id, seller_id):
     
     notification = f"🛎️ **طلب جديد!**\n\n"
     notification += f"🏪 المتجر: {store_name}\n"
-    notification += f"🆔 رقم الطلب: {order_id}\n"
-    notification += f"👤 المشتري: {buyer_name}\n"
-    notification += f"📞 رقم الهاتف: {buyer_phone}\n"
-    notification += f"💰 الإجمالي: {order_details[3]} IQD\n"
-    notification += f"💳 طريقة الدفع: {'نقداً' if order_details[8] == 'cash' else 'على الحساب'}\n"
-    notification += f"💵 حالة الدفع: {'مدفوع بالكامل' if order_details[9] == 1 else 'غير مدفوع بالكامل'}\n"
+    # بناء النص التفصيلي (للرسايل الداخلية والاحتياط)
+    full_notification = f"🛎️ **طلب جديد!**\n\n"
+    full_notification += f"🏪 المتجر: {store_name}\n"
+    full_notification += f"🆔 رقم الطلب: {order_id}\n"
+    full_notification += f"👤 المشتري: {buyer_name}\n"
+    full_notification += f"📞 رقم الهاتف: {buyer_phone}\n"
+    full_notification += f"💰 الإجمالي: {order_details[3]} IQD\n"
+    full_notification += f"💳 طريقة الدفع: {'نقداً' if order_details[8] == 'cash' else 'على الحساب'}\n"
+    full_notification += f"💵 حالة الدفع: {'مدفوع بالكامل' if order_details[9] == 1 else 'غير مدفوع بالكامل'}\n"
     # تنسيق التاريخ (بدون وقت)
     order_date = str(order_details[5]).split()[0]
-    notification += f"📅 تاريخ الطلب: {order_date}\n"
+    full_notification += f"📅 تاريخ الطلب: {order_date}\n"
     
     if order_details[6]:
-        notification += f"📍 العنوان: {order_details[6]}\n"
+        full_notification += f"📍 العنوان: {order_details[6]}\n"
     
-    notification += f"\n📦 **المنتجات:**\n"
+    full_notification += f"\n📦 **المنتجات:**\n"
     
-    # ... (existing notification string construction) ...
-    # تنسيق التاريخ (بدون وقت)
-    order_date = str(order_details[5]).split()[0]
-    notification += f"📅 تاريخ الطلب: {order_date}\n"
-    
-    if order_details[6]:
-        notification += f"📍 العنوان: {order_details[6]}\n"
-    
-    notification += f"\n📦 **المنتجات:**\n"
-    
+    # تفاصيل المنتجات للنص الاحتياطي
     for item in items:
         item_id, order_id_val, product_id, quantity, price, returned_qty, return_reason, return_date = item[:8]
         product_name = item[8] if len(item) > 8 else "منتج"
-        notification += f"• {product_name} × {quantity} = {quantity * price} IQD\n"
-    
+        full_notification += f"• {product_name} × {quantity} = {quantity * price} IQD\n"
+
+    # Minimal caption for the image
+    short_caption = f"🛎️ **طلب جديد #{order_id}**\n💰 الإجمالي: {order_details[3]} IQD"
+
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
         types.InlineKeyboardButton("📞 اتصل بالمشتري", callback_data=f"contact_buyer_{buyer_id}"),
@@ -1688,7 +1685,8 @@ def notify_seller_of_order(order_id, buyer_id, seller_id):
         types.InlineKeyboardButton("🗑️ رفض الطلب", callback_data=f"reject_order_{order_id}")
     )
     
-    create_message(order_id, seller_id, 'new_order', notification)
+    # Save full details to Messages table (for history)
+    create_message(order_id, seller_id, 'new_order', full_notification)
     
     try:
         # 🎨 Try to generate Receipt Image
@@ -1698,7 +1696,8 @@ def notify_seller_of_order(order_id, buyer_id, seller_id):
             
             if receipt_img:
                 receipt_img.name = f"receipt_{order_id}.png"
-                bot.send_photo(seller_telegram_id, receipt_img, caption=notification, reply_markup=markup, parse_mode='Markdown')
+                # Use Short Caption with Image
+                bot.send_photo(seller_telegram_id, receipt_img, caption=short_caption, reply_markup=markup, parse_mode='Markdown')
                 print(f"✅ Sent Visual Receipt for Order #{order_id}")
                 return # Stop here if image sent successfully
         except ImportError:
@@ -1706,8 +1705,8 @@ def notify_seller_of_order(order_id, buyer_id, seller_id):
         except Exception as img_err:
             print(f"⚠️ Failed to generate/send receipt image: {img_err}")
             
-        # Fallback to Text
-        bot.send_message(seller_telegram_id, notification, reply_markup=markup, parse_mode='Markdown')
+        # Fallback to Full Text if image fails
+        bot.send_message(seller_telegram_id, full_notification, reply_markup=markup, parse_mode='Markdown')
     except Exception as e:
         print(f"⚠️ تعذر إرسال إشعار للبائع {seller_telegram_id}: {e}")
 
