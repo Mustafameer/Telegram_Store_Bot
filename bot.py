@@ -2138,8 +2138,9 @@ def show_seller_menu(message):
     
     welcome_msg = f"🏪 **مرحباً بصاحب المتجر!**\n"
     welcome_msg += f"🏪 متجرك: {store_name}"
-    if unread_count > 0:
-        welcome_msg += f"\n\nلديك {unread_count} رسالة غير مقروءة!"
+    
+    if pending_count > 0:
+        welcome_msg += f"\n\nلديك {pending_count} طلبات جديدة!"
     
     bot.send_message(message.chat.id, welcome_msg, reply_markup=markup)
 
@@ -2603,8 +2604,8 @@ def show_seller_menu_for_new_seller(telegram_id, store_name):
         
         welcome_msg = f"🏪 **مرحباً بصاحب المتجر!**\n"
         welcome_msg += f"🏪 متجرك: {store_name}"
-        if unread_count > 0:
-            welcome_msg += f"\n\nلديك {unread_count} رسالة غير مقروءة!"
+        if pending_count > 0:
+            welcome_msg += f"\n\nلديك {pending_count} طلبات جديدة!"
         
         bot.send_message(telegram_id, welcome_msg, reply_markup=markup)
     except Exception as e:
@@ -5201,6 +5202,60 @@ def handle_back_to_my_credit(call):
     bot.answer_callback_query(call.id)
 
 # ====== معالجة Callback Queries العامة ======
+
+# ====== حذف الطلب وتحديث الكميات ======
+@bot.callback_query_handler(func=lambda call: call.data.startswith("delete_order_"))
+def handle_delete_order(call):
+    try:
+        order_id = int(call.data.split("_")[2])
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # 1. Get Order Items to restore quantity
+        if IS_POSTGRES:
+            cursor.execute("SELECT ProductID, Quantity FROM OrderItems WHERE OrderID = %s", (order_id,))
+        else:
+            cursor.execute("SELECT ProductID, Quantity FROM OrderItems WHERE OrderID = ?", (order_id,))
+            
+        items = cursor.fetchall()
+        
+        # 2. Restore Quantities
+        for item in items:
+            pid, qty = item
+            if IS_POSTGRES:
+                cursor.execute("UPDATE Products SET Quantity = Quantity + %s WHERE ProductID = %s", (qty, pid))
+            else:
+                cursor.execute("UPDATE Products SET Quantity = Quantity + ? WHERE ProductID = ?", (qty, pid))
+                
+        # 3. Delete Order (Cascades to OrderItems usually, but safe to delete items first if no cascade)
+        # Assuming CASCADE or manual deletion. Let's delete items first to be safe.
+        if IS_POSTGRES:
+            cursor.execute("DELETE FROM OrderItems WHERE OrderID = %s", (order_id,))
+            cursor.execute("DELETE FROM Orders WHERE OrderID = %s", (order_id,))
+            cursor.execute("DELETE FROM Messages WHERE OrderID = %s", (order_id,)) # Clean up messages ref
+        else:
+            cursor.execute("DELETE FROM OrderItems WHERE OrderID = ?", (order_id,))
+            cursor.execute("DELETE FROM Orders WHERE OrderID = ?", (order_id,))
+            cursor.execute("DELETE FROM Messages WHERE OrderID = ?", (order_id,))
+            
+        conn.commit()
+        conn.close()
+        
+        # 4. Update View
+        bot.answer_callback_query(call.id, "✅ تم حذف الطلب واعادة الكميات")
+        bot.edit_message_text(
+            f"🗑️ **تم حذف الطلب #{order_id}**\n\nتم إعادة الكميات للمخزن.",
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode='Markdown',
+            reply_markup=None
+        )
+        
+    except Exception as e:
+        print(f"Error deleting order: {e}")
+        bot.answer_callback_query(call.id, "حدث خطأ أثناء الحذف")
+
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
     try:
@@ -6724,6 +6779,10 @@ def seller_messages(message):
                  buttons.append(types.InlineKeyboardButton("🚚 شحن", callback_data=f"ship_order_{oid}"))
 
             buttons.append(types.InlineKeyboardButton("📋 تفاصيل", callback_data=f"order_details_{oid}"))
+            
+            # Add Delete button for all orders (or just Pending? User said "Delete the new order")
+            # Usually strict to Pending to avoid deleting historical data, but user asked for it.
+            buttons.append(types.InlineKeyboardButton("🗑️ حذف", callback_data=f"delete_order_{oid}"))
             
             markup.add(*buttons)
             
