@@ -6752,20 +6752,31 @@ def seller_messages(message):
             oid, total, status, date, buyer, phone, pay_method, address = order
             
             # جلب المنتجات للعرض
-            cursor.execute("SELECT p.Name, oi.Quantity FROM OrderItems oi JOIN Products p ON oi.ProductID = p.ProductID WHERE oi.OrderID = ?", (oid,))
+            cursor.execute("SELECT p.Name, oi.Quantity, oi.Price FROM OrderItems oi JOIN Products p ON oi.ProductID = p.ProductID WHERE oi.OrderID = ?", (oid,))
             items = cursor.fetchall()
-            items_text = "\n".join([f"- {i[0]} (x{i[1]})" for i in items])
+            
+            # تنسيق قائمة المنتجات
+            items_text = ""
+            for i in items:
+                p_name = i[0]
+                p_qty = i[1]
+                p_price = i[2]
+                row_total = p_qty * p_price
+                items_text += f"▫️ {p_name}\n   {p_qty}x | 💰 {p_price:,.0f} = {row_total:,.0f}\n"
             
             status_icon = "⏳" if status == 'Pending' else "✅" if status == 'Confirmed' else "🚚" if status == 'Shipped' else "❌" if status == 'Rejected' else ""
             status_text = "قيد الانتظار" if status == 'Pending' else "تم التأكيد" if status == 'Confirmed' else "تم الشحن" if status == 'Shipped' else "مرفوض" if status == 'Rejected' else status
 
-            card_text = f"📦 **طلب #{oid}** {status_icon}\n"
-            card_text += f"📅 {date}\n"
+            # تنسيق البطاقة
+            card_text = f"{status_icon} **طلب رقم #{oid}**\n\n"
             card_text += f"👤 {buyer} | 📞 {phone}\n"
-            if address: card_text += f"📍 {address}\n"
-            card_text += f"💰 {total:,.0f} IQD ({'نقداً' if pay_method == 'cash' else 'آجل'})\n"
-            card_text += f"📊 الحالة: {status_text}\n"
-            card_text += f"🛒 **المنتجات:**\n{items_text}"
+            if address:
+                card_text += f"📍 {address}\n"
+            card_text += "─────────────────\n"
+            card_text += items_text
+            card_text += "─────────────────\n"
+            card_text += f"💰 **الإجمالي: {total:,.0f} IQD**\n"
+            card_text += f"📅 {date}"
             
             # Buttons: Confirm, Ship, Details
             markup = types.InlineKeyboardMarkup(row_width=3)
