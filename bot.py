@@ -2017,9 +2017,9 @@ def browse_without_registration(message):
         'username': message.from_user.username
     }
     
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row("تصفح المتاجر 🛍️", "سلة المشتريات 🛒")
-    markup.row("👤 تسجيل حساب جديد", "🏠 الرئيسية")
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
+    markup.row("تصفح المتاجر 🛍️", "سلة المشتريات 🛒", "👤 تسجيل حساب جديد")
+    markup.row("🏠 الرئيسية")
     
     bot.send_message(message.chat.id,
                     "👀 **مرحباً بك كزائر!**\n\n"
@@ -2059,19 +2059,17 @@ def show_bot_admin_menu(message):
     unread_count = len(get_unread_messages(seller[0])) if seller else 0
     messages_badge = f" 📨({unread_count})" if unread_count > 0 else ""
     
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    markup.row("👑 لوحة التحكم الإدارية")
-    # Row 1: Seller Hubs
-    markup.row("🏪 منتجاتي", "📁 الأقسام")
-    # Row 2: Customer & Orders
-    markup.row("📊 كشف حساب الزبائن", "🏪 إدارة الزبائن الآجلين")
-    # Row 3: Utility
-    markup.row(f"📩 الرسائل{messages_badge}", "📦 الطلبات", "🔗 رابط المتجر")
-    # Row 4: Admin Controls
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
+    # Row 1
+    markup.row("👑 لوحة التحكم الإدارية", "🏪 منتجاتي", "📁 الأقسام")
+    # Row 2
+    markup.row("📦 الطلبات", "📊 كشف حساب الزبائن", "🏪 إدارة الزبائن الآجلين")
+    # Row 3
+    markup.row(f"📩 الرسائل{messages_badge}", "🔗 رابط المتجر", "📊 إحصائيات النظام")
+    # Row 4
     markup.row("🗑️ حذف متجر", "➕ إضافة متجر", "📋 قائمة المتاجر")
-    markup.row("👑 إدارة الحسابات", "📊 إحصائيات النظام")
-    # Row 5: Other
-    markup.row("🏠 الرئيسية", "🛍️ وضع المشتري")
+    # Row 5
+    markup.row("👑 إدارة الحسابات", "🛍️ وضع المشتري", "🏠 الرئيسية")
     
     welcome_msg = f"👑🏪 **مرحباً بأدمن البوت وصاحب المتجر!**\n\n"
     welcome_msg += f"🏪 متجرك: {store_name}\n"
@@ -2084,11 +2082,11 @@ def show_bot_admin_menu(message):
 
 def show_admin_dashboard(message):
     """لوحة التحكم الإدارية فقط"""
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
     
-    markup.row("👑 إدارة الحسابات", "📊 إحصائيات النظام")
-    markup.row("🗑️ حذف متجر", "➕ إضافة متجر", "📋 قائمة المتاجر")
-    markup.row("🛍️ وضع المشتري", "🏠 الرئيسية")
+    markup.row("👑 إدارة الحسابات", "📊 إحصائيات النظام", "🗑️ حذف متجر")
+    markup.row("➕ إضافة متجر", "📋 قائمة المتاجر", "🛍️ وضع المشتري")
+    markup.row("🏠 الرئيسية")
     
     bot.send_message(
         message.chat.id,
@@ -2121,18 +2119,22 @@ def show_seller_menu(message):
     
     store_name = seller[3] if seller else "متجرك"
     
-    unread_count = len(get_unread_messages(seller[0])) if seller else 0
-    messages_badge = f" 📨({unread_count})" if unread_count > 0 else ""
+    # تحديث الشارة لتظهر عدد الطلبات المعلقة
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM Orders WHERE SellerID = ? AND Status = 'Pending'", (seller[0],))
+    pending_count = cursor.fetchone()[0]
+    conn.close()
     
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    # Row 1: Main Management Hubs
-    markup.row("🏪 منتجاتي", "📁 الأقسام")
-    # Row 2: Customer & Orders
-    markup.row("📊 كشف حساب الزبائن", "🏪 إدارة الزبائن الآجلين")
-    # Row 3: Utility
-    markup.row(f"📩 الرسائل{messages_badge}", "📦 الطلبات", "🔗 رابط المتجر")
-    # Row 4: Other
-    markup.row("🏠 الرئيسية", "🛍️ وضع المشتري")
+    messages_badge = f" 📩({pending_count})" if pending_count > 0 else ""
+    
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
+    # Row 1
+    markup.row("🏪 منتجاتي", "📁 الأقسام", "📦 الطلبات")
+    # Row 2
+    markup.row(f"📩 الرسائل{messages_badge}", "📊 كشف حساب الزبائن", "🏪 إدارة الزبائن الآجلين")
+    # Row 3
+    markup.row("🔗 رابط المتجر", "🛍️ وضع المشتري", "🏠 الرئيسية")
     
     welcome_msg = f"🏪 **مرحباً بصاحب المتجر!**\n"
     welcome_msg += f"🏪 متجرك: {store_name}"
@@ -2223,13 +2225,9 @@ def show_buyer_main_menu(message):
                         reply_markup=markup)
         return
     
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
     markup.row("تصفح المتاجر 🛍️", "سلة المشتريات 🛒")
-    markup.row("📋 طلباتي", "📦 مرتجعاتي")
-    markup.row("💰 كشف حسابي الآجل", "👤 تعديل بياناتي")
-    markup.row("💰 كشف حسابي الآجل", "👤 تعديل بياناتي")
-    # إضافة زر إنشاء متجر جديد
-    markup.row("🏪 إنشاء متجر جديد")
+    markup.row("💰 كشف حسابي الآجل", "👤 تعديل بياناتي", "🏪 إنشاء متجر جديد")
     markup.row("🏠 الرئيسية")
     
     welcome_msg = "👋 **مرحباً بك كـ مشتري!**\nاختر من القائمة:"
@@ -2586,18 +2584,22 @@ def show_seller_menu_for_new_seller(telegram_id, store_name):
         
         store_name = seller[3] if seller else "متجرك"
         
-        unread_count = len(get_unread_messages(seller[0])) if seller else 0
-        messages_badge = f" 📨({unread_count})" if unread_count > 0 else ""
+        # تحديث الشارة لتظهر عدد الطلبات المعلقة
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM Orders WHERE SellerID = ? AND Status = 'Pending'", (seller[0],))
+        pending_count = cursor.fetchone()[0]
+        conn.close()
         
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        # Row 1: Main Management Hubs
-        markup.row("🏪 منتجاتي", "📁 الأقسام")
-        # Row 2: Customer & Orders
-        markup.row("📊 كشف حساب الزبائن", "🏪 إدارة الزبائن الآجلين")
-        # Row 3: Utility
-        markup.row(f"📩 الرسائل{messages_badge}", "🔗 رابط المتجر")
-        # Row 4: Other
-        markup.row("🏠 الرئيسية", "🛍️ وضع المشتري")
+        messages_badge = f" 📩({pending_count})" if pending_count > 0 else ""
+        
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
+        # Row 1
+        markup.row("🏪 منتجاتي", "📁 الأقسام", "📊 كشف حساب الزبائن")
+        # Row 2
+        markup.row("🏪 إدارة الزبائن الآجلين", f"📩 الرسائل{messages_badge}", "🔗 رابط المتجر")
+        # Row 3
+        markup.row("🛍️ وضع المشتري", "🏠 الرئيسية")
         
         welcome_msg = f"🏪 **مرحباً بصاحب المتجر!**\n"
         welcome_msg += f"🏪 متجرك: {store_name}"
@@ -6639,53 +6641,103 @@ def process_set_cart_quantity(message):
     view_cart(message, user_id=telegram_id)
 
 # ====== نظام الرسائل ======
-@bot.message_handler(func=lambda message: "📩 الرسائل" in message.text and is_seller(message.from_user.id))
+# ====== نظام الرسائل ======
+@bot.message_handler(func=lambda message: "الرسائل" in message.text)
 def seller_messages(message):
-    telegram_id = message.from_user.id
-    
-    if not is_seller_active(telegram_id):
-        bot.send_message(message.chat.id,
-                        "⛔ **حسابك معطل**\n\n"
-                        "لا يمكنك الوصول إلى الرسائل لأن حسابك معطل.")
-        return
-    
-    seller = get_seller_by_telegram(telegram_id)
-    
-    if not seller:
-        bot.send_message(message.chat.id, "⛔ أنت لست بائعاً مسجلاً!")
-        return
-    
-    unread_messages = get_unread_messages(seller[0])
-    
-    if not unread_messages:
-        bot.send_message(message.chat.id, "📭 لا توجد رسائل جديدة.")
-        return
-    
-    for msg in unread_messages:
-        message_id, order_id, seller_id, msg_type, msg_text, is_read, created_at = msg[:7]
+    print(f"📩 DEBUG: Message handler triggered for '{message.text}' by {message.from_user.id}")
+    try:
+        telegram_id = message.from_user.id
         
-        mark_message_as_read(message_id)
+        # Double check it is a seller
+        if not is_seller(telegram_id):
+            print(f"⛔ User {telegram_id} is NOT a seller.")
+            return
+
+        if not is_seller_active(telegram_id):
+            bot.send_message(message.chat.id,
+                            "⛔ **حسابك معطل**\n\n"
+                            "لا يمكنك الوصول إلى الرسائل لأن حسابك معطل.")
+            return
+
+        seller = get_seller_by_telegram(telegram_id)
         
-        markup = types.InlineKeyboardMarkup()
+        if not seller:
+            bot.send_message(message.chat.id, "⛔ أنت لست بائعاً مسجلاً!")
+            return
         
-        if msg_type == 'new_order':
-            markup.add(
-                types.InlineKeyboardButton("📞 اتصل بالمشتري", callback_data=f"contact_buyer_{order_id}"),
-                types.InlineKeyboardButton("✅ تأكيد الطلب", callback_data=f"confirm_order_{order_id}"),
-                types.InlineKeyboardButton("📋 تفاصيل الطلب", callback_data=f"order_details_{order_id}")
-            )
-        elif msg_type == 'return_request':
-            markup.add(
-                types.InlineKeyboardButton("📋 تفاصيل الإرجاع", callback_data=f"return_details_{message_id}"),
-                types.InlineKeyboardButton("✅ معالجة الإرجاع", callback_data=f"process_return_{message_id}")
-            )
+        # جلب الطلبات الحديثة (بدلاً من الرسائل)
+        conn = get_db_connection()
+        cursor = conn.cursor()
         
-        bot.send_message(message.chat.id, msg_text, reply_markup=markup, parse_mode='Markdown')
-    
-    if is_bot_admin(telegram_id):
-        show_bot_admin_menu(message)
-    else:
+        # جلب آخر 10 طلبات (المعلقة أولاً)
+        query = """
+            SELECT o.OrderID, o.Total, o.Status, o.CreatedAt, 
+                   COALESCE(u.FullName, 'زائر') as BuyerName,
+                   COALESCE(u.PhoneNumber, 'غير متوفر') as BuyerPhone,
+                   o.PaymentMethod, o.DeliveryAddress
+            FROM Orders o
+            LEFT JOIN Users u ON o.BuyerID = u.TelegramID
+            WHERE o.SellerID = ? 
+            ORDER BY 
+                CASE WHEN o.Status = 'Pending' THEN 0 ELSE 1 END,
+                o.CreatedAt DESC
+            LIMIT 10
+        """
+        cursor.execute(query, (seller[0],))
+        orders = cursor.fetchall()
+        
+        if not orders:
+            bot.send_message(message.chat.id, "📭 لا توجد طلبات أو رسائل.")
+            conn.close()
+            return
+
+        bot.send_message(message.chat.id, "📩 **الطلبات والرسائل (Inbox)**")
+
+        for order in orders:
+            oid, total, status, date, buyer, phone, pay_method, address = order
+            
+            # جلب المنتجات للعرض
+            cursor.execute("SELECT p.Name, oi.Quantity FROM OrderItems oi JOIN Products p ON oi.ProductID = p.ProductID WHERE oi.OrderID = ?", (oid,))
+            items = cursor.fetchall()
+            items_text = "\n".join([f"- {i[0]} (x{i[1]})" for i in items])
+            
+            status_icon = "⏳" if status == 'Pending' else "✅" if status == 'Confirmed' else "🚚" if status == 'Shipped' else "❌" if status == 'Rejected' else ""
+            status_text = "قيد الانتظار" if status == 'Pending' else "تم التأكيد" if status == 'Confirmed' else "تم الشحن" if status == 'Shipped' else "مرفوض" if status == 'Rejected' else status
+
+            card_text = f"📦 **طلب #{oid}** {status_icon}\n"
+            card_text += f"📅 {date}\n"
+            card_text += f"👤 {buyer} | 📞 {phone}\n"
+            if address: card_text += f"📍 {address}\n"
+            card_text += f"💰 {total:,.0f} IQD ({'نقداً' if pay_method == 'cash' else 'آجل'})\n"
+            card_text += f"📊 الحالة: {status_text}\n"
+            card_text += f"🛒 **المنتجات:**\n{items_text}"
+            
+            # Buttons: Confirm, Ship, Details
+            markup = types.InlineKeyboardMarkup(row_width=3)
+            buttons = []
+            
+            if status == 'Pending':
+                 buttons.append(types.InlineKeyboardButton("✅ تأكيد", callback_data=f"confirm_order_{oid}"))
+            
+            # Show "Ship" if Pending (after confirm?) or Confirmed
+            if status in ['Pending', 'Confirmed']:
+                 buttons.append(types.InlineKeyboardButton("🚚 شحن", callback_data=f"ship_order_{oid}"))
+
+            buttons.append(types.InlineKeyboardButton("📋 تفاصيل", callback_data=f"order_details_{oid}"))
+            
+            markup.add(*buttons)
+            
+            bot.send_message(message.chat.id, card_text, reply_markup=markup, parse_mode='Markdown')
+            
+        conn.close()
+        
+        # إعادة عرض القائمة لتحديث العداد
         show_seller_menu(message)
+        
+    except Exception as e:
+        print(f"❌ Error in seller_messages: {e}")
+        traceback.print_exc()
+        bot.send_message(message.chat.id, f"⚠️ حدث خطأ أثناء عرض الرسائل: {e}")
 
 # ====== معالجة Callback Queries للطلبات ======
 def handle_contact_buyer(call):
@@ -7584,6 +7636,11 @@ if __name__ == "__main__":
         print(f"🔑 Token Loaded: {TOKEN[:5]}...{TOKEN[-5:]} (Length: {len(TOKEN)})")
     else:
         print("❌ CRITICAL: No Token Found in Environment!")
+
+    if os.environ.get('DATABASE_URL'):
+        print("☁️ DATABASE MODE: CLOUD (PostgreSQL)")
+    else:
+        print("💻 DATABASE MODE: LOCAL (SQLite)")
 
     try:
         print("🛠️ Initializing Database...")

@@ -1,7 +1,7 @@
-
-
+import 'package:path/path.dart' as p;
 import 'package:flutter/material.dart';
 import 'dart:io';
+import 'dart:async';
 import 'package:file_picker/file_picker.dart';
 
 import '../models/database_models.dart';
@@ -11,11 +11,21 @@ import '../services/sync_service.dart';
 import 'store_detail_screen.dart';
 import 'login_screen.dart';
 import 'cart_screen.dart';
+import 'messages_screen.dart';
 import 'components/store_form_dialog.dart';
+import 'server_settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
-  final bool isAdmin;
-  const HomeScreen({super.key, this.isAdmin = false});
+  final bool isAdmin; // Admin of the PLATFORM (can suspend stores etc)
+  final bool isSeller; // Has a store
+  final int currentUserId;
+
+  const HomeScreen({
+    super.key, 
+    this.isAdmin = false,
+    this.isSeller = false,
+    required this.currentUserId,
+  });
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -24,28 +34,205 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
   bool _isExtended = true;
+  StreamSubscription? _syncSub;
+  Map<String, int> _counts = {'products': 0, 'messages': 0, 'cart': 0};
+  
+  @override
+  void initState() {
+    super.initState();
+    _refreshCounts();
+    // ... existing init code ...
+    _syncSub = SyncService.instance.statusStream.listen((msg) {
+      // ... existing listener ...
+      if (msg.contains('Failed') || msg.contains('Error') || msg.toLowerCase().contains('fatal')) {
+          showDialog(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Row(children: [Icon(Icons.error, color: Colors.red), SizedBox(width: 8), Text("Sync Error")]),
+              content: SelectableText(msg), 
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(context), child: const Text("OK")),
+                TextButton(onPressed: () { 
+                    Navigator.pop(context);
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => ServerSettingsScreen()));
+                  }, child: const Text("Settings"))
+              ],
+            )
+          );
+      }
+       ScaffoldMessenger.of(context).hideCurrentSnackBar();
+       ScaffoldMessenger.of(context).showSnackBar(
+         SnackBar(
+           content: Row(
+             children: [
+               if (msg.contains('Starting') || msg.contains('ing...')) 
+                 const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+               const SizedBox(width: 10),
+               Expanded(child: Text(msg)),
+             ],
+           ),
+           backgroundColor: msg.contains('Failed') || msg.contains('Error') ? Colors.red : Colors.blue.shade700,
+           duration: const Duration(seconds: 4),
+         )
+       );
+    });
+
+    Future.delayed(const Duration(seconds: 1), () {
+        SyncService.instance.startSyncTimer();
+    });
+  }
+
+  Future<void> _refreshCounts() async {
+    // Assuming main user/admin ID for now. In multi-user app, this would use logged-in ID.
+    const targetId = 1041977029; 
+    // Actually, we should find the Seller ID for the current user.
+    // But for the local single-user scenario, we use the known ID or look it up.
+    // Let's assume targetId is the one we want.
+    
+    // We also need the SellerID for Products/Messages.
+    // getSellerByTelegramId(targetId) -> sellerId.
+    final seller = await DatabaseHelper.instance.getSellerByTelegramId(targetId);
+    int pCount = 0;
+    int mCount = 0;
+    int cCount = 0;
+    
+    if (seller != null) {
+      pCount = await DatabaseHelper.instance.getProductsCount(seller.sellerId);
+      mCount = await DatabaseHelper.instance.getMessagesCount(seller.sellerId); // Total messages
+    }
+    cCount = await DatabaseHelper.instance.getCartCount(targetId);
+
+    if (mounted) {
+      setState(() {
+        _counts = {'products': pCount, 'messages': mCount, 'cart': cCount};
+      });
+    }
+  }
+
+  // Hook into other refreshes if possible, or just call periodically
+  
+  List<Map<String, dynamic>> _getDestinations() {
+    return [
+      {'icon': Icons.dashboard, 'label': 'لوحة التحكم'},
+      if (widget.isAdmin || widget.isSeller) {'icon': Icons.store, 'label': 'متجري', 'count': _counts['products']},
+      {'icon': Icons.shopping_cart, 'label': 'سلة المشتريات', 'count': _counts['cart']},
+      {'icon': Icons.settings, 'label': 'الاعدادات'},
+      if (widget.isAdmin || widget.isSeller) {'icon': Icons.message, 'label': 'الرسائل', 'count': _counts['messages']},
+      {'icon': Icons.logout, 'label': 'خروج', 'isExit': true},
+    ];
+  }
+
+  void _onDestinationSelected(int index) {
+     final destinations = _getDestinations();
+     if (index >= destinations.length) return;
+     final selectedItem = destinations[index];
+    
+    if (selectedItem['isExit'] == true) {
+       Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (context) => const LoginScreen()),
+       );
+       return;
+    }
+    
+    if (selectedItem['icon'] == Icons.settings) {
+       Navigator.push(context, MaterialPageRoute(builder: (_) => ServerSettingsScreen()));
+       return;
+    }
+    
+    // Handle Messages Tab Navigation? 
+    // I need to ensure _buildContent handles the new index!
+    
+    setState(() {
+      _selectedIndex = index;
+    });
+    
+    // Refresh logic
+    _refreshCounts();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final width = MediaQuery.of(context).size.width;
+    final bool isMobile = width < 900;
+    final destinations = _getDestinations();
+
+    if (isMobile) {
+       return Scaffold(
+         appBar: AppBar(
+            title: const Text('المتجر المحلي'),
+            actions: [
+               IconButton(
+                 icon: const Icon(Icons.sync),
+                 tooltip: 'مزامنة',
+                 onPressed: () {
+                    SyncService.instance.syncNow();
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('جاري بدء المزامنة...')));
+                 },
+               ),
+               IconButton(
+                 icon: const Icon(Icons.settings),
+                 onPressed: () {
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => ServerSettingsScreen()));
+                 },
+               )
+            ],
+         ),
+         drawer: Drawer(
+           child: ListView(
+             children: [
+               const DrawerHeader(
+                 decoration: BoxDecoration(color: Colors.blue),
+                 child: Column(
+                   mainAxisAlignment: MainAxisAlignment.center,
+                   children: [
+                     Icon(Icons.store, size: 50, color: Colors.white),
+                     SizedBox(height: 10),
+                     Text('Hypermarket Local', style: TextStyle(color: Colors.white, fontSize: 20)),
+                   ],
+                 ),
+               ),
+               ...destinations.asMap().entries.map((e) {
+                 final idx = e.key;
+                 final item = e.value;
+                 final isExit = item['isExit'] == true;
+                 final count = item['count'] as int? ?? 0;
+                 return ListTile(
+                   leading: Icon(item['icon'], color: isExit ? Colors.red : null),
+                   title: Row(
+                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                     children: [
+                       Text(item['label'], style: TextStyle(color: isExit ? Colors.red : null)),
+                       if (count > 0) 
+                         Container(
+                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                           decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(12)),
+                           child: Text('$count', style: const TextStyle(color: Colors.white, fontSize: 12)),
+                         )
+                     ],
+                   ),
+                   selected: _selectedIndex == idx,
+                   onTap: () {
+                      if (!isExit) {
+                        Navigator.pop(context);
+                      }
+                      _onDestinationSelected(idx);
+                   },
+                 );
+               })
+             ],
+           ),
+         ),
+         body: _buildContent(),
+       );
+    }
+
     return Scaffold(
       body: Row(
         children: [
           NavigationRail(
             extended: _isExtended,
             selectedIndex: _selectedIndex,
-            onDestinationSelected: (int index) {
-              
-               if (index == 3) {
-                  // Logout
-                 Navigator.of(context).pushReplacement(
-                    MaterialPageRoute(builder: (context) => const LoginScreen()),
-                  );
-                  return;
-               }
-               setState(() {
-                _selectedIndex = index;
-              });
-            },
+            onDestinationSelected: _onDestinationSelected,
             leading: IconButton(
               icon: Icon(_isExtended ? Icons.menu_open : Icons.menu),
               onPressed: () {
@@ -55,25 +242,29 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
             labelType: _isExtended ? NavigationRailLabelType.none : NavigationRailLabelType.selected,
-            destinations: [
-              const NavigationRailDestination(
-                icon: Icon(Icons.dashboard),
-                label: Text('لوحة التحكم'),
-              ),
-              if (widget.isAdmin)
-                const NavigationRailDestination(
-                  icon: Icon(Icons.store),
-                  label: Text('متجري'),
-                ),
-               const NavigationRailDestination(
-                icon: Icon(Icons.shopping_cart),
-                label: Text('سلة المشتريات'), 
-              ),
-               const NavigationRailDestination(
-                icon: Icon(Icons.logout, color: Colors.red),
-                label: Text('خروج', style: TextStyle(color: Colors.red)),
-              ),
-            ],
+            destinations: destinations.map((item) {
+               final isExit = item['isExit'] == true;
+               final count = item['count'] as int? ?? 0;
+               return NavigationRailDestination(
+                 icon: Badge(
+                   isLabelVisible: count > 0,
+                   label: Text('$count'),
+                   child: Icon(item['icon'], color: isExit ? Colors.red : null)
+                 ),
+                 label: Text(item['label'], style: TextStyle(color: isExit ? Colors.red : null)),
+               );
+            }).toList(),
+            trailing: Padding(
+               padding: const EdgeInsets.only(top: 20),
+               child: IconButton(
+                 icon: const Icon(Icons.sync, color: Colors.blue),
+                 tooltip: 'مزامنة يدوية',
+                 onPressed: () {
+                    SyncService.instance.syncNow();
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('جاري بدء المزامنة...')));
+                 },
+               ),
+             ),
           ),
           const VerticalDivider(thickness: 1, width: 1),
           Expanded(
@@ -86,18 +277,21 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildContent() {
     if (_selectedIndex == 0) {
-      return const DashboardView();
-    } else if (_selectedIndex == 1 && widget.isAdmin) {
-      return const AdminStoreLoader();
+      return DashboardView(currentUserId: widget.currentUserId);
+    } else if (_selectedIndex == 1 && (widget.isAdmin || widget.isSeller)) {
+      return AdminStoreLoader(currentUserId: widget.currentUserId); 
     } else if (_selectedIndex == 2) {
-      return const CartScreen(userId: 1041977029); 
+      return CartScreen(userId: widget.currentUserId); 
+    } else if (_selectedIndex == 4 && (widget.isAdmin || widget.isSeller)) {
+      return AdminMessagesLoader(currentUserId: widget.currentUserId);
     }
     return const Center(child: Text('جاري العمل...'));
   }
 }
 
 class DashboardView extends StatefulWidget {
-  const DashboardView({super.key});
+  final int currentUserId;
+  const DashboardView({super.key, required this.currentUserId});
 
   @override
   State<DashboardView> createState() => _DashboardViewState();
@@ -105,16 +299,31 @@ class DashboardView extends StatefulWidget {
 
 class _DashboardViewState extends State<DashboardView> {
   late Future<List<Seller>> _sellersFuture;
+  // StreamSubscription? _syncSub; // Moved to HomeScreen
 
   @override
   void initState() {
     super.initState();
     _refreshSellers();
+    // Listener removed from here to avoid duplication/loss on tab switch
+  }
+
+  @override
+  void dispose() {
+    // _syncSub?.cancel();
+    super.dispose();
   }
 
   void _refreshSellers({bool force = false}) {
     setState(() {
-      _sellersFuture = DatabaseHelper.instance.getAllSellers(forceRefresh: force);
+      _sellersFuture = DatabaseHelper.instance.getAllSellers(forceRefresh: force).then((sellers) {
+         print("🔍 Filtering Debug: CurrentUser=${widget.currentUserId}");
+         for (var s in sellers) {
+           print("  - Store: ${s.storeName}, ID: ${s.telegramId} (Exclude? ${s.telegramId == widget.currentUserId})");
+         }
+         // Filter out my own store (Buyer Logic: Don't buy from yourself)
+         return sellers.where((s) => s.telegramId != widget.currentUserId).toList();
+      });
     });
   }
 
@@ -201,7 +410,7 @@ class _DashboardViewState extends State<DashboardView> {
             tooltip: 'إنشاء مجلد الصور',
             onPressed: () async {
               try {
-                final dir = Directory(r'C:\Users\Hp\Desktop\TelegramStoreBot\data\Images');
+                final dir = Directory(p.join(Directory.current.path, 'data', 'Images'));
                 if (!await dir.exists()) {
                   await dir.create(recursive: true);
                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تم إنشاء المجلد في:\n${dir.path}'), backgroundColor: Colors.green));
@@ -267,7 +476,7 @@ class _DashboardViewState extends State<DashboardView> {
       bottomNavigationBar: FutureBuilder<List<String>>(
         future: Future.wait([
           DatabaseHelper.instance.getDbPath(),
-          Future(() async => (await Directory(r'C:\Users\Hp\Desktop\TelegramStoreBot\data\Images').exists()) ? '✅ Images Folder Found' : '❌ Images Folder MISSING')
+          Future(() async => (await Directory(p.join(Directory.current.path, 'data', 'Images')).exists()) ? '✅ Images Folder Found' : '❌ Images Folder MISSING')
         ]),
         builder: (context, snapshot) {
           final dbPath = snapshot.data?[0] ?? "Loading...";
@@ -296,7 +505,13 @@ class _DashboardViewState extends State<DashboardView> {
             children: [
               InkWell(
                 onTap: () {
-                   Navigator.push(context, MaterialPageRoute(builder: (_) => StoreDetailScreen(seller: seller, isSellerMode: true)));
+                   // Marketplace View: Always Buying Mode (false), unless we want Admin to edit from here?
+                   // User requested: "Buying mode -> Add to Cart". Dashboard = buying mode.
+                   Navigator.push(context, MaterialPageRoute(builder: (_) => StoreDetailScreen(
+                     seller: seller, 
+                     isSellerMode: false, // Buying Mode!
+                     currentUserId: widget.currentUserId
+                   )));
                 },
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -377,13 +592,13 @@ class _DashboardViewState extends State<DashboardView> {
 
 
 class AdminStoreLoader extends StatelessWidget {
-  const AdminStoreLoader({super.key});
+  final int currentUserId;
+  const AdminStoreLoader({super.key, required this.currentUserId});
 
   @override
   Widget build(BuildContext context) {
-    // 1041977029 is Admin ID
     return FutureBuilder<Seller?>(
-      future: DatabaseHelper.instance.getSellerByTelegramId(1041977029),
+      future: DatabaseHelper.instance.getSellerByTelegramId(currentUserId),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
         if (snapshot.hasData && snapshot.data != null) {
@@ -398,6 +613,28 @@ class AdminStoreLoader extends StatelessWidget {
                  const Text('يرجى إنشاؤه من لوحة التحكم'),
                ],
              ),
+           );
+        }
+      },
+    );
+  }
+}
+
+class AdminMessagesLoader extends StatelessWidget {
+  final int currentUserId;
+  const AdminMessagesLoader({super.key, required this.currentUserId});
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Seller?>(
+      future: DatabaseHelper.instance.getSellerByTelegramId(currentUserId), 
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+        if (snapshot.hasData && snapshot.data != null) {
+          return MessagesScreen(sellerId: snapshot.data!.sellerId);
+        } else {
+           return const Center(
+             child: Text('يجب إنشاء متجر أولاً لتلقي الرسائل')
            );
         }
       },

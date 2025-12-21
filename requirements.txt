@@ -3,3 +3,4 @@ psycopg2-binary
 
 
 # Force rebuild 1
+Pillow

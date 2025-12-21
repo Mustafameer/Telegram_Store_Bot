@@ -5,7 +5,7 @@ import unicodedata
 # Force local DB path as per bot.py
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
-DB_FILE = os.path.join(DATA_DIR, "store.db")
+DB_FILE = os.path.join(DATA_DIR, "store_local_new.db")
 
 print(f"Checking DB at: {DB_FILE}")
 
@@ -19,7 +19,7 @@ def check_stores():
     
     print("\n--- Running Query from browse_stores ---")
     try:
-        cursor.execute("SELECT TelegramID, UserName, StoreName FROM Sellers WHERE Status = 'active' ORDER BY StoreName")
+        cursor.execute("SELECT SellerID, TelegramID, UserName, StoreName, CreatedAt, Status FROM Sellers ORDER BY CreatedAt DESC")
         sellers = cursor.fetchall()
         
         if not sellers:
@@ -27,21 +27,10 @@ def check_stores():
         else:
             print(f"Found {len(sellers)} sellers:")
             for s in sellers:
-                tid, uname, sname = s
-                print(f"RAW: ID={tid}, User={uname}, Store='{sname}'")
-                
-                # Check for hidden characters
-                if sname:
-                    print(f"Hex: {sname.encode('utf-8').hex()}")
-                
-                # Check label generation
-                try:
-                    display_name = f"@{uname}" if uname else ""
-                    label = f"Store: {sname} - {display_name}"
-                    print(f"Label would be: {label}")
-                except Exception as e:
-                    print(f"Error creating label: {e}")
-                    
+                sid, tid, uname, sname, created, status = s
+                status_icon = "✅" if status == 'active' else "⏸️"
+                print(f"{status_icon} Store: {sname}, Owner: {uname} ({tid}), Status: {status}")
+
     except Exception as e:
         print(f"Query Error: {e}")
         

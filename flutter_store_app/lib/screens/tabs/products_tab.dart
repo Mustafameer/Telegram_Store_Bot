@@ -9,11 +9,15 @@ import '../components/product_form_dialog.dart';
 class ProductsTab extends StatefulWidget {
   final int sellerId;
   final bool isEditable;
+  final VoidCallback? onCartChanged;
+  final int? currentUserId;
 
   const ProductsTab({
     super.key, 
     required this.sellerId, 
     this.isEditable = false,
+    this.onCartChanged,
+    this.currentUserId,
   });
 
   @override
@@ -88,8 +92,8 @@ class _ProductsTabState extends State<ProductsTab> {
   }
 
   Future<void> _addToCart(Product product) async {
-    // Admin ID as default user for now
-    const currentUserId = 1041977029; 
+    // Start with Passed ID, fallback to Admin ID if null (safety net)
+    final currentUserId = widget.currentUserId ?? 1041977029;
 
     final qty = await showDialog<int>(
       context: context,
@@ -122,6 +126,7 @@ class _ProductsTabState extends State<ProductsTab> {
       await DatabaseHelper.instance.addToCart(currentUserId, product.productId, qty, product.price);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تمت الإضافة للسلة')));
+        widget.onCartChanged?.call();
       }
     }
   }

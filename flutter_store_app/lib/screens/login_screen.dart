@@ -1,9 +1,9 @@
 
-
 import 'package:flutter/material.dart';
 import '../database/database_helper.dart';
 import '../models/database_models.dart';
 import 'home_screen.dart';
+import 'server_settings_screen.dart';
 import 'store_detail_screen.dart';
 import '../services/sync_service.dart';
 
@@ -60,7 +60,10 @@ class _LoginScreenState extends State<LoginScreen> {
       if (telegramId == adminId) {
         if (!mounted) return;
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (context) => const HomeScreen(isAdmin: true)),
+          MaterialPageRoute(builder: (context) => HomeScreen(
+            isAdmin: true, 
+            currentUserId: telegramId
+          )),
         );
         return;
       }
@@ -70,7 +73,11 @@ class _LoginScreenState extends State<LoginScreen> {
       if (seller != null) {
         if (!mounted) return;
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (context) => StoreDetailScreen(seller: seller, isSellerMode: true)),
+           MaterialPageRoute(builder: (context) => HomeScreen(
+             isAdmin: false, 
+             isSeller: true,
+             currentUserId: telegramId
+           )),
         );
         return;
       }
@@ -97,55 +104,57 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: Center(
-        child: Container(
-          constraints: const BoxConstraints(maxWidth: 400),
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Icon(Icons.storefront, size: 80, color: Color(0xFF2A9D8F)),
-              const SizedBox(height: 32),
-              Text(
-                'تسجيل الدخول',
-                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: const Color(0xFF264653)
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 8),
-               Text(
-                'الرجاء إدخال معرف تليجرام الخاص بك',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.grey),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 32),
-              TextField(
-                controller: _idController,
-                decoration: InputDecoration(
-                  labelText: 'Telegram ID',
-                  prefixIcon: const Icon(Icons.perm_identity),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
+        child: SingleChildScrollView(
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 400),
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Icon(Icons.storefront, size: 80, color: Color(0xFF2A9D8F)),
+                const SizedBox(height: 32),
+                Text(
+                  'تسجيل الدخول',
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: const Color(0xFF264653)
                   ),
-                  errorText: _errorMessage.isNotEmpty ? _errorMessage : null,
+                  textAlign: TextAlign.center,
                 ),
-                keyboardType: TextInputType.number,
-                onSubmitted: (_) => _login(),
-              ),
-              const SizedBox(height: 24),
-              FilledButton(
-                onPressed: _isLoading ? null : _login,
-                style: FilledButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                const SizedBox(height: 8),
+                 Text(
+                  'الرجاء إدخال معرف تليجرام الخاص بك',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.grey),
+                  textAlign: TextAlign.center,
                 ),
-                child: _isLoading 
-                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) 
-                    : const Text('دخول'),
-              ),
-            ],
+                const SizedBox(height: 32),
+                TextField(
+                  controller: _idController,
+                  decoration: InputDecoration(
+                    labelText: 'Telegram ID',
+                    prefixIcon: const Icon(Icons.perm_identity),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    errorText: _errorMessage.isNotEmpty ? _errorMessage : null,
+                  ),
+                  keyboardType: TextInputType.number,
+                  onSubmitted: (_) => _login(),
+                ),
+                const SizedBox(height: 24),
+                FilledButton(
+                  onPressed: _isLoading ? null : _login,
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: _isLoading 
+                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) 
+                      : const Text('دخول'),
+                ),
+              ],
+            ),
           ),
         ),
       ),

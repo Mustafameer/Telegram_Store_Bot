@@ -33,6 +33,11 @@ class _CartScreenState extends State<CartScreen> {
     // Group items by Seller
     Map<int, List<Map<String, dynamic>>> bySeller = {};
     for (var item in items) {
+      if (item['SellerID'] == null) {
+         // Skip orphaned items, user should delete them manually or we auto-clean?
+         // For now just skip to prevent crash.
+         continue; 
+      }
       final sellerId = item['SellerID'] as int;
       if (!bySeller.containsKey(sellerId)) bySeller[sellerId] = [];
       bySeller[sellerId]!.add(item);
@@ -65,10 +70,21 @@ class _CartScreenState extends State<CartScreen> {
       
       await DatabaseHelper.instance.clearCart(widget.userId);
       
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم إرسال الطلبات بنجاح')));
-        Navigator.pop(context);
-      }
+        // Show Success Dialog
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Row(children: [Icon(Icons.check_circle, color: Colors.green), SizedBox(width: 8), Text("تم الارسال")]),
+            content: const Text("تم استلام طلبك بنجاح وسيتم معالجته قريباً."),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx), 
+                child: const Text("حسناً")
+              )
+            ],
+          )
+        );
+        _refreshCart();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('حدث خطأ: $e')));
@@ -131,10 +147,9 @@ class _CartScreenState extends State<CartScreen> {
           final items = snapshot.data!;
           final total = items.fold(0.0, (sum, item) => sum + (double.parse(item['Price'].toString()) * int.parse(item['Quantity'].toString())));
           
-          // Group by Store for Display
           Map<String, List<Map<String, dynamic>>> byStoreName = {};
           for (var item in items) {
-             final storeName = item['StoreName'] as String;
+             final storeName = (item['StoreName'] as String?) ?? 'متجر غير معروف';
              if (!byStoreName.containsKey(storeName)) byStoreName[storeName] = [];
              byStoreName[storeName]!.add(item);
           }
@@ -164,7 +179,7 @@ class _CartScreenState extends State<CartScreen> {
                              child: Text(storeName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                            ),
                            ...storeItems.map((item) => ListTile(
-                             title: Text(item['Name']),
+                             title: Text(item['Name'] ?? 'منتج محذوف'),
                              subtitle: Text('السعر: ${item['Price']} د.ع'),
                              leading: item['ImagePath'] != null 
                               ? CircleAvatar(backgroundImage: FileImage(File(item['ImagePath']))) 
