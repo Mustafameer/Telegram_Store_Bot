@@ -5230,14 +5230,19 @@ def handle_delete_order(call):
                 
         # 3. Delete Order (Cascades to OrderItems usually, but safe to delete items first if no cascade)
         # Assuming CASCADE or manual deletion. Let's delete items first to be safe.
+        # 3. Delete Order (Delete children first to avoid FK constraints)
         if IS_POSTGRES:
+            cursor.execute("DELETE FROM Messages WHERE OrderID = %s", (order_id,))
             cursor.execute("DELETE FROM OrderItems WHERE OrderID = %s", (order_id,))
+            # Check for Returns if any
+            cursor.execute("DELETE FROM Returns WHERE OrderID = %s", (order_id,))
             cursor.execute("DELETE FROM Orders WHERE OrderID = %s", (order_id,))
-            cursor.execute("DELETE FROM Messages WHERE OrderID = %s", (order_id,)) # Clean up messages ref
+            
         else:
-            cursor.execute("DELETE FROM OrderItems WHERE OrderID = ?", (order_id,))
-            cursor.execute("DELETE FROM Orders WHERE OrderID = ?", (order_id,))
             cursor.execute("DELETE FROM Messages WHERE OrderID = ?", (order_id,))
+            cursor.execute("DELETE FROM OrderItems WHERE OrderID = ?", (order_id,))
+            cursor.execute("DELETE FROM Returns WHERE OrderID = ?", (order_id,))
+            cursor.execute("DELETE FROM Orders WHERE OrderID = ?", (order_id,))
             
         conn.commit()
         conn.close()
@@ -5254,7 +5259,7 @@ def handle_delete_order(call):
         
     except Exception as e:
         print(f"Error deleting order: {e}")
-        bot.answer_callback_query(call.id, "حدث خطأ أثناء الحذف")
+        bot.answer_callback_query(call.id, f"خطأ: {str(e)[:50]}", show_alert=True)
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
