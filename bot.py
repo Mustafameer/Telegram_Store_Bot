@@ -2122,7 +2122,7 @@ def show_seller_menu(message):
     # تحديث الشارة لتظهر عدد الطلبات المعلقة
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM Orders WHERE SellerID = ? AND Status = 'Pending'", (seller[0],))
+    cursor.execute("SELECT COUNT(*) FROM Orders WHERE SellerID = ? AND Status IN ('Pending', 'Confirmed')", (seller[0],))
     pending_count = cursor.fetchone()[0]
     conn.close()
     
@@ -2588,7 +2588,7 @@ def show_seller_menu_for_new_seller(telegram_id, store_name):
         # تحديث الشارة لتظهر عدد الطلبات المعلقة
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM Orders WHERE SellerID = ? AND Status = 'Pending'", (seller[0],))
+        cursor.execute("SELECT COUNT(*) FROM Orders WHERE SellerID = ? AND Status IN ('Pending', 'Confirmed')", (seller[0],))
         pending_count = cursor.fetchone()[0]
         conn.close()
         
