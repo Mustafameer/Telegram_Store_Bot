@@ -1282,6 +1282,16 @@ def create_order(buyer_id, seller_id, cart_items, delivery_address=None, notes=N
     
     cursor.execute(query, (buyer_id, seller_id, total, delivery_address, notes, payment_method, fully_paid))
     order_id = cursor.lastrowid
+    
+    # 🛡️ Safe Fallback for Postgres: If CursorWrapper didn't capture ID, try manually
+    if IS_POSTGRES and not order_id:
+        try:
+            res = cursor.fetchone()
+            if res:
+                order_id = res[0]
+                print(f"DEBUG: Retrieved OrderID via fallback fetchone for User {buyer_id}")
+        except Exception as e:
+            print(f"DEBUG: Error in fallback fetchone: {e}")
 
     for pid, qty, price in cart_items:
         product = get_product_by_id(pid)
@@ -6505,6 +6515,16 @@ def create_order_for_guest(buyer_id, seller_id, cart_items, delivery_address=Non
     
     cursor.execute(query, params)
     order_id = cursor.lastrowid
+    
+    # 🛡️ Safe Fallback for Postgres
+    if IS_POSTGRES and not order_id:
+        try:
+            res = cursor.fetchone()
+            if res:
+                order_id = res[0]
+                print(f"DEBUG: Retrieved Guest OrderID via fallback fetchone")
+        except Exception as e:
+            print(f"DEBUG: Error in guest fallback fetchone: {e}")
 
     for pid, qty, price in cart_items:
         product = get_product_by_id(pid)
