@@ -6809,15 +6809,11 @@ def handle_order_details(call):
         if return_reason:
             text += f"📝 سبب الإرجاع: {return_reason}\n"
     
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("✅ تأكيد الطلب", callback_data=f"confirm_order_{order_id}"),
-        types.InlineKeyboardButton("🚚 تم الشحن", callback_data=f"ship_order_{order_id}"),
-        types.InlineKeyboardButton("✅ تم التسليم", callback_data=f"deliver_order_{order_id}"),
-        types.InlineKeyboardButton("🗑️ رفض الطلب", callback_data=f"reject_order_{order_id}")
-    )
+    # User requested removing ALL buttons from Details view
+    # markup = types.InlineKeyboardMarkup(row_width=2)
+    # markup.add(...)
     
-    bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode='Markdown')
+    bot.send_message(call.message.chat.id, text, reply_markup=None, parse_mode='Markdown')
     bot.answer_callback_query(call.id)
 
 def handle_confirm_order_seller(call):
