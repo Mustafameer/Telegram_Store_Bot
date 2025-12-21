@@ -1279,9 +1279,11 @@ def create_order(buyer_id, seller_id, cart_items, delivery_address=None, notes=N
     """
     if IS_POSTGRES:
         query += " RETURNING OrderID"
-    
-    cursor.execute(query, (buyer_id, seller_id, total, delivery_address, notes, payment_method, fully_paid))
-    order_id = cursor.lastrowid
+        cursor.execute(query, (buyer_id, seller_id, total, delivery_address, notes, payment_method, fully_paid))
+        order_id = cursor.fetchone()[0]
+    else:
+        cursor.execute(query, (buyer_id, seller_id, total, delivery_address, notes, payment_method, fully_paid))
+        order_id = cursor.lastrowid
 
     for pid, qty, price in cart_items:
         product = get_product_by_id(pid)
@@ -6494,12 +6496,19 @@ def create_order_for_guest(buyer_id, seller_id, cart_items, delivery_address=Non
     temp_user_id = f"guest_{buyer_id}_{int(time.time())}"
     
     # إدراج طلب مع معلومات الزائر
-    cursor.execute("""
+    query = """
         INSERT INTO Orders (BuyerID, SellerID, Total, DeliveryAddress, Notes, PaymentMethod, FullyPaid) 
         VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (temp_user_id, seller_id, total, delivery_address, f"زائر: {guest_name} - {guest_phone}", payment_method, fully_paid))
+    """
+    params = (temp_user_id, seller_id, total, delivery_address, f"زائر: {guest_name} - {guest_phone}", payment_method, fully_paid)
     
-    order_id = cursor.lastrowid
+    if IS_POSTGRES:
+        query += " RETURNING OrderID"
+        cursor.execute(query, params)
+        order_id = cursor.fetchone()[0]
+    else:
+        cursor.execute(query, params)
+        order_id = cursor.lastrowid
 
     for pid, qty, price in cart_items:
         product = get_product_by_id(pid)
