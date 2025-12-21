@@ -1645,7 +1645,9 @@ def notify_seller_of_order(order_id, buyer_id, seller_id):
     notification += f"💰 الإجمالي: {order_details[3]} IQD\n"
     notification += f"💳 طريقة الدفع: {'نقداً' if order_details[8] == 'cash' else 'على الحساب'}\n"
     notification += f"💵 حالة الدفع: {'مدفوع بالكامل' if order_details[9] == 1 else 'غير مدفوع بالكامل'}\n"
-    notification += f"📅 تاريخ الطلب: {order_details[5]}\n"
+    # تنسيق التاريخ (بدون وقت)
+    order_date = str(order_details[5]).split()[0]
+    notification += f"📅 تاريخ الطلب: {order_date}\n"
     
     if order_details[6]:
         notification += f"📍 العنوان: {order_details[6]}\n"
