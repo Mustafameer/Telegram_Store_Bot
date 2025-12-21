@@ -6751,34 +6751,56 @@ def seller_messages(message):
         for order in orders:
             oid, total, status, date, buyer, phone, pay_method, address = order
             
-            # جلب المنتجات للعرض
-            cursor.execute("SELECT p.Name, oi.Quantity, oi.Price FROM OrderItems oi JOIN Products p ON oi.ProductID = p.ProductID WHERE oi.OrderID = ?", (oid,))
+            # جلب المنتجات للعرض (نستخدم LEFT JOIN لضمان ظهور العناصر حتى لو حذف المنتج الأصلي)
+            cursor.execute("""
+                SELECT p.Name, oi.Quantity, oi.Price, p.ImagePath 
+                FROM OrderItems oi 
+                LEFT JOIN Products p ON oi.ProductID = p.ProductID 
+                WHERE oi.OrderID = ?
+            """, (oid,))
             items = cursor.fetchall()
             
             # تنسيق قائمة المنتجات
             items_text = ""
-            for i in items:
-                p_name = i[0]
-                p_qty = i[1]
-                p_price = i[2]
-                row_total = p_qty * p_price
-                items_text += f"▫️ {p_name}\n   {p_qty}x | 💰 {p_price:,.0f} = {row_total:,.0f}\n"
+            first_image_path = None
+            
+            if not items:
+                items_text = "⚠️ لا توجد منتجات (ربما تم حذفها)"
+            else:
+                for i in items:
+                    p_name = i[0] if i[0] else "منتج محذوف"
+                    p_qty = i[1]
+                    p_price = i[2] if i[2] else 0
+                    p_image = i[3]
+                    
+                    # Capture first image found to use as card cover
+                    if not first_image_path and p_image and os.path.exists(p_image):
+                         first_image_path = p_image
+                    
+                    row_total = p_qty * p_price
+                    items_text += f"▫️ {p_name}\n   {p_qty}x | 💰 {p_price:,.0f} = {row_total:,.0f}\n"
             
             status_icon = "⏳" if status == 'Pending' else "✅" if status == 'Confirmed' else "🚚" if status == 'Shipped' else "❌" if status == 'Rejected' else ""
             status_text = "قيد الانتظار" if status == 'Pending' else "تم التأكيد" if status == 'Confirmed' else "تم الشحن" if status == 'Shipped' else "مرفوض" if status == 'Rejected' else status
 
             # تنسيق البطاقة
-            card_text = f"{status_icon} **طلب رقم #{oid}**\n\n"
-            card_text += f"👤 {buyer} | 📞 {phone}\n"
+            card_text = f"{status_icon} **طلب رقم #{oid}**\n"
+            card_text += f"📅 {date}\n\n"
+            
+            # المنتجات
+            card_text += f"{items_text}"
+            card_text += "─────────────────\n"
+            
+            # الإجمالي
+            card_text += f"💰 **الإجمالي: {total:,.0f} IQD**\n"
+            card_text += "─────────────────\n"
+            
+            # معلومات العميل
+            card_text += f"👤 {buyer}\n📞 {phone}\n"
             if address:
                 card_text += f"📍 {address}\n"
-            card_text += "─────────────────\n"
-            card_text += items_text
-            card_text += "─────────────────\n"
-            card_text += f"💰 **الإجمالي: {total:,.0f} IQD**\n"
-            card_text += f"📅 {date}"
             
-            # Buttons: Confirm, Ship, Details
+            # Buttons: Confirm, Ship, Details, Delete
             markup = types.InlineKeyboardMarkup(row_width=3)
             buttons = []
             
@@ -6790,14 +6812,22 @@ def seller_messages(message):
                  buttons.append(types.InlineKeyboardButton("🚚 شحن", callback_data=f"ship_order_{oid}"))
 
             buttons.append(types.InlineKeyboardButton("📋 تفاصيل", callback_data=f"order_details_{oid}"))
-            
-            # Add Delete button for all orders (or just Pending? User said "Delete the new order")
-            # Usually strict to Pending to avoid deleting historical data, but user asked for it.
             buttons.append(types.InlineKeyboardButton("🗑️ حذف", callback_data=f"delete_order_{oid}"))
             
             markup.add(*buttons)
             
-            bot.send_message(message.chat.id, card_text, reply_markup=markup, parse_mode='Markdown')
+            # إرسال الرسالة (صورة أو نص)
+            try:
+                # ملاحظة: في تيليجرام لا يمكن وضع صور صغيرة بجانب كل سطر، لذا سنضع صورة المنتج الأول كغلاف للطلب إذا وجدت
+                if first_image_path:
+                    with open(first_image_path, 'rb') as photo:
+                        bot.send_photo(message.chat.id, photo, caption=card_text, reply_markup=markup, parse_mode='Markdown')
+                else:
+                    bot.send_message(message.chat.id, card_text, reply_markup=markup, parse_mode='Markdown')
+            except Exception as e:
+                print(f"Error sending order card {oid}: {e}")
+                # Fallback to text if image fails
+                bot.send_message(message.chat.id, card_text, reply_markup=markup, parse_mode='Markdown')
             
         conn.close()
         
