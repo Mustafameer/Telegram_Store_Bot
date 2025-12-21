@@ -1293,13 +1293,23 @@ def create_order(buyer_id, seller_id, cart_items, delivery_address=None, notes=N
         except Exception as e:
             print(f"DEBUG: Error in fallback fetchone: {e}")
 
+    # Optimize: Fetch product data using valid transaction cursor to avoid locking/visibility issues
+    # Pre-fetch check or inline check
     for pid, qty, price in cart_items:
-        product = get_product_by_id(pid)
-        if not product:
+        # Inline lookup using SAME cursor
+        cursor.execute("SELECT Quantity FROM Products WHERE ProductID = ?", (pid,))
+        res = cursor.fetchone()
+        
+        if not res:
+            print(f"⚠️ Warning: Product {pid} not found during Order {order_id} creation. Skipping Item.")
             continue
+            
+        current_qty_in_db = res[0]
+        
         cursor.execute("INSERT INTO OrderItems (OrderID, ProductID, Quantity, Price) VALUES (?, ?, ?, ?)",
                        (order_id, pid, qty, price))
-        new_qty = product[7] - qty
+                       
+        new_qty = current_qty_in_db - qty
         if new_qty < 0:
             new_qty = 0
         cursor.execute("UPDATE Products SET Quantity=? WHERE ProductID=?", (new_qty, pid))
@@ -1654,8 +1664,18 @@ def notify_seller_of_order(order_id, buyer_id, seller_id):
     
     notification += f"\n📦 **المنتجات:**\n"
     
+    # ... (existing notification string construction) ...
+    # تنسيق التاريخ (بدون وقت)
+    order_date = str(order_details[5]).split()[0]
+    notification += f"📅 تاريخ الطلب: {order_date}\n"
+    
+    if order_details[6]:
+        notification += f"📍 العنوان: {order_details[6]}\n"
+    
+    notification += f"\n📦 **المنتجات:**\n"
+    
     for item in items:
-        item_id, order_id, product_id, quantity, price, returned_qty, return_reason, return_date = item[:8]
+        item_id, order_id_val, product_id, quantity, price, returned_qty, return_reason, return_date = item[:8]
         product_name = item[8] if len(item) > 8 else "منتج"
         notification += f"• {product_name} × {quantity} = {quantity * price} IQD\n"
     
@@ -1671,6 +1691,22 @@ def notify_seller_of_order(order_id, buyer_id, seller_id):
     create_message(order_id, seller_id, 'new_order', notification)
     
     try:
+        # 🎨 Try to generate Receipt Image
+        try:
+            from utils.receipt_generator import generate_order_receipt
+            receipt_img = generate_order_receipt(order_details, items, store_name, buyer_name, buyer_phone)
+            
+            if receipt_img:
+                receipt_img.name = f"receipt_{order_id}.png"
+                bot.send_photo(seller_telegram_id, receipt_img, caption=notification, reply_markup=markup, parse_mode='Markdown')
+                print(f"✅ Sent Visual Receipt for Order #{order_id}")
+                return # Stop here if image sent successfully
+        except ImportError:
+            pass # Pillow not installed
+        except Exception as img_err:
+            print(f"⚠️ Failed to generate/send receipt image: {img_err}")
+            
+        # Fallback to Text
         bot.send_message(seller_telegram_id, notification, reply_markup=markup, parse_mode='Markdown')
     except Exception as e:
         print(f"⚠️ تعذر إرسال إشعار للبائع {seller_telegram_id}: {e}")
@@ -6528,13 +6564,23 @@ def create_order_for_guest(buyer_id, seller_id, cart_items, delivery_address=Non
         except Exception as e:
             print(f"DEBUG: Error in guest fallback fetchone: {e}")
 
+    # Optimize: Fetch product data using valid transaction cursor to avoid locking/visibility issues
+    # Pre-fetch check or inline check
     for pid, qty, price in cart_items:
-        product = get_product_by_id(pid)
-        if not product:
+        # Inline lookup using SAME cursor
+        cursor.execute("SELECT Quantity FROM Products WHERE ProductID = ?", (pid,))
+        res = cursor.fetchone()
+        
+        if not res:
+            print(f"⚠️ Warning: Product {pid} not found during Guest Order {order_id} creation. Skipping Item.")
             continue
+            
+        current_qty_in_db = res[0]
+        
         cursor.execute("INSERT INTO OrderItems (OrderID, ProductID, Quantity, Price) VALUES (?, ?, ?, ?)",
                        (order_id, pid, qty, price))
-        new_qty = product[7] - qty
+                       
+        new_qty = current_qty_in_db - qty
         if new_qty < 0:
             new_qty = 0
         cursor.execute("UPDATE Products SET Quantity=? WHERE ProductID=?", (new_qty, pid))
