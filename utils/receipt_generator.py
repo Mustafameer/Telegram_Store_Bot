@@ -92,51 +92,169 @@ def get_cached_font(font_type, size):
 def generate_order_card(order_details, items, buyer_name, buyer_phone, store_name):
     """
     Generate a visual receipt card for the order.
-    Rev 16: Larger Fonts & Blue Theme
+    Rev 17: High Resolution (800px) & Massive Fonts
     """
     try:
         # 1. Constants & Setup
-        WIDTH = 450 # 75% of 600px
-        PADDING = 20
+        WIDTH = 800 
+        PADDING = 40
         
-        # Design Specs (No Hero Image)
-        HEADER_HEIGHT = 200 # Space for ID, Date, Notes, Address
+        # Design Specs
+        HEADER_HEIGHT = 280 
         
         # Calculate Height
-        # Header + Items(Tall) + Footer
         display_count = len(items) if items else 1
-        BODY_HEIGHT = (display_count * 100) + 120 # Increased per-item height (was 90) + Footer space
-        TOTAL_HEIGHT = HEADER_HEIGHT + BODY_HEIGHT + 20
+        BODY_HEIGHT = (display_count * 140) + 160 # Items(140px) + Footer space
+        TOTAL_HEIGHT = HEADER_HEIGHT + BODY_HEIGHT + 30
         
-        # Colors (Dark Blue/Grey like Screenshot)
+        # Colors 
         COLOR_BG = (20, 25, 30) 
         COLOR_TEXT_WHITE = (255, 255, 255)
         COLOR_TEXT_GREY = (180, 190, 200)
-        COLOR_ACCENT = (76, 175, 80) 
+        COLOR_ACCENT = (76, 175, 80) # Green for money
         COLOR_DIVIDER = (50, 60, 70)
 
         # 1. Backgrounds
-        # Main BG
         img = Image.new('RGB', (WIDTH, TOTAL_HEIGHT), COLOR_BG)
         draw = ImageDraw.Draw(img)
         
-        # Header/Footer BG (Blue Theme)
-        # Deep Blue
+        # Header/Footer BG (Blue)
         HEADER_BG = (20, 40, 80) 
         draw.rectangle([(0, 0), (WIDTH, HEADER_HEIGHT)], fill=HEADER_BG)
         
-        # Footer BG
-        FOOTER_Y = TOTAL_HEIGHT - 120 # Increased footer space
+        FOOTER_Y = TOTAL_HEIGHT - 160
         draw.rectangle([(0, FOOTER_Y), (WIDTH, TOTAL_HEIGHT)], fill=HEADER_BG)
         
-        # 2. Fonts (Larger Sizes)
-        title_font = get_cached_font('bold', 38)
-        normal_font = get_cached_font('normal', 32)
-        small_font = get_cached_font('small', 30) 
-        icon_font = get_cached_font('normal', 30) 
+        # 2. Fonts (Massive)
+        title_font = get_cached_font('bold', 55)
+        normal_font = get_cached_font('normal', 45)
+        small_font = get_cached_font('small', 38) 
         
         # 3. HEADER
-        current_y = 30
+        current_y = 50 # Start lower
+        
+        order_id = str(order_details[0])
+        
+        # Date Format
+        try:
+           date_obj = order_details[5]
+           if isinstance(date_obj, str):
+               date_str = date_obj.split()[0]
+           else:
+               date_str = date_obj.strftime('%Y-%m-%d')
+        except: date_str = "---"
+        
+        # Helper for Icon+Text Row
+        def draw_row(icon, text, y, icon_color=(255, 200, 0)):
+             icon_x = WIDTH - 80 # Adjusted for 800px
+             draw.text((icon_x, y), icon, font=small_font, fill=icon_color)
+             draw_text_rtl(draw, text, y, small_font, COLOR_TEXT_WHITE, right_margin=120, canvas_width=WIDTH) # More margin for icon
+
+        # Draw Order ID (Left)
+        draw.text((40, current_y), f"#{order_id}", font=title_font, fill=COLOR_TEXT_WHITE)
+        
+        # Draw Date (Right)
+        draw_row("📅", date_str, current_y, (0, 255, 255))
+        
+        current_y += 80
+        
+        # Draw Notes
+        try:
+             note_txt = order_details[7] if len(order_details) > 7 else ""
+        except: note_txt = ""
+        if not note_txt: note_txt = "---"
+        
+        draw_row("📝", note_txt, current_y, (255, 200, 80))
+        
+        current_y += 60
+        
+        # Draw Address
+        address = order_details[6]
+        if address:
+             draw_row("📍", address, current_y, (255, 100, 100))
+             current_y += 60
+
+        
+        # 4. Items List
+        current_y = HEADER_HEIGHT + 30
+        
+        if not items:
+             draw_text_rtl(draw, "لا توجد منتجات", current_y, normal_font, COLOR_TEXT_GREY, right_margin=WIDTH//2, canvas_width=WIDTH)
+             current_y += 80
+             
+        for item in items:
+            qty = item[3]
+            price = item[4]
+            name = item[8] if len(item) > 8 else "Unknown"
+            
+            # Image Thumbnail
+            img_size = 100 # Larger Thumbnails
+            img_x = 40
+            img_y = current_y
+            
+            thumb_img = None
+            
+            # Robust Helper
+            def find_image_file(path_str):
+                if not path_str or not isinstance(path_str, str): return None
+                clean = path_str.split('?')[0].replace('\\', '/')
+                if 'http' in clean: return None
+                basename = os.path.basename(clean)
+                base_dirs = [
+                    os.getcwd(),
+                    os.path.join(os.getcwd(), "data", "Images"),
+                    "C:/Users/Hp/Desktop/TelegramStoreBot/data/Images"
+                ]
+                for d in base_dirs:
+                    if os.path.exists(d):
+                        fp = os.path.join(d, basename)
+                        if os.path.exists(fp): return fp
+                return None
+
+            image_path = None
+            if len(item) > 13 and isinstance(item[13], str) and len(item[13]) > 4: image_path = item[13]
+            elif len(item) > 10 and isinstance(item[10], str) and len(item[10]) > 4: image_path = item[10]
+            
+            final_path = find_image_file(image_path)
+            if final_path:
+                 try: thumb_img = Image.open(final_path).convert('RGBA')
+                 except: pass
+            
+            if thumb_img:
+                thumb_img.thumbnail((img_size, img_size))
+                mask = Image.new('L', thumb_img.size, 0)
+                draw_mask = ImageDraw.Draw(mask)
+                draw_mask.rounded_rectangle([(0,0), thumb_img.size], radius=15, fill=255)
+                img.paste(thumb_img, (img_x, img_y), mask)
+            else:
+                draw.rounded_rectangle([(img_x, img_y), (img_x+img_size, img_y+img_size)], radius=15, fill=(40,45,50))
+                draw.text((img_x+25, img_y+35), "IMG", font=small_font, fill=COLOR_TEXT_GREY)
+
+            # Name (Right)
+            draw_text_rtl(draw, f"{name}", current_y, normal_font, COLOR_TEXT_WHITE, right_margin=40, canvas_width=WIDTH)
+            
+            # Subtext
+            total_item = qty * float(price)
+            subtext = f"{qty}x | {float(price):,.0f}"
+            draw.text((img_x + img_size + 20, current_y + 25), subtext, font=small_font, fill=COLOR_ACCENT)
+            
+            current_y += 140 # More spacing for large items
+            
+            # Separator
+            draw.line([(img_x + img_size + 20, current_y-20), (WIDTH-40, current_y-20)], fill=(40, 45, 50), width=2)
+            
+        
+        # 6. Summary in Footer
+        
+        # Total Price
+        total_val = order_details[3]
+        total_txt = f"💰 {int(total_val):,}" 
+        draw_text_rtl(draw, total_txt, FOOTER_Y + 50, title_font, COLOR_ACCENT, right_margin=40, canvas_width=WIDTH)
+        
+        bio = io.BytesIO()
+        img.save(bio, 'PNG')
+        bio.seek(0)
+        return bio
         
         order_id = str(order_details[0])
         
