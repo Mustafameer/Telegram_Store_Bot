@@ -2228,12 +2228,13 @@ def show_admin_dashboard(message):
         parse_mode='Markdown'
     )
 
+# ====== عرض قائمة البائع ======
 def show_seller_menu(message):
     telegram_id = message.from_user.id
     
     # التحقق أولاً إذا كان المستخدم مسجل كبائع
     seller = get_seller_by_telegram(telegram_id)
-    print(f"DEBUG: show_seller_menu - User: {telegram_id}, Seller: {seller}") # DEBUG
+    # print(f"DEBUG: show_seller_menu - User: {telegram_id}, Seller: {seller}")
     
     if not seller:
         bot.send_message(message.chat.id, "⛔ أنت لست صاحب متجر مسجل!")
@@ -2253,13 +2254,15 @@ def show_seller_menu(message):
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM Orders WHERE SellerID = ? AND Status IN ('Pending', 'Confirmed')", (seller[0],))
     pending_count = cursor.fetchone()[0]
-    print(f"DEBUG: pending_count for SellerID {seller[0]} = {pending_count}") # DEBUG
+    
+    cursor.execute("SELECT COUNT(*) FROM Messages WHERE SellerID = ? AND IsRead = 0", (seller[0],))
+    unread_messages = cursor.fetchone()[0]
     conn.close()
     
-    messages_badge = f" 📩({pending_count})" if pending_count > 0 else ""
-    
-    orders_badge = f" ({pending_count})" if pending_count > 0 else ""
-    
+    # Red Circle Badges 🔴
+    messages_badge = f" 🔴 {unread_messages}" if unread_messages > 0 else ""
+    orders_badge = f" 🔴 {pending_count}" if pending_count > 0 else ""
+
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
     # Row 1
     markup.row("🏪 منتجاتي", "📁 الأقسام", f"📦 الطلبات{orders_badge}")
@@ -2274,7 +2277,11 @@ def show_seller_menu(message):
     if pending_count > 0:
         welcome_msg += f"\n\nلديك {pending_count} طلبات جديدة!"
     
-    bot.send_message(message.chat.id, welcome_msg, reply_markup=markup)
+    bot.send_message(message.chat.id, welcome_msg, reply_markup=markup, parse_mode='Markdown')
+
+# ... (Existing code) ...
+
+
 
 # ====== عرض الطلبات للبائع ======
 @bot.message_handler(func=lambda message: "📦 الطلبات" in message.text and is_seller(message.from_user.id))
@@ -7508,6 +7515,9 @@ def handle_confirm_order_seller(call):
             parse_mode='Markdown',
             reply_markup=None
         )
+        
+        # INSTANT UPDATE: Refresh Counters
+        show_seller_menu(call.message)
     except:
         pass
 
@@ -7534,6 +7544,9 @@ def handle_ship_order(call):
             parse_mode='Markdown',
             reply_markup=None
         )
+        
+        # INSTANT UPDATE: Refresh Counters
+        show_seller_menu(call.message)
     except:
         pass
 
@@ -7560,6 +7573,9 @@ def handle_deliver_order(call):
             parse_mode='Markdown',
             reply_markup=None
         )
+        
+        # INSTANT UPDATE: Refresh Counters
+        show_seller_menu(call.message)
     except:
         pass
 
@@ -7587,6 +7603,9 @@ def handle_reject_order(call):
             parse_mode='Markdown',
             reply_markup=None
         )
+        
+        # INSTANT UPDATE: Refresh Counters
+        show_seller_menu(call.message)
     except:
         pass
 
