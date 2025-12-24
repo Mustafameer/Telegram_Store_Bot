@@ -1538,7 +1538,14 @@ def get_unread_messages(seller_id):
 def mark_message_as_read(message_id):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("UPDATE Messages SET IsRead = TRUE WHERE MessageID = ?", (message_id,))
+    conn.commit()
+    conn.close()
+
+def mark_messages_read_by_order(order_id):
+    """Marks all messages related to a specific order as read."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE Messages SET IsRead = TRUE WHERE OrderID = ?", (order_id,))
     conn.commit()
     conn.close()
 
@@ -7495,6 +7502,7 @@ def handle_order_details(call):
 def handle_confirm_order_seller(call):
     order_id = int(call.data.split("_")[2])
     update_order_status(order_id, "Confirmed")
+    mark_messages_read_by_order(order_id) # Fix: Clear message counter
     
     bot.answer_callback_query(call.id, "✅ تم تأكيد الطلب")
     
@@ -7524,6 +7532,7 @@ def handle_confirm_order_seller(call):
 def handle_ship_order(call):
     order_id = int(call.data.split("_")[2])
     update_order_status(order_id, "Shipped")
+    mark_messages_read_by_order(order_id) # Fix: Clear message counter
     
     bot.answer_callback_query(call.id, "🚚 تم تحديث حالة الشحن")
     
@@ -7553,6 +7562,7 @@ def handle_ship_order(call):
 def handle_deliver_order(call):
     order_id = int(call.data.split("_")[2])
     update_order_status(order_id, "Delivered")
+    mark_messages_read_by_order(order_id) # Fix: Clear message counter
     
     bot.answer_callback_query(call.id, "✅ تم تسليم الطلب")
     
@@ -7582,6 +7592,7 @@ def handle_deliver_order(call):
 def handle_reject_order(call):
     order_id = int(call.data.split("_")[2])
     update_order_status(order_id, "Rejected")
+    mark_messages_read_by_order(order_id) # Fix: Clear message counter
     
     bot.answer_callback_query(call.id, "❌ تم رفض الطلب")
     
