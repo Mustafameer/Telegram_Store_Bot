@@ -2464,46 +2464,32 @@ def handle_seller_orders_menu(message):
                     items_text += f"\n🛍️ *{p_name}*\n"
                     items_text += f"   {qty} x {price:,.0f} = {row_total:,.0f}\n" 
 
-            # ================= تصميم البطاقة + التفاصيل النصية =================
-            # User Want: Card Image + Full Details Text + Delete on Ship
-            
-            # 1. Build Text (Caption)
-            status_ico = "⏳"
-            if status == 'Confirmed': status_ico = "✅"
-            if status == 'Shipped': status_ico = "🚚"
-            
-            msg_text = f"{status_ico} *طلب رقم #{oid}*\n"
-            msg_text += f"📅 {date_fmt}\n"
-            msg_text += f"👤 المشتري: {buyer}\n"
-            msg_text += f"📞 {phone}\n"
-            if address: msg_text += f"📍 {address}\n"
-            if notes and notes != 'None': msg_text += f"📝 ملاحظات: {notes}\n"
-            
-            msg_text += "\n📦 *المنتجات:*\n"
-            if items:
-                for it in items:
-                    # it: (Name, Qty, Price, Image)
-                    bit_name = it[0]
-                    bit_qty = it[1]
-                    bit_price = it[2]
-                    bit_total = bit_qty * bit_price
-                    msg_text += f"- {bit_name} ({bit_qty}x) = {bit_total:,.0f}\n"
+            if not items_text:
+                items_text = ""
 
-            msg_text += f"\n💰 *الإجمالي: {total:,.0f} د.ع*\n"
+            # ================= تصميم البطاقة =================
+            # بدلاً من النص العادي، سنقوم بتوليد صورة البطاقة
             
-            # 2. Buttons
+            # استعادة الأزرار
             markup = types.InlineKeyboardMarkup()
-            actions_row = []
             
+            # الصف الأول: أزرار الإجراءات الرئيسية (تأكيد / شحن)
+            actions_row = []
             if status == 'Pending':
                  actions_row.append(types.InlineKeyboardButton("✅ تأكيد", callback_data=f"confirm_order_{oid}"))
             elif status == 'Confirmed':
-                 actions_row.append(types.InlineKeyboardButton("🚚 شحن (وحذف)", callback_data=f"ship_order_{oid}"))
+                 actions_row.append(types.InlineKeyboardButton("🚚 شحن", callback_data=f"ship_order_{oid}"))
             
-            markup.row(*actions_row)
-            markup.add(types.InlineKeyboardButton("🗑️ حذف", callback_data=f"delete_order_{oid}"))
-
-            # 3. Generate Card Image
+            # الصف الثاني: زر الحذف (أيقونة سلة المهملات)
+            btns = []
+            btns.append(types.InlineKeyboardButton("🗑️ حذف", callback_data=f"delete_order_{oid}"))
+            
+            if actions_row:
+                btns.insert(0, actions_row[0]) 
+                
+            markup.row(*btns)
+            
+            # 🎨 Generate Visual Card using the new REV 11 logic
             try:
                 # Force Reload for Dev
                 import importlib
@@ -2511,32 +2497,67 @@ def handle_seller_orders_menu(message):
                 importlib.reload(utils.receipt_generator)
                 from utils.receipt_generator import generate_order_card
 
-                # Construct Tuple
+                # Generator expects: (order_details, items, buyer_name, buyer_phone, store_name)
+                # handle_seller_orders_menu has: oid, total, status, date, buyer, phone, pay_method, address
+                # store_name comes from 'seller' tuple index 3
+                
+                # Construct Mock Order Details Tuple to match expectations:
+                # [0] OrderID
+                # [1] BuyerID (Not used in visual, pass 0)
+                # [2] SellerID (Not used in visual, pass 0)
+                # [3] TotalAmount (Used)
+                # [4] Status (Used)
+                # [5] CreatedAt (Used)
+                # [6] DeliveryAddress (Used)
+                # [6] DeliveryAddress (Used)
                 mock_order_details = (oid, 0, 0, total, status, date, address, notes)
+                
+                # RESTRUCTURE ITEMS to match Generator Expectations
+                # Generator expects: item[3]=Qty, item[4]=Price, item[8]=Name, item[10]=Image, item[13]=Image
+                # Current 'items' from DB query (line 2307): (Name, Qty, Price, ImagePath)
                 
                 gen_items = []
                 for db_item in items:
-                    mk = [None]*15
-                    mk[3] = db_item[1] # Qty
-                    mk[4] = db_item[2] # Price
-                    mk[8] = db_item[0] # Name
-                    mk[10] = db_item[3] # Image
-                    mk[13] = db_item[3]
-                    gen_items.append(tuple(mk))
+                    # db_item: (Name, Qty, Price, ImagePath)
+                    d_name = db_item[0]
+                    d_qty = db_item[1]
+                    d_price = db_item[2]
+                    d_img = db_item[3]
+                    
+                    # Create Mock Tuple (Length 15)
+                    # Indices: 0,1,2, QTY(3), PRICE(4), 5,6,7, NAME(8), 9, IMG(10), 11,12, IMG(13), 14
+                    mock_item = [None]*15
+                    mock_item[3] = d_qty
+                    mock_item[4] = d_price
+                    mock_item[8] = d_name
+                    mock_item[10] = d_img
+                    mock_item[13] = d_img
+                    gen_items.append(tuple(mock_item))
                 
                 # Generate
                 card_img = generate_order_card(mock_order_details, gen_items, buyer, phone, seller[3])
                 
                 if card_img:
                     card_img.name = f"card_{oid}.png"
-                    bot.send_photo(message.chat.id, card_img, caption=msg_text, reply_markup=markup, parse_mode='Markdown')
+                    # Send Image Card
+                    bot.send_photo(message.chat.id, card_img, reply_markup=markup)
                 else:
+                    # Fallback to text if generation fails
                     raise Exception("Image generation returned None")
 
             except Exception as e:
-                print(f"Card generation error: {e}")
-                # Fallback to Text Only
-                bot.send_message(message.chat.id, msg_text, reply_markup=markup, parse_mode='Markdown')
+                print(f"Card generation error for Order list: {e}")
+                # Fallback to Text
+                card_text = f"{status_text} | طلب #{oid}\n"
+                card_text += f"📅 {date_fmt}\n"
+                card_text += f"👤 {buyer}\n"
+                card_text += f"💰 **الإجمالي: {total:,.0f} د.ع**"
+                
+                if first_image_path and os.path.exists(first_image_path):
+                    with open(first_image_path, 'rb') as photo:
+                        bot.send_photo(message.chat.id, photo, caption=card_text, reply_markup=markup, parse_mode='Markdown')
+                else:
+                    bot.send_message(message.chat.id, card_text, reply_markup=markup, parse_mode='Markdown')
                 
         conn.close()
 
@@ -8254,131 +8275,19 @@ def ping_pong(message):
 
 
 # ====== إدارة الطلبات (أزرار البطاقة) ======
-@bot.callback_query_handler(func=lambda call: call.data.startswith(('confirm_order_', 'ship_order_', 'delete_order_', 'order_details_', 'view_card_')))
+@bot.callback_query_handler(func=lambda call: call.data.startswith(('confirm_order_', 'ship_order_', 'delete_order_', 'order_details_')))
 def handle_order_actions(call):
     try:
         parts = call.data.split('_')
-        # Handle 'view_card_{oid}' -> parts[0]='view', parts[1]='card', parts[2]=oid
-        if parts[0] == 'view' and parts[1] == 'card':
-            action = 'view_card'
-            order_id = int(parts[2])
-        else:
-            action = parts[0] + '_' + parts[1] # e.g. confirm_order
-            order_id = int(parts[2])
+        action = parts[0] + '_' + parts[1] # e.g. confirm_order
+        order_id = int(parts[2])
         
         seller_id = call.from_user.id
+        # Verify seller owns this order (Basic check via DB helps security)
+        # For now, simplistic status update.
         
         new_status = None
         notify_user_msg = None
-        
-        if action == "view_card":
-            # Generate and Send Card
-            try:
-                bot.send_message(call.message.chat.id, "🎨 جاري توليد البطاقة...")
-                
-                # Fetch Data
-                # Need to use get_order_details or similar logic
-                # Let's reuse the logic from get_order_details if possible, OR query manually.
-                # Since get_order_details is not imported/available easily here? It should be.
-                # Assuming get_order_details(order_id) works.
-                order, items = get_order_details(order_id)
-                
-                if order:
-                    import utils.receipt_generator
-                    from utils.receipt_generator import generate_order_card
-                    
-                    # mock tuple
-                    # order: (OrderID, BuyerID, SellerID, Total, Status, CreatedAt, DeliveryAddress, Notes, ...)
-                    # Check indices. get_order_details usually selects *.
-                    # Let's check `get_order_details` implementation?
-                    # Safer: Re-query using the exact logic from handle_seller_orders_menu or just select * fields.
-                    # Or just construct mock from 'order' tuple if we know schema.
-                    # order is fetched via: SELECT * FROM Orders WHERE OrderID=?
-                    # Schema: 0:ID, 1:BuyerID, 2:SellerID, 3:Total, 4:Status, 5:CreatedAt, 6:Address, 7:Notes, ...
-                    
-                    oid = order[0]
-                    total = order[3]
-                    status = order[4]
-                    date = order[5]
-                    address = order[6]
-                    notes = order[7]
-                    
-                    # Get Buyer/Phone from Users table?
-                    # get_order_details returns (order, items). Does 'order' have buyer name?
-                    # Usually get_order_details does a JOIN.
-                    # Let's assume order[11] is name, order[12] is phone if it does JOIN.
-                    # If not, we perform simple query.
-                    
-                    # Let's do a reliable Query here to be safe.
-                    conn = get_db_connection()
-                    cursor = conn.cursor()
-                    q = """
-                        SELECT o.OrderID, o.Total, o.Status, o.CreatedAt, 
-                            COALESCE(u.FullName, 'زائر'),
-                            COALESCE(u.PhoneNumber, 'غير متوفر'),
-                            o.DeliveryAddress, o.Notes, s.StoreName
-                        FROM Orders o
-                        LEFT JOIN Users u ON o.BuyerID = u.TelegramID
-                        LEFT JOIN Sellers s ON o.SellerID = s.SellerID
-                        WHERE o.OrderID = ?
-                    """
-                    if IS_POSTGRES: cursor.execute(q, (order_id,))
-                    else: cursor.execute(q, (order_id,))
-                    row = cursor.fetchone()
-                    conn.close()
-                    
-                    if row:
-                         m_oid, m_total, m_status, m_date, m_buyer, m_phone, m_addr, m_notes, m_store = row
-                         
-                         mock_details = (m_oid, 0, 0, m_total, m_status, m_date, m_addr, m_notes)
-                         
-                         gen_items = []
-                         for it in items:
-                             # it: (PID, OID, Name, Qty, Price, Image...)
-                             # Indices differ based on query. check get_order_details items query.
-                             # If get_order_details uses: SELECT p.Name, oi.Quantity, oi.Price, p.ImagePath ...
-                             # We need to map standard 15-tuple.
-                             # Let's assume 'items' form get_order_details is standard.
-                             # Actually `get_order_details` likely returns raw OrderItems rows.
-                             # Let's query items manually to be 100% sure.
-                             pass
-
-                         # RE-QUERY ITEMS
-                         conn = get_db_connection()
-                         cursor = conn.cursor()
-                         # Query matching receipt_generator expectation sort of
-                         qi = """
-                            SELECT p.Name, oi.Quantity, oi.Price, p.ImagePath 
-                            FROM OrderItems oi
-                            JOIN Products p ON oi.ProductID = p.ProductID
-                            WHERE oi.OrderID = ?
-                         """
-                         if IS_POSTGRES: cursor.execute(qi, (order_id,))
-                         else: cursor.execute(qi, (order_id,))
-                         db_items = cursor.fetchall()
-                         conn.close()
-                         
-                         gen_items = []
-                         for di in db_items:
-                             # (Name, Qty, Price, Image)
-                             mk = [None]*15
-                             mk[3] = di[1] # Qty
-                             mk[4] = di[2] # Price
-                             mk[8] = di[0] # Name
-                             mk[10] = di[3] # Image
-                             mk[13] = di[3]
-                             gen_items.append(tuple(mk))
-                             
-                         card_img = generate_order_card(mock_details, gen_items, m_buyer, m_phone, m_store)
-                         card_img.name = f"card_{m_oid}.png"
-                         bot.send_photo(call.message.chat.id, card_img)
-            except Exception as e:
-                print(f"View Card Error: {e}")
-                bot.send_message(call.message.chat.id, "❌ حدث خطأ أثناء توليد البطاقة")
-            
-            bot.answer_callback_query(call.id)
-            return
-
         
         if action == "confirm_order":
             new_status = "Confirmed"
@@ -8388,39 +8297,42 @@ def handle_order_actions(call):
         elif action == "ship_order":
             new_status = "Shipped"
             notify_user_msg = "🚚 تم شحن طلبك! وهو في الطريق إليك."
-            feedback = "🚚 تم تحديث الحالة و حذف الرسالة."
+            feedback = "🚚 تم تحديث الحالة إلى 'تم الشحن'."
             
         elif action == "delete_order":
+            # Just Cancelled or actually Delete? 
+            # Usually Cancelled is better for records.
             new_status = "Cancelled" 
             notify_user_msg = "❌ تم إلغاء طلبك من قبل المتجر."
-            feedback = "🗑️ تم إلغاء الطلب." # Will delete message too
+            feedback = "🗑️ تم إلغاء الطلب."
         
+        elif action == "order_details":
+            # Show full text details
+            order, items = get_order_details(order_id)
+            if order:
+                # Reuse notification logic or simple text
+                 # بناء النص
+                txt = f"📝 تفاصيل الطلب #{order_id}\n\n"
+                txt += f"👤 المشتري: {order[11]}\n" # FullName from query
+                txt += f"📞 {order[12]}\n"
+                txt += f"📍 {order[6]}\n"
+                txt += "📦 المنتجات:\n"
+                for it in items:
+                     txt += f"- {it[8]} (x{it[3]}) - {it[8]} IQD\n" # Index 8=Name
+                
+                bot.send_message(call.message.chat.id, txt)
+                bot.answer_callback_query(call.id)
+                return
+
         if new_status:
             # Update DB
             update_order_status(order_id, new_status)
             bot.answer_callback_query(call.id, feedback)
-            
-            # Send Feedback (Temporary)
-            # bot.send_message(call.message.chat.id, f"📝 {feedback}")
-            
-            # DELETE MESSAGE if Shipped or Deleted
-            if action in ["ship_order", "delete_order"]:
-                try:
-                    bot.delete_message(call.message.chat.id, call.message.message_id)
-                except: pass
-            else:
-                # Update text to show new status? 
-                # For confirm, maybe just edit message?
-                # User didn't ask explicitly but it's good UX.
-                # For now, let's just leave it or send confirmation.
-                bot.send_message(call.message.chat.id, f"✅ تم تغيير حالة الطلب #{order_id} إلى {new_status}")
-
+            bot.send_message(call.message.chat.id, f"📝 {feedback} (تسلسل #{order_id})")
             
             # Notify Buyer
             order_info, _ = get_order_details(order_id)
             if order_info:
-                # We need BuyerID. get_order_details returns tuple.
-                # Assume index 1 is BuyerID.
                 buyer_id = order_info[1]
                 try:
                     bot.send_message(buyer_id, f"🔔 تحديث حالة الطلب #{order_id}:\n{notify_user_msg}")
