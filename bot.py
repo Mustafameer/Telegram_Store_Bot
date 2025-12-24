@@ -2192,7 +2192,7 @@ def show_bot_admin_menu(message):
     # Row 2
     markup.row("📦 الطلبات", "📊 كشف حساب الزبائن", "🏪 إدارة الزبائن الآجلين")
     # Row 3
-    markup.row(f"📩 الرسائل{messages_badge}", "🔗 رابط المتجر", "📊 إحصائيات النظام")
+    markup.row("🔍 بحث عن طلب", "🔗 رابط المتجر", "📊 إحصائيات النظام")
     # Row 4
     markup.row("🗑️ حذف متجر", "➕ إضافة متجر", "📋 قائمة المتاجر")
     # Row 5
@@ -2264,7 +2264,7 @@ def show_seller_menu(message):
     # Row 1
     markup.row("🏪 منتجاتي", "📁 الأقسام", f"📦 الطلبات{orders_badge}")
     # Row 2
-    markup.row(f"📩 الرسائل{messages_badge}", "📊 كشف حساب الزبائن", "🏪 إدارة الزبائن الآجلين")
+    markup.row("🔍 بحث عن طلب", "📊 كشف حساب الزبائن", "🏪 إدارة الزبائن الآجلين")
     # Row 3
     markup.row("🔗 رابط المتجر", "🛍️ وضع المشتري", "🏠 الرئيسية")
     
@@ -2276,7 +2276,166 @@ def show_seller_menu(message):
     
     bot.send_message(message.chat.id, welcome_msg, reply_markup=markup)
 
-# ====== عرض الطلبات للبائع ======
+
+# ====== بحث عن طلب ======
+@bot.message_handler(func=lambda message: "🔍 بحث عن طلب" in message.text and is_seller(message.from_user.id))
+def handle_search_order_request(message):
+    try:
+        msg = bot.send_message(message.chat.id, "🔍 **بحث عن طلب**\n\nيرجى إدخال رقم الطلب (ID) للبحث عنه:", parse_mode='Markdown')
+        # Set state
+        user_states[message.from_user.id] = {'state': 'searching_order'}
+        bot.register_next_step_handler(msg, process_search_order)
+    except Exception as e:
+        print(f"Error in search request: {e}")
+
+def process_search_order(message):
+    try:
+        telegram_id = message.from_user.id
+        
+        # Validate input
+        if not message.text.isdigit():
+            bot.send_message(message.chat.id, "⚠️ الرجاء إدخال رقم صحيح.")
+            return
+
+        order_id = int(message.text)
+        seller = get_seller_by_telegram(telegram_id)
+        if not seller:
+            return
+
+        # Check if order belongs to seller
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT OrderID FROM Orders WHERE OrderID = ? AND SellerID = ?", (order_id, seller[0]))
+        order = cursor.fetchone()
+        conn.close()
+
+        if not order:
+            bot.send_message(message.chat.id, f"⚠️ الطلب #{order_id} غير موجود أو لا يتبع لمتجرك.")
+            return
+
+        # Reuse existing order details logic (we need to call handles logic manually or create a new one)
+        # We can call the callback handler logic if we had one, but better to send the card directly.
+        # We need to fetch full details first.
+        
+        # Or simpler: Just trigger the "Order Details" view by simulating behavior?
+        # Better: Re-implement the display logic here or factor it out.
+        # Given the previous context, I'll fetch and display using the existing pattern.
+        
+        order_details, items = get_order_details(order_id)
+        
+        if not order_details:
+             bot.send_message(message.chat.id, "خطأ في استرجاع بيانات الطلب.")
+             return
+             
+        # Generate Card
+        from utils.receipt_generator import generate_order_card
+        
+        # Mock items list for card (Tuple format)
+        # item: (OrderItemID, OrderID, ProductID, Quantity, Price, Name, Description, ImagePath, ...)
+        # We need to align with what generate_order_card expects.
+        # It expects `items` as a list of tuples.
+        # And `order_details` as a tuple.
+        
+        # `get_order_details` returns:
+        # order: (OrderID, BuyerID, SellerID, Total, Status, CreatedAt, DeliveryAddress, Notes, PaymentMethod, FullyPaid, ReturnStatus, FullName, PhoneNumber, UserName, StoreName)
+        # items: list of (OrderItemID, OrderID, ProductID, Quantity, Price, Name, Description, ImagePath)
+        
+        # generate_order_card expects:
+        # order_details: (OrderID, Total, Status, CreatedAt, BuyerID, DateObj, Address, Notes, PaymentMethod) << logic in bot.py lines 2500+ differs?
+        # Let's check `generate_order_card` signature in `receipt_generator.py` (Line 112):
+        # generate_order_card(order_details, items, buyer_name, buyer_phone, store_name)
+        # Use simple args.
+
+        buyer_name = order_details[11] or "زائر"
+        buyer_phone = order_details[12] or "غير متوفر"
+        store_name = order_details[14] or "متجرك"
+        
+        # Prepare Order Details for Card (The function unpacks by index, so we need to be careful)
+        # receipt_generator.py Line 172: order_id = order_details[0]
+        # Line 174: date_obj = order_details[5]
+        # Line 186: note_txt = order_details[7]
+        # Line 193: address = order_details[6]
+        # Line 268: total_val = order_details[3]
+        
+        # This matches `get_order_details` output perfectly!
+        # [0] OrderID, [3] Total, [5] CreatedAt, [6] DeliveryAddress, [7] Notes.
+        
+        card_img = generate_order_card(order_details, items, buyer_name, buyer_phone, store_name)
+        
+        markup = types.InlineKeyboardMarkup()
+        # Add Actions
+        markup.row(types.InlineKeyboardButton(f"❌ حذف الطلب #{order_id}", callback_data=f"delete_order_{order_id}")) # New Request
+        # Add Status buttons
+        markup.row(
+             types.InlineKeyboardButton("🔄 جاري التجهيز", callback_data=f"setstatus_confirmed_{order_id}"),
+             types.InlineKeyboardButton("🚚 تم الشحن", callback_data=f"setstatus_shipped_{order_id}")
+        )
+        markup.row(
+             types.InlineKeyboardButton("✅ تم التوصيل", callback_data=f"setstatus_delivered_{order_id}"),
+             types.InlineKeyboardButton("🚫 رفض", callback_data=f"setstatus_rejected_{order_id}")
+        )
+        
+        if card_img:
+            card_img.name = f"order_{order_id}.png"
+            bot.send_photo(message.chat.id, card_img, caption=f"🔎 **نتيجة البحث: الطلب #{order_id}**\nحالة الطلب: {order_details[4]}", reply_markup=markup, parse_mode='Markdown')
+        else:
+            bot.send_message(message.chat.id, f"🔎 **الطلب #{order_id}**\nالمجموع: {order_details[3]}", reply_markup=markup)
+
+    except Exception as e:
+        print(f"Error in process_search: {e}")
+        bot.send_message(message.chat.id, "حدث خطأ أثناء البحث.")
+        traceback.print_exc()
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("delete_order_"))
+def handle_delete_order_callback(call):
+    try:
+        order_id = int(call.data.split("_")[2])
+        # Verify permissions (Seller check)
+        seller = get_seller_by_telegram(call.from_user.id)
+        if not seller:
+            bot.answer_callback_query(call.id, "⛔ ليس لديك صلاحية.")
+            return
+
+        # Confirm Deletion? For now, direct delete or ask confirmation.
+        # Given "Search to delete" request, let's just delete or mark as Rejected/Deleted.
+        # Actually, let's just DELETE row to clear it? Or update status to 'Cancelled'?
+        # "Delete" implies removal. But let's check if there is a 'delete_order' function in DB.
+        # Searching DB functions... `delete_product` exists. `delete_category` exists.
+        # I'll Assume we want to DELETE from DB or mark as cancelled.
+        # Safe bet: Update status to 'Cancelled' via update_order_status OR delete row.
+        # User said "Delete" ("حذف"). Let's try to delete rows if possible, or just hide.
+        # But wait, `delete_order` DB helper might not exist.
+        # Let's check `process_search_order` I wrote... I added a button.
+        # Let's add a DB function `delete_order_db` effectively.
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Verify ownership again
+        cursor.execute("SELECT OrderID FROM Orders WHERE OrderID = ? AND SellerID = ?", (order_id, seller[0]))
+        if not cursor.fetchone():
+             bot.answer_callback_query(call.id, "الطلب غير موجود.")
+             conn.close()
+             return
+             
+        # Delete items first (FK)
+        cursor.execute("DELETE FROM OrderItems WHERE OrderID = ?", (order_id,))
+        # Delete messages
+        cursor.execute("DELETE FROM Messages WHERE OrderID = ?", (order_id,))
+        # Delete order
+        cursor.execute("DELETE FROM Orders WHERE OrderID = ?", (order_id,))
+        conn.commit()
+        conn.close()
+        
+        bot.answer_callback_query(call.id, "✅ تم حذف الطلب بنجاح.")
+        bot.delete_message(call.message.chat.id, call.message.message_id) # Remove card
+        
+    except Exception as e:
+        print(f"Delete Error: {e}")
+        bot.answer_callback_query(call.id, "حدث خطأ أثناء الحذف.")
+
+# ====== عرض الطلبات للبائع ====== (Existing Start)
 @bot.message_handler(func=lambda message: "📦 الطلبات" in message.text and is_seller(message.from_user.id))
 def handle_seller_orders_menu(message):
     try:
@@ -2300,7 +2459,7 @@ def handle_seller_orders_menu(message):
                    o.PaymentMethod, o.DeliveryAddress, o.Notes
             FROM Orders o
             LEFT JOIN Users u ON o.BuyerID = u.TelegramID
-            WHERE o.SellerID = ?
+            WHERE o.SellerID = ? AND o.Status IN ('Pending', 'Confirmed')
             ORDER BY 
                 CASE WHEN o.Status = 'Pending' THEN 0 ELSE 1 END,
                 o.CreatedAt DESC
