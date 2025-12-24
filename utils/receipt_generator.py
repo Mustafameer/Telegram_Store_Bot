@@ -77,13 +77,33 @@ def get_cached_font(font_type, size):
     font_base = os.path.join(os.path.dirname(__file__), "..", "fonts")
     paths = []
     if font_type == 'bold':
-        paths = [os.path.join(font_base, "Cairo-Bold.ttf"), "fonts/Cairo-Bold.ttf", "arialbd.ttf"]
+        paths = [
+            os.path.join(font_base, "Cairo-Bold.ttf"), 
+            "fonts/Cairo-Bold.ttf", 
+            "fonts/arialbd.ttf", # Priority Fallback
+            "arialbd.ttf"
+        ]
     elif font_type == 'header':
-        paths = [os.path.join(font_base, "Cairo-Bold.ttf"), "fonts/Cairo-Bold.ttf", "arialbd.ttf"]
+        paths = [
+            os.path.join(font_base, "Cairo-Bold.ttf"), 
+            "fonts/Cairo-Bold.ttf", 
+            "fonts/arialbd.ttf", 
+            "arialbd.ttf"
+        ]
     elif font_type == 'normal':
-        paths = [os.path.join(font_base, "Cairo-Regular.ttf"), "fonts/Cairo-Regular.ttf", "arial.ttf"]
+        paths = [
+            os.path.join(font_base, "Cairo-Regular.ttf"), 
+            "fonts/Cairo-Regular.ttf", 
+            "fonts/arial.ttf", # Priority Fallback
+            "arial.ttf"
+        ]
     else: # small
-        paths = [os.path.join(font_base, "Cairo-Regular.ttf"), "fonts/Cairo-Regular.ttf", "arial.ttf"]
+        paths = [
+            os.path.join(font_base, "Cairo-Regular.ttf"), 
+            "fonts/Cairo-Regular.ttf", 
+            "fonts/arial.ttf", 
+            "arial.ttf"
+        ]
         
     font = get_font(paths, size)
     CACHED_FONTS[key] = font
