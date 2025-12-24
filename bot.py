@@ -1896,10 +1896,29 @@ def generate_store_link(telegram_id):
 
 # ====== دالة لعرض المنتجات مع صورها ======
 def send_product_with_image(chat_id, product, markup=None, seller_name=""):
-    """إرسال منتج مع صورته"""
+    """إرسال منتج مع صورته (Generate Card v1)"""
     try:
         pid, name, desc, price, wholesale_price, qty, img_path = product
-        print(f"DEBUG: sending product {pid} ({name}) with markup: {markup}")
+        
+        # 1. Try to Generate Product Card
+        try:
+            from utils.receipt_generator import generate_product_card
+            card_img = generate_product_card(product, seller_name)
+            
+            if card_img:
+                card_img.name = f"product_{pid}.png"
+                # Keep caption minimal as details are on the card
+                # We still show Quantity as it might not be on card, and maybe a brief text copy
+                caption = f"📦 **{name}**\n📦 المتوفر: {qty}"
+                
+                bot.send_photo(chat_id, card_img, caption=caption, reply_markup=markup, parse_mode='Markdown')
+                return
+        except Exception as e:
+            print(f"⚠️ Product Card Generation Failed: {e}")
+            # Fallthrough to legacy raw image logic
+            
+        # 2. Legacy Logic (Raw Image/Text)
+        print(f"DEBUG: sending raw product {pid} ({name}) [Fallback]")
         
         caption = f"🛒 **{name}**\n💰 السعر: {price} IQD"
         if wholesale_price and wholesale_price > 0:

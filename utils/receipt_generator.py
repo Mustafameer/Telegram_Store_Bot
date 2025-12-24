@@ -286,3 +286,141 @@ def generate_order_card(order_details, items, buyer_name, buyer_phone, store_nam
         import traceback
         traceback.print_exc()
         return None
+
+def generate_product_card(product, store_name):
+    """
+    Generate a 600px wide product card.
+    Top 50% = Image (Contained).
+    Bottom 50% = Details.
+    """
+    try:
+        # Unpack
+        pid, name, desc, price, wholesale_price, qty, img_path = product
+        
+        # 1. Constants
+        WIDTH = 600
+        # Dynamic height? Or Fixed? Let's try Fixed for consistency, or dynamic if desc is long.
+        # But user asked for specific layout. Let's go with 800px total height, 400px image.
+        HEIGHT = 800
+        IMAGE_AREA_HEIGHT = 400
+        
+        COLOR_BG = (255, 255, 255)
+        COLOR_TEXT_NAVY = (0, 30, 90)
+        COLOR_TEXT_GREY = (100, 100, 100)
+        COLOR_ACCENT = (76, 175, 80) # Green for Price
+        COLOR_HEADER_BG = (20, 40, 80)
+        
+        img = Image.new('RGB', (WIDTH, HEIGHT), COLOR_BG)
+        draw = ImageDraw.Draw(img)
+        
+        # 2. Fonts
+        title_font = get_cached_font('bold', 45)
+        price_font = get_cached_font('bold', 50)
+        normal_font = get_cached_font('normal', 32)
+        small_font = get_cached_font('small', 26)
+        
+        # 3. Draw Image (Top Half)
+        # Background for image area (optional, maybe light grey or white)
+        draw.rectangle([(0, 0), (WIDTH, IMAGE_AREA_HEIGHT)], fill=(250, 250, 250))
+        
+        product_img = None
+        
+        # Helper to find image
+        def find_image_file(path_str):
+            if not path_str or not isinstance(path_str, str): return None
+            clean = path_str.split('?')[0].replace('\\', '/')
+            if 'http' in clean: return None
+            basename = os.path.basename(clean)
+            base_dirs = [
+                os.getcwd(),
+                os.path.join(os.getcwd(), "data", "Images"),
+                "C:/Users/Hp/Desktop/TelegramStoreBot/data/Images"
+            ]
+            for d in base_dirs:
+                if os.path.exists(d):
+                     fp = os.path.join(d, basename)
+                     if os.path.exists(fp): return fp
+            return None
+
+        final_path = find_image_file(img_path)
+        if final_path:
+             try: product_img = Image.open(final_path).convert('RGBA')
+             except: pass
+        
+        if product_img:
+            # Resize to fit within IMAGE_AREA_HEIGHT x WIDTH (Contain)
+            iw, ih = product_img.size
+            msg_ratio = WIDTH / IMAGE_AREA_HEIGHT
+            img_ratio = iw / ih
+            
+            target_w, target_h = WIDTH, IMAGE_AREA_HEIGHT
+            
+            if img_ratio > msg_ratio:
+                 # Wider than container, fit to width
+                 target_w = WIDTH
+                 target_h = int(WIDTH / img_ratio)
+            else:
+                 # Taller or same, fit to height
+                 target_h = IMAGE_AREA_HEIGHT
+                 target_w = int(IMAGE_AREA_HEIGHT * img_ratio)
+            
+            product_img = product_img.resize((target_w, target_h), Image.Resampling.LANCZOS)
+            
+            # Center position
+            pos_x = (WIDTH - target_w) // 2
+            pos_y = (IMAGE_AREA_HEIGHT - target_h) // 2
+            
+            # Paste
+            # Create a white background/canvas for the top half to paste onto if transparency exists
+            img.paste(product_img, (pos_x, pos_y), product_img if 'A' in product_img.getbands() else None)
+        else:
+            # Placeholder
+            draw.text((WIDTH//2 - 50, IMAGE_AREA_HEIGHT//2 - 20), "No Image", font=normal_font, fill=COLOR_TEXT_GREY)
+
+        # 4. Details (Bottom Half)
+        current_y = IMAGE_AREA_HEIGHT + 30
+        
+        # Store Name (Pill)
+        # draw_pill returns w, h
+        if store_name:
+             draw_pill(draw, WIDTH - 250, current_y, store_name[:20], small_font, COLOR_HEADER_BG, (255,255,255))
+        
+        # Product Name
+        current_y += 60
+        draw_text_rtl(draw, name, current_y, title_font, COLOR_TEXT_NAVY, right_margin=40, canvas_width=WIDTH)
+        
+        current_y += 70
+        # Description (Truncated)
+        if desc:
+            desc_short = desc[:50] + "..." if len(desc) > 50 else desc
+            draw_text_rtl(draw, desc_short, current_y, normal_font, COLOR_TEXT_GREY, right_margin=40, canvas_width=WIDTH)
+            current_y += 50
+        
+        current_y += 40
+        # Divider
+        draw.line([(40, current_y), (WIDTH-40, current_y)], fill=(230, 230, 230), width=2)
+        current_y += 40
+        
+        # Price
+        price_txt = f"{price:,.0f} IQD"
+        draw_text_rtl(draw, price_txt, current_y, price_font, COLOR_ACCENT, right_margin=40, canvas_width=WIDTH)
+        
+        # Wholesale Price (if relevant)
+        if wholesale_price and wholesale_price > 0:
+            current_y += 60
+            ws_txt = f"جملة: {wholesale_price:,.0f} IQD"
+            draw_text_rtl(draw, ws_txt, current_y, small_font, (200, 100, 50), right_margin=40, canvas_width=WIDTH)
+
+        # Footer Decor (Bottom Strip)
+        draw.rectangle([(0, HEIGHT-20), (WIDTH, HEIGHT)], fill=COLOR_HEADER_BG)
+
+        bio = io.BytesIO()
+        img.save(bio, 'PNG')
+        bio.seek(0)
+        return bio
+
+    except Exception as e:
+        print(f"Product Card Gen Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
