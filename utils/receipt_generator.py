@@ -92,11 +92,9 @@ def get_cached_font(font_type, size):
 def generate_order_card(order_details, items, buyer_name, buyer_phone, store_name):
     """
     Generate a visual receipt card for the order.
-    Rev 15: Blue Theme & Colored Icons
+    Rev 16: Larger Fonts & Blue Theme
     """
-    print("!!! GENERATING BLUE THEME CARD REV 15 !!!")
     try:
-        # 1. Constants & Setup
         # 1. Constants & Setup
         WIDTH = 450 # 75% of 600px
         PADDING = 20
@@ -107,7 +105,7 @@ def generate_order_card(order_details, items, buyer_name, buyer_phone, store_nam
         # Calculate Height
         # Header + Items(Tall) + Footer
         display_count = len(items) if items else 1
-        BODY_HEIGHT = (display_count * 90) + 100 # Items(90px) + Footer(Total)
+        BODY_HEIGHT = (display_count * 100) + 120 # Increased per-item height (was 90) + Footer space
         TOTAL_HEIGHT = HEADER_HEIGHT + BODY_HEIGHT + 20
         
         # Colors (Dark Blue/Grey like Screenshot)
@@ -128,14 +126,14 @@ def generate_order_card(order_details, items, buyer_name, buyer_phone, store_nam
         draw.rectangle([(0, 0), (WIDTH, HEADER_HEIGHT)], fill=HEADER_BG)
         
         # Footer BG
-        FOOTER_Y = TOTAL_HEIGHT - 100
+        FOOTER_Y = TOTAL_HEIGHT - 120 # Increased footer space
         draw.rectangle([(0, FOOTER_Y), (WIDTH, TOTAL_HEIGHT)], fill=HEADER_BG)
         
-        # 2. Fonts
-        title_font = get_cached_font('bold', 28)
-        normal_font = get_cached_font('normal', 24)
-        small_font = get_cached_font('small', 22) # Slightly larger for clarity
-        icon_font = get_cached_font('normal', 22) # For Emojis if needed
+        # 2. Fonts (Larger Sizes)
+        title_font = get_cached_font('bold', 38)
+        normal_font = get_cached_font('normal', 32)
+        small_font = get_cached_font('small', 30) 
+        icon_font = get_cached_font('normal', 30) 
         
         # 3. HEADER
         current_y = 30
