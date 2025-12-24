@@ -5619,11 +5619,11 @@ def handle_delete_order(call):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # 1. Get Order Items to restore quantity
+        # 1. Get Order Items to restore quantity (subtract already returned items)
         if IS_POSTGRES:
-            cursor.execute("SELECT ProductID, Quantity FROM OrderItems WHERE OrderID = %s", (order_id,))
+            cursor.execute("SELECT ProductID, (Quantity - COALESCE(ReturnedQuantity, 0)) FROM OrderItems WHERE OrderID = %s", (order_id,))
         else:
-            cursor.execute("SELECT ProductID, Quantity FROM OrderItems WHERE OrderID = ?", (order_id,))
+            cursor.execute("SELECT ProductID, (Quantity - COALESCE(ReturnedQuantity, 0)) FROM OrderItems WHERE OrderID = ?", (order_id,))
             
         items = cursor.fetchall()
         
