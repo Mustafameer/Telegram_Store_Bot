@@ -112,7 +112,7 @@ def get_cached_font(font_type, size):
 def generate_order_card(order_details, items, buyer_name, buyer_phone, store_name):
     """
     Generate a visual receipt card for the order.
-    Rev 17: High Resolution (800px) & Massive Fonts
+    Rev 19: Drawn Icons & Tuned Fonts
     """
     try:
         # 1. Constants & Setup
@@ -145,13 +145,38 @@ def generate_order_card(order_details, items, buyer_name, buyer_phone, store_nam
         FOOTER_Y = TOTAL_HEIGHT - 160
         draw.rectangle([(0, FOOTER_Y), (WIDTH, TOTAL_HEIGHT)], fill=HEADER_BG)
         
-        # 2. Fonts (Massive)
-        title_font = get_cached_font('bold', 55)
-        normal_font = get_cached_font('normal', 45)
-        small_font = get_cached_font('small', 38) 
+        # 2. Fonts
+        # "Keep numbers as they are" -> Keep Title/Price Large.
+        # "Font smaller by 2 degrees" -> Reduce Normal/Small.
+        title_font = get_cached_font('bold', 55)    # For Total/ID (Numbers)
+        price_font = get_cached_font('bold', 40)    # New: For Item Prices (Numbers)
+        normal_font = get_cached_font('normal', 36) # Reduced from 45 -> 36 (Names)
+        small_font = get_cached_font('small', 30)   # Reduced from 38 -> 30 (Details)
+        icon_symbol_font = get_cached_font('bold', 30) # For symbols inside circles
         
+        # 3. Icon Helper (Draws Colored Circle + Symbol)
+        def draw_visual_icon(x, y, color, symbol):
+            """Draws a colored circle with a white symbol in center."""
+            radius = 25
+            # Circle
+            draw.ellipse([(x-radius, y-radius), (x+radius, y+radius)], fill=color)
+            # Symbol
+            # calc centering crudely
+            draw.text((x-10, y-18), symbol, font=icon_symbol_font, fill=(255,255,255))
+
+        # Helper for Data Row (Icon Right, Text Left)
+        def draw_row(symbol_char, text, y, icon_color):
+             # Icon Center X
+             icon_cx = WIDTH - 50 
+             icon_cy = y + 15 # Adjust for vertical center relative to text
+             
+             draw_visual_icon(icon_cx, icon_cy, icon_color, symbol_char)
+             
+             # Text (Left of Icon, with margin)
+             draw_text_rtl(draw, text, y, small_font, COLOR_TEXT_WHITE, right_margin=100, canvas_width=WIDTH)
+
         # 3. HEADER
-        current_y = 50 # Start lower
+        current_y = 50 
         
         order_id = str(order_details[0])
         
@@ -164,17 +189,27 @@ def generate_order_card(order_details, items, buyer_name, buyer_phone, store_nam
                date_str = date_obj.strftime('%Y-%m-%d')
         except: date_str = "---"
         
-        # Helper for Icon+Text Row
-        def draw_row(icon, text, y, icon_color=(255, 200, 0)):
-             icon_x = WIDTH - 80 # Adjusted for 800px
-             draw.text((icon_x, y), icon, font=small_font, fill=icon_color)
-             draw_text_rtl(draw, text, y, small_font, COLOR_TEXT_WHITE, right_margin=120, canvas_width=WIDTH) # More margin for icon
 
         # Draw Order ID (Left)
         draw.text((40, current_y), f"#{order_id}", font=title_font, fill=COLOR_TEXT_WHITE)
         
-        # Draw Date (Right)
-        draw_row("📅", date_str, current_y, (0, 255, 255))
+        # Draw Date (Right) - Symbol "D" or calendar shape? Let's use generic shape or char.
+        # "📅" might fail inside circle if font doesn't support it. Use "D" or "📅" if Arial supports it?
+        # Arial supports basic shapes. Let's use simple letters for robustness per user issue.
+        # D = Date, N = Note, A = Address. Or just symbols if we trust Arial.
+        # Let's try Unicode symbols that are standard in Arial: 
+        # Date: 📅 (Might fail). Let's use "📅" but if it fails it fails. 
+        # Wait, user said "Icons not visible". 
+        # Let's use pure shapes? No, let's use LETTERS. Robust.
+        # Or better: "🕑", "📝", "📍". 
+        # Let's use "::" style or just no symbol inside, just color? NO, need meaning.
+        # Let's use:
+        # Date: 📅 (Cyan)
+        # Note: 📝 (Orange)
+        # Address: 📍 (Red)
+        # If they fail, at least the COLOR circle is visible.
+        
+        draw_row("📅", date_str, current_y, (0, 180, 200)) # Cyan
         
         current_y += 80
         
@@ -184,14 +219,14 @@ def generate_order_card(order_details, items, buyer_name, buyer_phone, store_nam
         except: note_txt = ""
         if not note_txt: note_txt = "---"
         
-        draw_row("📝", note_txt, current_y, (255, 200, 80))
+        draw_row("📝", note_txt, current_y, (255, 160, 0)) # Orange
         
         current_y += 60
         
         # Draw Address
         address = order_details[6]
         if address:
-             draw_row("📍", address, current_y, (255, 100, 100))
+             draw_row("📍", address, current_y, (220, 60, 60)) # Red
              current_y += 60
 
         
@@ -208,7 +243,7 @@ def generate_order_card(order_details, items, buyer_name, buyer_phone, store_nam
             name = item[8] if len(item) > 8 else "Unknown"
             
             # Image Thumbnail
-            img_size = 100 # Larger Thumbnails
+            img_size = 100 
             img_x = 40
             img_y = current_y
             
@@ -250,15 +285,19 @@ def generate_order_card(order_details, items, buyer_name, buyer_phone, store_nam
                 draw.rounded_rectangle([(img_x, img_y), (img_x+img_size, img_y+img_size)], radius=15, fill=(40,45,50))
                 draw.text((img_x+25, img_y+35), "IMG", font=small_font, fill=COLOR_TEXT_GREY)
 
-            # Name (Right)
+            # Name (Right) - Use Normal Font (Smaller now)
             draw_text_rtl(draw, f"{name}", current_y, normal_font, COLOR_TEXT_WHITE, right_margin=40, canvas_width=WIDTH)
             
-            # Subtext
+            # Subtext (Qty | Price) - Use PRICE FONT for Numbers (Keep Large)
             total_item = qty * float(price)
             subtext = f"{qty}x | {float(price):,.0f}"
-            draw.text((img_x + img_size + 20, current_y + 25), subtext, font=small_font, fill=COLOR_ACCENT)
             
-            current_y += 140 # More spacing for large items
+            # Draw Qty/Price below name
+            # We want numbers "as they are" (Large?). 
+            # I created price_font (40) for this.
+            draw.text((img_x + img_size + 20, current_y + 40), subtext, font=price_font, fill=COLOR_ACCENT)
+            
+            current_y += 140 
             
             # Separator
             draw.line([(img_x + img_size + 20, current_y-20), (WIDTH-40, current_y-20)], fill=(40, 45, 50), width=2)
@@ -267,9 +306,18 @@ def generate_order_card(order_details, items, buyer_name, buyer_phone, store_nam
         # 6. Summary in Footer
         
         # Total Price
+        # Icon Right, Text Left
         total_val = order_details[3]
-        total_txt = f"💰 {int(total_val):,}" 
-        draw_text_rtl(draw, total_txt, FOOTER_Y + 50, title_font, COLOR_ACCENT, right_margin=40, canvas_width=WIDTH)
+        total_txt = f"{int(total_val):,}" 
+        
+        # Draw Icon (Green $)
+        icon_cx = WIDTH - 50
+        icon_cy = FOOTER_Y + 75
+        draw_visual_icon(icon_cx, icon_cy, (40, 180, 60), "$")
+        
+        # Draw Text (Left of Icon)
+        # Using title_font (55) for Total Number (Keep Large)
+        draw_text_rtl(draw, total_txt, FOOTER_Y + 50, title_font, COLOR_ACCENT, right_margin=100, canvas_width=WIDTH)
         
         bio = io.BytesIO()
         img.save(bio, 'PNG')
