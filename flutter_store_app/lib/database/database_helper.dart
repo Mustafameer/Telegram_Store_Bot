@@ -69,7 +69,11 @@ class DatabaseHelper {
       }
       
       final path = p.join(directory.path, filePath);
-      print("📂 Opening Database at: $path");
+      print("📂 ===================================================");
+      print("📂 ACTIVE DATABASE PATH: ${directory.absolute.path}");
+      print("📂 ===================================================");
+      
+
 
       final db = await openDatabase(
         path, 
@@ -760,6 +764,8 @@ class DatabaseHelper {
     return Sqflite.firstIntValue(await db.rawQuery('SELECT COUNT(*) FROM Messages WHERE SellerID = ?', [sellerId])) ?? 0;
   }
 
+
+
   // --- Stock Management ---
   Future<void> deductStockForOrder(int orderId) async {
     final db = await database;
@@ -930,5 +936,14 @@ class DatabaseHelper {
       'IsRead': 0,
       'CreatedAt': DateTime.now().toIso8601String()
     });
+  }
+
+  Future<void> close() async {
+    final db = _localDatabase;
+    if (db != null) {
+      await db.close();
+      _localDatabase = null;
+      print("🔒 Database Closed");
+    }
   }
 }

@@ -1,184 +1,291 @@
-import os
+
 import io
+import datetime
+import os
+import requests
+from PIL import Image, ImageDraw, ImageFont
 
+# Libraries for Arabic Text Support
 try:
-    from PIL import Image, ImageDraw, ImageFont, ImageFilter
-    HAS_PIL = True
+    import arabic_reshaper
+    from bidi.algorithm import get_display
 except ImportError:
-    HAS_PIL = False
+    print("Warning: arabic-reshaper or python-bidi not installed. Arabic text may render incorrectly.")
+    arabic_reshaper = None
+    get_display = None
 
-def generate_order_receipt(order_details, items, store_name, buyer_name, buyer_phone):
-    """
-    Generates a visual receipt for the order.
-    
-    Args:
-        order_details: Tuple (OrderID, BuyerID, SellerID, Total, Status, Date, Address, Phone, PaymentMethod, FullyPaid)
-        items: List of tuples (ItemID, OrderID, ProductID, Qty, Price, ..., ProductName, Desc, ImagePath) 
-               Note: The structure depends on the SQL query. We assume the last elements are Product Info.
-        store_name: String
-        buyer_name: String
-        buyer_phone: String
-        
-    Returns:
-        BytesIO object containing the image, or None if PIL is missing or error occurs.
-    """
-    if not HAS_PIL:
-        print("⚠️ Pillow library not found. Skipping receipt generation.")
-        return None
-
-    try:
-        # Configuration
-        WIDTH = 800
-        PADDING = 40
-        HEADER_HEIGHT = 150
-        ITEM_HEIGHT = 120
-        FOOTER_HEIGHT = 100
-        
-        # Calculate dynamic height
-        num_items = len(items)
-        # Limit visible items to prevent huge images, maybe show "and X more..." logically, 
-        # but for now let's draw all or up to 10.
-        DISPLAY_LIMIT = 10
-        visible_items = items[:DISPLAY_LIMIT]
-        
-        content_height = len(visible_items) * ITEM_HEIGHT
-        total_height = HEADER_HEIGHT + content_height + FOOTER_HEIGHT + 60 # Extra padding
-        
-        if len(items) > DISPLAY_LIMIT:
-            total_height += 50 # Space for "+ X more items"
-            
-        # Colors
-        BG_COLOR = (24, 24, 28) # Dark Background
-        CARD_COLOR = (35, 35, 40) # Slightly lighter for items
-        TEXT_COLOR = (255, 255, 255)
-        ACCENT_COLOR = (0, 122, 255) # Blue
-        PRICE_COLOR = (46, 204, 113) # Green
-        
-        # Fonts (Try to load a font, fallback to default)
+def get_font(path_options, size):
+    for path in path_options:
         try:
-            # Try to find a standard font like Arial or Segoe UI on Windows/Data dir
-            # For Arabic support, we need a font that supports it.
-            # We will try a few common paths.
-            font_path = "arial.ttf" # Fallback
-            
-            # Check for a font in data directory if you have one
-            # local_font = "data/fonts/Cairo-Regular.ttf"
-            # if os.path.exists(local_font):
-            #     font_path = local_font
-                
-            regular_font = ImageFont.truetype(font_path, 24)
-            title_font = ImageFont.truetype(font_path, 36)
-            bold_font = ImageFont.truetype(font_path, 28)
-            small_font = ImageFont.truetype(font_path, 18)
-        except:
-            regular_font = ImageFont.load_default()
-            title_font = ImageFont.load_default()
-            bold_font = ImageFont.load_default()
-            small_font = ImageFont.load_default()
+            return ImageFont.truetype(path, size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
 
-        # Create Image
-        img = Image.new('RGB', (WIDTH, total_height), BG_COLOR)
+def process_text(text):
+    """Reshapes and reorders Arabic text for correct display."""
+    if not text:
+        return ""
+    if arabic_reshaper and get_display:
+        reshaped_text = arabic_reshaper.reshape(str(text))
+        bidi_text = get_display(reshaped_text)
+        return bidi_text
+    return str(text)
+
+def draw_text_rtl(draw, text, y, font, fill, right_margin, canvas_width=600):
+    """Draws text aligned to the right."""
+    processed = process_text(text)
+    
+    try:
+        bbox = draw.textbbox((0, 0), processed, font=font)
+        text_width = bbox[2] - bbox[0]
+    except:
+        text_width = draw.textlength(processed, font=font)
+        
+    x = canvas_width - right_margin - text_width 
+    draw.text((x, y), processed, font=font, fill=fill)
+    return text_width
+
+def draw_pill(draw, x, y, text, font, bg_color, text_color):
+    """Draws a rounded pill with text."""
+    processed = process_text(text)
+    try:
+        bbox = draw.textbbox((0, 0), processed, font=font)
+        w = bbox[2] - bbox[0] + 30
+        h = bbox[3] - bbox[1] + 16
+    except:
+        w = 100
+        h = 40
+    
+    try:
+        draw.rounded_rectangle([(x, y), (x + w, y + h)], radius=15, fill=bg_color)
+    except AttributeError:
+         draw.rectangle([(x, y), (x + w, y + h)], fill=bg_color)
+         
+    # Center text
+    draw.text((x + 15, y + 8), processed, font=font, fill=text_color)
+    return w, h
+
+# Font Cache
+CACHED_FONTS = {}
+
+def get_cached_font(font_type, size):
+    key = (font_type, size)
+    if key in CACHED_FONTS:
+        return CACHED_FONTS[key]
+    
+    font_base = os.path.join(os.path.dirname(__file__), "..", "fonts")
+    paths = []
+    if font_type == 'bold':
+        paths = [os.path.join(font_base, "Cairo-Bold.ttf"), "fonts/Cairo-Bold.ttf", "arialbd.ttf"]
+    elif font_type == 'header':
+        paths = [os.path.join(font_base, "Cairo-Bold.ttf"), "fonts/Cairo-Bold.ttf", "arialbd.ttf"]
+    elif font_type == 'normal':
+        paths = [os.path.join(font_base, "Cairo-Regular.ttf"), "fonts/Cairo-Regular.ttf", "arial.ttf"]
+    else: # small
+        paths = [os.path.join(font_base, "Cairo-Regular.ttf"), "fonts/Cairo-Regular.ttf", "arial.ttf"]
+        
+    font = get_font(paths, size)
+    CACHED_FONTS[key] = font
+    return font
+
+def generate_order_card(order_details, items, buyer_name, buyer_phone, store_name):
+    """
+    Generate a visual receipt card for the order.
+    Rev 15: Blue Theme & Colored Icons
+    """
+    print("!!! GENERATING BLUE THEME CARD REV 15 !!!")
+    try:
+        # 1. Constants & Setup
+        # 1. Constants & Setup
+        WIDTH = 450 # 75% of 600px
+        PADDING = 20
+        
+        # Design Specs (No Hero Image)
+        HEADER_HEIGHT = 200 # Space for ID, Date, Notes, Address
+        
+        # Calculate Height
+        # Header + Items(Tall) + Footer
+        display_count = len(items) if items else 1
+        BODY_HEIGHT = (display_count * 90) + 100 # Items(90px) + Footer(Total)
+        TOTAL_HEIGHT = HEADER_HEIGHT + BODY_HEIGHT + 20
+        
+        # Colors (Dark Blue/Grey like Screenshot)
+        COLOR_BG = (20, 25, 30) 
+        COLOR_TEXT_WHITE = (255, 255, 255)
+        COLOR_TEXT_GREY = (180, 190, 200)
+        COLOR_ACCENT = (76, 175, 80) 
+        COLOR_DIVIDER = (50, 60, 70)
+
+        # 1. Backgrounds
+        # Main BG
+        img = Image.new('RGB', (WIDTH, TOTAL_HEIGHT), COLOR_BG)
         draw = ImageDraw.Draw(img)
         
-        order_id = order_details[0]
-        total_amount = order_details[3]
-        order_date = str(order_details[5]).split()[0]
+        # Header/Footer BG (Blue Theme)
+        # Deep Blue
+        HEADER_BG = (20, 40, 80) 
+        draw.rectangle([(0, 0), (WIDTH, HEADER_HEIGHT)], fill=HEADER_BG)
         
-        # --- HEADER ---
-        # Draw Store Name and ID
-        draw.text((WIDTH - PADDING, PADDING), f"#{order_id}", font=title_font, fill=ACCENT_COLOR, anchor="rt")
-        draw.text((PADDING, PADDING), f"متجر: {store_name}", font=title_font, fill=TEXT_COLOR, anchor="lt")
+        # Footer BG
+        FOOTER_Y = TOTAL_HEIGHT - 100
+        draw.rectangle([(0, FOOTER_Y), (WIDTH, TOTAL_HEIGHT)], fill=HEADER_BG)
         
-        # Draw Status (Simplified)
-        status = order_details[4] # e.g., Pending
-        status_text = "قيد الانتظار ⏳" if status == 'Pending' else status
-        draw.text((WIDTH // 2, PADDING), status_text, font=bold_font, fill=(255, 165, 0), anchor="mt")
+        # 2. Fonts
+        title_font = get_cached_font('bold', 28)
+        normal_font = get_cached_font('normal', 24)
+        small_font = get_cached_font('small', 22) # Slightly larger for clarity
+        icon_font = get_cached_font('normal', 22) # For Emojis if needed
         
-        # Buyer Info
-        draw.text((WIDTH - PADDING, PADDING + 60), f"📅 {order_date}", font=regular_font, fill=(200, 200, 200), anchor="rt")
-        draw.text((WIDTH - PADDING, PADDING + 100), f"👤 {buyer_name}", font=regular_font, fill=(200, 200, 200), anchor="rt")
-        draw.text((WIDTH - PADDING, PADDING + 140), f"📞 {buyer_phone}", font=regular_font, fill=(200, 200, 200), anchor="rt")
+        # 3. HEADER
+        current_y = 30
         
-        # Address (Left side)
+        order_id = str(order_details[0])
+        
+        # Date Format
+        try:
+           date_obj = order_details[5]
+           if isinstance(date_obj, str):
+               date_str = date_obj.split()[0]
+           else:
+               date_str = date_obj.strftime('%Y-%m-%d')
+        except: date_str = "---"
+        
+        # Helper for Icon+Text Row (Right Aligned)
+        def draw_row(icon, text, y, icon_color=(255, 200, 0)):
+             # Icon Position (Absolute Right)
+             # Unicode Icons might vary in width, rigid spacing is safer.
+             icon_x = WIDTH - 50
+             draw.text((icon_x, y), icon, font=small_font, fill=icon_color)
+             
+             # Text Position (Left of Icon)
+             draw_text_rtl(draw, text, y, small_font, COLOR_TEXT_WHITE, right_margin=60, canvas_width=WIDTH)
+
+        # Draw Order ID (Left side, big)
+        draw.text((20, current_y), f"#{order_id}", font=title_font, fill=COLOR_TEXT_WHITE)
+        
+        # Draw Date (Row 1 Right)
+        draw_row("📅", date_str, current_y, (0, 255, 255)) # Cyan
+        
+        current_y += 50
+        
+        # Draw Notes
+        try:
+             note_txt = order_details[7] if len(order_details) > 7 else ""
+        except: note_txt = ""
+        if not note_txt: note_txt = "---"
+        
+        draw_row("📝", note_txt, current_y, (255, 200, 80)) # Orange
+        
+        current_y += 40
+        
+        # Draw Address
         address = order_details[6]
         if address:
-             draw.text((PADDING, PADDING + 100), f"📍 {address[:30]}", font=small_font, fill=(200, 200, 200), anchor="lt")
-
-        # Line Separator
-        line_y = HEADER_HEIGHT + 40
-        draw.line((PADDING, line_y, WIDTH - PADDING, line_y), fill=(60, 60, 60), width=2)
+             draw_row("📍", address, current_y, (255, 100, 100)) # Reddish
+             current_y += 40
+             
+        # Divider
+        current_y = HEADER_HEIGHT + 10 # Reset Y to below header explicitly
+        # draw.line works but let's just stick to the flow.
         
-        # --- ITEMS ---
-        current_y = line_y + 20
+        # 4. Items List
+        current_y = HEADER_HEIGHT + 20
         
-        for idx, item in enumerate(visible_items):
-            # Parse Item
-            # item structure matches fetchall() from get_order_details:
-            # oi.* (0-7), p.Name (8), p.Desc (9), p.ImagePath (10)
+        if not items:
+             draw_text_rtl(draw, "لا توجد منتجات", current_y, normal_font, COLOR_TEXT_GREY, right_margin=WIDTH//2, canvas_width=WIDTH)
+             current_y += 60
+             
+        for item in items:
             qty = item[3]
             price = item[4]
-            prod_name = item[8]
-            prod_img_path = item[10] if len(item) > 10 else None
+            name = item[8] if len(item) > 8 else "Unknown"
             
-            # Item Background
-            # draw.rectangle((PADDING, current_y, WIDTH - PADDING, current_y + ITEM_HEIGHT - 10), fill=CARD_COLOR, outline=None)
+            # 1. Image Thumbnail
+            img_size = 60
+            img_x = 20
+            img_y = current_y
             
-            # Product Image (Placeholder or Load)
-            img_x = WIDTH - PADDING - 100 # Right aligned image
+            thumb_img = None
             
-            if prod_img_path and os.path.exists(prod_img_path):
-                try:
-                    p_img = Image.open(prod_img_path).convert("RGBA")
-                    p_img = p_img.resize((90, 90))
-                    # Create rounded mask
-                    mask = Image.new("L", (90, 90), 0)
-                    draw_mask = ImageDraw.Draw(mask)
-                    draw_mask.rounded_rectangle((0, 0, 90, 90), radius=10, fill=255)
-                    img.paste(p_img, (img_x, current_y), mask)
-                except:
-                    # Fallback rect
-                    draw.rectangle((img_x, current_y, img_x + 90, current_y + 90), fill=(50, 50, 50))
+            # Robust Helper
+            def find_image_file(path_str):
+                if not path_str or not isinstance(path_str, str): return None
+                clean = path_str.split('?')[0].replace('\\', '/')
+                if 'http' in clean: return None
+                basename = os.path.basename(clean)
+                
+                # Search Paths
+                base_dirs = [
+                    os.getcwd(),
+                    os.path.join(os.getcwd(), "data", "Images"),
+                    "C:/Users/Hp/Desktop/TelegramStoreBot/data/Images"
+                ]
+                for d in base_dirs:
+                    if os.path.exists(d):
+                        fp = os.path.join(d, basename)
+                        if os.path.exists(fp): return fp
+                return None
+
+            image_path = None
+            if len(item) > 13 and isinstance(item[13], str) and len(item[13]) > 4: image_path = item[13]
+            elif len(item) > 10 and isinstance(item[10], str) and len(item[10]) > 4: image_path = item[10]
+            
+            final_path = find_image_file(image_path)
+            if final_path:
+                 try: thumb_img = Image.open(final_path).convert('RGBA')
+                 except: pass
+            
+            if thumb_img:
+                thumb_img.thumbnail((img_size, img_size))
+                # Circular or Rounded? Rounded.
+                mask = Image.new('L', thumb_img.size, 0)
+                draw_mask = ImageDraw.Draw(mask)
+                draw_mask.rounded_rectangle([(0,0), thumb_img.size], radius=8, fill=255)
+                # Paste
+                img.paste(thumb_img, (img_x, img_y), mask)
             else:
-                 # No image placeholder
-                 draw.rectangle((img_x, current_y, img_x + 90, current_y + 90), fill=(50, 50, 50))
-                 draw.text((img_x + 45, current_y + 45), "No Img", font=small_font, fill=(150, 150, 150), anchor="mm")
+                # Placeholder
+                draw.rounded_rectangle([(img_x, img_y), (img_x+img_size, img_y+img_size)], radius=8, fill=(40,45,50))
+                draw.text((img_x+10, img_y+20), "IMG", font=small_font, fill=COLOR_TEXT_GREY)
 
-            # Product Name & Details (Right aligned text, to the left of image)
-            text_x = img_x - 20 
-            draw.text((text_x, current_y + 10), prod_name, font=bold_font, fill=TEXT_COLOR, anchor="rt")
+            # Name (Right)
+            # Make sure it doesn't overlap left thumbnail
+            # right_margin=20 is standard.
+            draw_text_rtl(draw, f"{name}", current_y, normal_font, COLOR_TEXT_WHITE, right_margin=20, canvas_width=WIDTH)
             
-            # Qty & Price
-            detail_text = f"{qty} x {price:,.0f} د.ع"
-            draw.text((text_x, current_y + 50), detail_text, font=regular_font, fill=(200, 200, 200), anchor="rt")
+            # Subtext (Qty/Price) - Below Name or Next to it?
+            # User wants "lines".
+            # Let's put price under name, aligned right? Use existing Left alignment?
+            # Existing: draw.text((110, ...)) -> Left of thumbnail.
+            # Let's align Price to Left (near thumbnail)
             
-            # Total for item (Left aligned)
-            item_total = qty * price
-            draw.text((PADDING + 20, current_y + 35), f"{item_total:,.0f}", font=bold_font, fill=ACCENT_COLOR, anchor="lt")
-
-            current_y += ITEM_HEIGHT
+            total_item = qty * float(price)
+            subtext = f"{qty}x | {float(price):,.0f}"
+            draw.text((img_x + img_size + 15, current_y + 15), subtext, font=small_font, fill=COLOR_ACCENT)
             
-        if len(items) > DISPLAY_LIMIT:
-            remaining = len(items) - DISPLAY_LIMIT
-            draw.text((WIDTH // 2, current_y), f"+ {remaining} منتجات أخرى...", font=regular_font, fill=(150, 150, 150), anchor="mt")
-            current_y += 50
+            current_y += 80
             
-        # --- FOOTER ---
-        # Total Box
-        # draw.rectangle((PADDING, current_y + 10, WIDTH - PADDING, current_y + 80), fill=ACCENT_COLOR)
-        draw.line((PADDING, current_y, WIDTH - PADDING, current_y), fill=(60, 60, 60), width=2)
-        current_y += 30
+            # Separator
+            draw.line([(img_x + img_size + 15, current_y-10), (WIDTH-20, current_y-10)], fill=(40, 45, 50), width=1)
+            
         
-        draw.text((WIDTH - PADDING, current_y + 10), "المجموع الكلي:", font=title_font, fill=TEXT_COLOR, anchor="rt")
-        draw.text((PADDING, current_y + 10), f"{total_amount:,.0f} د.ع", font=title_font, fill=PRICE_COLOR, anchor="lt")
+        # 6. Summary Layout (Bottom)
+        # In Footer Area
         
-        # Output to BytesIO
-        output = io.BytesIO()
-        img.save(output, format='PNG')
-        output.seek(0)
-        return output
+        # Total Price Only (Centered/Right)
+        total_val = order_details[3]
+        total_txt = f"💰 {int(total_val):,}" 
+        # Draw Center? Or Right?
+        draw_text_rtl(draw, total_txt, FOOTER_Y + 30, title_font, COLOR_ACCENT, right_margin=20, canvas_width=WIDTH)
+        
+        bio = io.BytesIO()
+        img.save(bio, 'PNG')
+        bio.seek(0)
+        return bio
 
     except Exception as e:
-        print(f"⚠️ Error generating receipt image: {e}")
+        print(f"Card Gen Error: {e}")
         import traceback
         traceback.print_exc()
         return None

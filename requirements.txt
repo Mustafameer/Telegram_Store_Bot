@@ -1,6 +1,7 @@
 pyTelegramBotAPI==4.15.4
 psycopg2-binary
-
-
-# Force rebuild 1
+requests
 Pillow
+arabic-reshaper
+python-bidi
+python-dotenv

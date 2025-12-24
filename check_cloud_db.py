@@ -6,6 +6,9 @@ import sys
 # Set Envs from run_cloud.bat
 os.environ['DATABASE_URL'] = "postgresql://postgres:bqcTJxNXLgwOftDoarrtmjmjYWurEIEh@switchback.proxy.rlwy.net:20266/railway"
 
+# Fix Encoding
+sys.stdout.reconfigure(encoding='utf-8')
+
 def check_postgres():
     db_url = os.environ.get('DATABASE_URL')
     print(f"Connecting to: {db_url.split('@')[1]}")
@@ -14,27 +17,30 @@ def check_postgres():
         conn = psycopg2.connect(db_url)
         cursor = conn.cursor()
         
-        print("\n--- Sellers Data ---")
+        print("\n--- OrderItems Data ---")
         try:
-            cursor.execute("SELECT SellerID, TelegramID, UserName, StoreName, Status FROM Sellers")
-            sellers = cursor.fetchall()
-            if not sellers:
-                print("No sellers found.")
-            else:
-                for s in sellers:
-                    print(s)
+             cursor.execute("SELECT * FROM OrderItems")
+             items = cursor.fetchall()
+             if not items:
+                 print("⚠️ OrderItems Table is EMPTY!")
+             else:
+                 for i in items:
+                     print(f"✅ Item: {i}")
         except Exception as e:
-            print(f"Error fetching sellers: {e}")
+            print(f"Error fetching items: {e}")
 
-        print("\n--- Users (Admins) ---")
+        print("\n--- ALL User Functions ---")
         try:
-            cursor.execute("SELECT * FROM Users WHERE UserType = 'bot_admin'")
-            admins = cursor.fetchall()
-            print(f"Found {len(admins)} admins.")
-            for admin in admins:
-                print(admin)
+             cursor.execute("""
+                SELECT routine_name, routine_definition 
+                FROM information_schema.routines 
+                WHERE routine_schema = 'public'
+             """)
+             routines = cursor.fetchall()
+             for r in routines:
+                 print(f"📜 Function {r[0]}:\n{r[1]}\n----------------")
         except Exception as e:
-            print(f"Error checking users: {e}")
+             print(f"Error fetching functions: {e}")
 
         conn.close()
         

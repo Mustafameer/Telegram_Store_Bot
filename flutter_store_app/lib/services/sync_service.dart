@@ -62,8 +62,8 @@ class SyncService {
     
     _isSyncing = true;
     _isSyncing = true;
-    _statusController.add("جاري بدء المزامنة (رفع البيانات)...");
-    print("☁️ Starting Push Sync...");
+    _statusController.add("جاري بدء المزامنة (رفع البيانات) - v2...");
+    print("☁️ Starting Push Sync (v2 Fixed)...");
 
     Connection? conn;
     try {
@@ -128,7 +128,10 @@ class SyncService {
              await conn.execute(Sql.named('DELETE FROM Messages WHERE OrderID = @id'), parameters: {'id': remoteId});
           } else if (table == 'Products') {
              remoteTable = 'Products';
-             remoteKey = 'ProductID';
+             remoteKey = 'ProductID'; // Remote is ProductID
+          } else if (table == 'OrderItems') {
+             remoteTable = 'OrderItems';
+             remoteKey = 'orderitemid'; // Remote is orderitemid
           }
           
           final result = await conn.execute(
@@ -162,6 +165,7 @@ class SyncService {
     
     _isSyncing = true; 
     print("☁️ Starting Startup Sync (Pull All & Prune)...");
+    print("🚀 SYNC SERVICE VERSION: 3.0 (Lowercase Keys Fix)");
     _statusController.add("جاري بدء المزامنة التلقائية (سحب)...");
 
     Connection? conn;
@@ -215,7 +219,7 @@ class SyncService {
 
   Future<void> _pushAllInventory(Connection conn, DatabaseHelper dbHelper) async {
       // Sellers
-      await _pushTable(conn, dbHelper, 'Sellers', 'Sellers', 'SellerID', {
+      await _pushTable(conn, dbHelper, 'Sellers', 'Sellers', 'sellerid', {
         'SellerID': 'sellerid',
         'TelegramID': 'telegramid',
         'UserName': 'username',
@@ -225,7 +229,7 @@ class SyncService {
         'ImagePath': 'imagepath'
       });
       // Categories
-      await _pushTable(conn, dbHelper, 'Categories', 'Categories', 'CategoryID', {
+      await _pushTable(conn, dbHelper, 'Categories', 'Categories', 'categoryid', {
         'CategoryID': 'categoryid',
         'SellerID': 'sellerid',
         'Name': 'name',
@@ -233,7 +237,7 @@ class SyncService {
         'ImagePath': 'imagepath'
       });
       // Products
-      await _pushTable(conn, dbHelper, 'Products', 'Products', 'ProductID', {
+      await _pushTable(conn, dbHelper, 'Products', 'Products', 'productid', {
         'ProductID': 'productid',
         'SellerID': 'sellerid',
         'CategoryID': 'categoryid',
@@ -249,7 +253,7 @@ class SyncService {
 
   Future<void> _pushAllOrders(Connection conn, DatabaseHelper dbHelper) async {
       // Orders
-      await _pushTable(conn, dbHelper, 'Orders', 'Orders', 'OrderID', {
+      await _pushTable(conn, dbHelper, 'Orders', 'Orders', 'orderid', {
         'OrderID': 'orderid',
         'BuyerID': 'buyerid',
         'SellerID': 'sellerid',
@@ -263,17 +267,23 @@ class SyncService {
       });
 
       // OrderItems
-      await _pushTable(conn, dbHelper, 'OrderItems', 'OrderItems', 'OrderItemID', {
-        'OrderItemID': 'itemid', // Corrected from ItemID
-        'OrderID': 'orderid',
-        'ProductID': 'productid',
-        'Quantity': 'quantity',
-        'Price': 'price'
-      });
+      try {
+          await _pushTable(conn, dbHelper, 'OrderItems', 'OrderItems', 'orderitemid', {
+            'OrderItemID': 'orderitemid',
+            'OrderID': 'orderid',
+            'ProductID': 'productid',
+            'Quantity': 'quantity',
+            'Price': 'price'
+          });
+      } catch (e) {
+          print("❌ CRITICAL ERROR SYNCING ORDER ITEMS: $e");
+          _statusController.add("فشل مزامنة عناصر الطلب: $e");
+      }
   }
 
   // Full Migration (Local -> Remote)
   Future<void> uploadFullDatabase() async {
+    // ... (rest of method seems fine or we assume it calls _pushAll* methods)
     if (_isSyncing) return;
     _isSyncing = true;
     _statusController.add("Starting Full Migration...");
@@ -311,7 +321,7 @@ class SyncService {
       await conn.execute("SELECT setval('categories_categoryid_seq', COALESCE((SELECT MAX(CategoryID) FROM Categories), 1))");
       await conn.execute("SELECT setval('products_productid_seq', COALESCE((SELECT MAX(ProductID) FROM Products), 1))");
       await conn.execute("SELECT setval('orders_orderid_seq', COALESCE((SELECT MAX(OrderID) FROM Orders), 1))");
-      await conn.execute("SELECT setval('orderitems_itemid_seq', COALESCE((SELECT MAX(ItemID) FROM OrderItems), 1))");
+      await conn.execute("SELECT setval('orderitems_orderitemid_seq', COALESCE((SELECT MAX(OrderItemID) FROM OrderItems), 1))");
       print("✅ Sequences Reset");
     } catch (e) {
       print("⚠️ Sequence Reset Failed (ignorable if tables empty): $e");
@@ -358,8 +368,8 @@ class SyncService {
          'userid': 'UserID',
          'telegramid': 'TelegramID',
          'username': 'UserName',
-         'phonenumber': 'PhoneNumber', // Removed 'UserType', not in DB creation usually for simple sync? Or add it.
-         'fullname': 'FullName',       // Also removed UserType from creation sql below?
+         'phonenumber': 'PhoneNumber', 
+         'fullname': 'FullName',       
          'createdat': 'CreatedAt'
       });
        // Orders
@@ -367,7 +377,7 @@ class SyncService {
          'orderid': 'OrderID',
          'buyerid': 'BuyerID',
          'sellerid': 'SellerID',
-         'total': 'Total', // Key is remote col, Value is local col
+         'total': 'Total', 
          'status': 'Status',
          'createdat': 'CreatedAt',
          'deliveryaddress': 'DeliveryAddress',
@@ -376,8 +386,8 @@ class SyncService {
          'fullypaid': 'FullyPaid'
       }, prune: prune);
        // Order Items
-      await _syncTable(conn, dbHelper, 'OrderItems', 'itemid', {
-         'itemid': 'OrderItemID',
+      await _syncTable(conn, dbHelper, 'OrderItems', 'orderitemid', {
+         'orderitemid': 'OrderItemID',
          'orderid': 'OrderID',
          'productid': 'ProductID',
          'quantity': 'Quantity',
@@ -430,7 +440,7 @@ class SyncService {
 
   Future<void> _pushAllMessages(Connection conn, DatabaseHelper dbHelper) async {
        // Messages
-       await _pushTable(conn, dbHelper, 'Messages', 'Messages', 'MessageID', {
+       await _pushTable(conn, dbHelper, 'Messages', 'Messages', 'messageid', {
             'MessageID': 'messageid',
             'OrderID': 'orderid',
             'SellerID': 'sellerid',
@@ -441,14 +451,14 @@ class SyncService {
        });
        
        // Credits
-       await _pushTable(conn, dbHelper, 'CreditCustomers', 'CreditCustomers', 'CustomerID', {
+       await _pushTable(conn, dbHelper, 'CreditCustomers', 'CreditCustomers', 'customerid', {
           'CustomerID': 'customerid',
           'SellerID': 'sellerid',
           'FullName': 'fullname',
           'PhoneNumber': 'phonenumber',
           'CreatedAt': 'createdat'
        });
-       await _pushTable(conn, dbHelper, 'CustomerCredit', 'CustomerCredit', 'CreditID', {
+       await _pushTable(conn, dbHelper, 'CustomerCredit', 'CustomerCredit', 'creditid', {
           'CreditID': 'creditid',
           'CustomerID': 'customerid',
           'SellerID': 'sellerid',
@@ -619,10 +629,21 @@ class SyncService {
         // Build Upsert Query
         final keys = pgMap.keys.toList();
         final values = keys.map((k) => '@$k').toList();
-        final updateSet = keys.map((k) => '$k = EXCLUDED.$k').join(', ');
+        // Quote identifiers to be safe
+        final quotedKeys = keys.map((k) => '"$k"').toList();
+        final updateSet = keys.map((k) => '"$k" = EXCLUDED."$k"').join(', ');
         
-        final sql = 'INSERT INTO $pgTableName (${keys.join(', ')}) VALUES (${values.join(', ')}) '
-                    'ON CONFLICT ($pgPrimaryKey) DO UPDATE SET $updateSet';
+        // Ensure Primary Key is also quoted if we use it in conflict
+        final quotedPK = '"$pgPrimaryKey"'; 
+        
+        final sql = 'INSERT INTO $pgTableName (${quotedKeys.join(', ')}) VALUES (${values.join(', ')}) '
+                    'ON CONFLICT ($quotedPK) DO UPDATE SET $updateSet';
+        
+        // DEBUG LOGGING
+        if (localTableName == 'OrderItems') {
+           print("🛠️ DEBUG SQL: $sql");
+           print("🛠️ DEBUG KEYS: $keys");
+        }
         
         await conn.execute(Sql.named(sql), parameters: pgMap);
       }
@@ -801,7 +822,7 @@ class SyncService {
       // 6. OrderItems
       await conn.execute('''
         CREATE TABLE IF NOT EXISTS OrderItems (
-          ItemID SERIAL PRIMARY KEY,
+          OrderItemID SERIAL PRIMARY KEY,
           OrderID INTEGER,
           ProductID INTEGER,
           Quantity INTEGER,

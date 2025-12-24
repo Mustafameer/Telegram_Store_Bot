@@ -9,7 +9,7 @@ IS_POSTGRES = os.environ.get('DATABASE_URL') is not None
 DATABASE_URL = os.environ.get('DATABASE_URL')
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
-DB_FILE = os.path.join(DATA_DIR, "store.db")
+DB_FILE = os.path.join(DATA_DIR, "store_local_new.db")
 
 def get_connection():
     """Returns a raw database connection (Postgres or SQLite)."""

@@ -124,272 +124,311 @@ class _OrdersTabState extends State<OrdersTab> {
   }
 
   Widget _buildOrderCard(BuildContext context, Order order) {
-    // Determine status color and icon
-    Color statusColor = Colors.grey;
-    IconData statusIcon = Icons.help_outline;
-    String statusText = order.status;
+    bool isPending = order.status.toLowerCase() == 'pending';
+    
+    // Colors based on Mockup (Dark Theme aesthetics)
+    Color cardBg = const Color(0xFF1E1E1E); // Dark Grey/Black
+    Color headerBg;
+    Color statusTextColor;
+    IconData statusIcon;
 
     switch (order.status.toLowerCase()) {
       case 'pending':
-        statusColor = Colors.orange;
+        headerBg = const Color(0xFF3E3014); // Dark Brown/Goldish
+        statusTextColor = const Color(0xFFFFA000); // Amber
         statusIcon = Icons.hourglass_top;
-        statusText = 'قيد الانتظار';
         break;
       case 'confirmed':
       case 'accepted':
-        statusColor = Colors.blue;
+        headerBg = const Color(0xFF0D2536); // Dark Blue
+        statusTextColor = Colors.lightBlueAccent;
         statusIcon = Icons.check_circle_outline;
-        statusText = 'تم التأكيد (تجهيز)';
         break;
       case 'shipped':
-        statusColor = Colors.teal;
+        headerBg = const Color(0xFF0F2E22); // Dark Teal
+        statusTextColor = Colors.tealAccent;
         statusIcon = Icons.local_shipping;
-        statusText = 'تم الشحن';
         break;
       case 'delivered':
-        statusColor = Colors.green;
+        headerBg = const Color(0xFF1B331B); // Dark Green
+        statusTextColor = Colors.greenAccent;
         statusIcon = Icons.card_giftcard;
-        statusText = 'تم التسليم';
         break;
-      case 'rejected':
-      case 'cancelled':
-        statusColor = Colors.red;
+      default:
+        headerBg = const Color(0xFF2C1B1B); // Dark Red
+        statusTextColor = Colors.redAccent;
         statusIcon = Icons.cancel_outlined;
-        statusText = 'ملغي / مرفوض';
-        break;
     }
 
     return Card(
-      clipBehavior: Clip.antiAlias,
+      color: cardBg,
       elevation: 4,
-      shadowColor: Colors.black26,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: () {
-          // Show Details
-          _showOrderDetails(order);
-        },
+        onTap: () => _showOrderDetails(order),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-             // Status Header
-             Container(
-               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-               color: statusColor.withOpacity(0.15),
-               child: Row(
-                 children: [
-                   Icon(statusIcon, size: 20, color: statusColor),
+            // 1. Header
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: headerBg,
+              child: Row(
+                children: [
+                   // RTL: Start from Right
+                   // Status Icon (Rightmost)
+                   Icon(statusIcon, color: statusTextColor, size: 20),
                    const SizedBox(width: 8),
+                   // Status Text
                    Expanded(
                      child: Text(
-                       statusText,
+                       _translateStatus(order.status),
                        style: TextStyle(
-                         color: statusColor,
+                         color: statusTextColor,
                          fontWeight: FontWeight.bold,
-                         fontSize: 14
+                         fontSize: 16,
+                         fontFamily: 'Cairo'
                        ),
                        overflow: TextOverflow.ellipsis,
                      ),
                    ),
+                   // Order ID (Leftmost)
                    Text(
                      '#${order.orderId}',
                      style: TextStyle(
-                       color: statusColor,
-                       fontWeight: FontWeight.w900,
+                       color: statusTextColor,
+                       fontWeight: FontWeight.bold,
+                       fontSize: 18,
+                       fontFamily: 'Cairo'
                      ),
-                   )
-                 ],
-               ),
-             ),
+                   ),
+                ],
+              ),
+            ),
 
-            // Content Section
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Date & Price
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _buildParsedDateRow(order.createdAt, order.notes),
-                            ],
-                          ),
-                        ),
-                        
-                        Container(
-                          margin: const EdgeInsets.only(right: 8), 
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: Colors.blue.shade50,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.blue.shade100)
-                          ),
-                          child: Text(
-                            '${order.total.toStringAsFixed(0)} د.ع',
-                            style: TextStyle(
-                              color: Colors.blue.shade900,
-                              fontWeight: FontWeight.w900,
-                              fontSize: 16,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    
-                    // Address / Notes
-                    if (order.deliveryAddress != null && order.deliveryAddress!.isNotEmpty)
-                       _buildInfoRow(Icons.location_on, order.deliveryAddress!, color: Colors.white),
+            // 2. Info Body
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                children: [
+                  // Row: Info (Right) vs Price (Left)
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start, 
+                    children: [
+                      // Info Column (Rightmost in RTL)
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start, // Align text to start (Right)
+                        children: [
+                           // Add direction ltr to numbers if needed, but here simple text
+                          _buildMockupRow(Icons.calendar_today, order.createdAt.split(' ').first),
+                          const SizedBox(height: 4),
+                          _buildMockupRow(Icons.phone_android, order.notes?.isNotEmpty == true ? order.notes! : '----------'), 
+                          const SizedBox(height: 4),
+                          _buildMockupRow(Icons.location_on, order.deliveryAddress ?? '---'),
+                        ],
+                      ),
+                      
+                      const Spacer(),
 
-                    const Divider(color: Colors.grey),
-                    
-                    // Order Content Check
-                    FutureBuilder<List<Map<String, dynamic>>>(
+                      // Total Price Pill (Leftmost in RTL)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE1F0FF), // Light Blue
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          '${order.total.toStringAsFixed(0)} د.ع', // d.a currency
+                          style: const TextStyle(
+                            color: Color(0xFF1565C0), // Dark Blue Text
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                            fontFamily: 'Cairo'
+                          ),
+                          textDirection: TextDirection.rtl,
+                        ),
+                      ),
+                    ],
+                  ),
+                  
+                  const SizedBox(height: 16),
+                  const Divider(color: Colors.white24, height: 1),
+                  const SizedBox(height: 16),
+
+                  // 3. Products List (Preview first 2)
+                  FutureBuilder<List<Map<String, dynamic>>>(
                       future: DatabaseHelper.instance.getItemsForOrder(order.orderId),
                       builder: (context, snapshot) {
-                        if (snapshot.connectionState == ConnectionState.waiting) {
-                          return const LinearProgressIndicator(minHeight: 2);
-                        }
-                        
-                        if (snapshot.hasError) {
-                           return Text('Error: ${snapshot.error}', style: const TextStyle(color: Colors.red, fontSize: 10));
-                        }
-
-                        if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                          return const Padding(
-                             padding: EdgeInsets.symmetric(vertical: 8),
-                             child: Center(child: Text('لا توجد منتجات (Empty List)', style: TextStyle(color: Colors.grey, fontSize: 12))),
-                          );
-                        }
-                        
-                        // Show first 2 items + "and X more"
+                        if (!snapshot.hasData || snapshot.data!.isEmpty) return const SizedBox.shrink();
                         final items = snapshot.data!;
+                        
                         return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            ...items.take(2).map((item) => Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 4.0),
-                              child: Row(
-                                children: [
-                                  // Product Thumbnail
-                                  Container(
-                                    width: 40, height: 40,
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(8),
-                                      color: Colors.grey[800],
-                                      image: item['ImagePath'] != null && File(item['ImagePath']).existsSync()
-                                          ? DecorationImage(
-                                              image: FileImage(File(item['ImagePath'])),
-                                              fit: BoxFit.cover
-                                            )
-                                          : null,
-                                    ),
-                                    child: item['ImagePath'] == null || !File(item['ImagePath']).existsSync()
-                                        ? const Icon(Icons.shopping_bag_outlined, size: 20, color: Colors.white54)
-                                        : null,
-                                  ),
-                                  const SizedBox(width: 10),
-                                  // Details
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          item['Name'] ?? 'Unknown', 
-                                          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
-                                          maxLines: 1, 
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                        Text(
-                                          "${item['Quantity']} x ${item['Price']} د.ع",
-                                          style: const TextStyle(color: Colors.grey, fontSize: 11),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  // Total Price for Item
-                                  Text(
-                                    "${(item['Price'] * item['Quantity']).toStringAsFixed(0)}", 
-                                    style: const TextStyle(color: Colors.blueAccent, fontSize: 14, fontWeight: FontWeight.bold), 
-                                  ),
-                                ],
-                              ),
-                            )),
-                            if (items.length > 2)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 4.0),
-                                child: Text(
-                                  "+ ${items.length - 2} منتجات أخرى...",
-                                  style: const TextStyle(color: Colors.grey, fontSize: 11, fontStyle: FontStyle.italic),
-                                ),
-                              )
+                             ...items.take(2).map((item) => Padding(
+                               padding: const EdgeInsets.only(bottom: 12.0),
+                               child: Row(
+                                 children: [
+                                   // Total Item Price (Left)
+                                   Text(
+                                     '${(item['Price'] * item['Quantity']).toStringAsFixed(0)}',
+                                     style: const TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold, fontSize: 16, fontFamily: 'Cairo'),
+                                   ),
+                                   
+                                   const Spacer(),
+
+                                   // Name & Qty (Right)
+                                   Column(
+                                     crossAxisAlignment: CrossAxisAlignment.end,
+                                     children: [
+                                       Text(
+                                         item['Name'] ?? '',
+                                         style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14, fontFamily: 'Cairo'),
+                                         maxLines: 1, overflow: TextOverflow.ellipsis,
+                                       ),
+                                       Text(
+                                         '${item['Price']} x ${item['Quantity']} د.ع', // Mockup format
+                                         style: const TextStyle(color: Colors.grey, fontSize: 12, fontFamily: 'Cairo'),
+                                       ),
+                                     ],
+                                   ),
+                                   
+                                   const SizedBox(width: 12),
+
+                                   // Image (Rightmost)
+                                   Container(
+                                     width: 48, height: 48,
+                                     decoration: BoxDecoration(
+                                       borderRadius: BorderRadius.circular(8),
+                                       border: Border.all(color: Colors.white12),
+                                       image: item['ImagePath'] != null && File(item['ImagePath']).existsSync()
+                                           ? DecorationImage(
+                                               image: FileImage(File(item['ImagePath'])),
+                                               fit: BoxFit.cover
+                                             )
+                                           : null,
+                                       color: Colors.grey[800]
+                                     ),
+                                     child: item['ImagePath'] == null ? const Icon(Icons.image, size: 20, color: Colors.white24) : null,
+                                   ),
+                                 ],
+                               ),
+                             )),
+                             
+                             if (items.length > 2)
+                               Align(
+                                 alignment: Alignment.centerRight,
+                                 child: Text(
+                                   '+ ${items.length - 2} المزيد...',
+                                   style: const TextStyle(color: Colors.grey, fontSize: 11, fontFamily: 'Cairo'),
+                                 ),
+                               ),
                           ],
                         );
                       }
+                  ),
+                ],
+              ),
+            ),
+            
+            const Spacer(),
+
+            // 4. Buttons (Footer)
+            // Only if Editable
+            if (widget.isEditable)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: Row(
+                  children: [
+                    // Delete Icon (Left)
+                    Container(
+                      decoration: BoxDecoration(
+                         borderRadius: BorderRadius.circular(8),
+                         // border: Border.all(color: Colors.red.withOpacity(0.5)),
+                      ),
+                      child: IconButton(
+                        onPressed: () => _deleteOrder(order.orderId),
+                        icon: const Icon(Icons.delete_outline, color: Colors.red, size: 28),
+                        tooltip: 'حذف',
+                      ),
                     ),
                     
-                    const Spacer(),
-
-                    // Actions
-                    if (widget.isEditable)
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                           // Confirm Button (Only if Pending)
-                           if (order.status.toLowerCase() == 'pending')
-                             Expanded(
-                               child: ElevatedButton.icon(
-                                 onPressed: () => _updateStatus(order, 'Confirmed'),
-                                 icon: const Icon(Icons.check, size: 18),
-                                 label: const Text('تأكيد'),
-                                 style: ElevatedButton.styleFrom(
-                                   backgroundColor: Colors.blue,
-                                   foregroundColor: Colors.white,
-                                   padding: const EdgeInsets.symmetric(vertical: 0)
-                                 ),
-                               ),
-                             ),
-                           
-                           // Ship Button (Only if Confirmed)
-                           if (order.status.toLowerCase() == 'confirmed' || order.status.toLowerCase() == 'accepted')
-                             Expanded(
-                               child: ElevatedButton.icon(
-                                 onPressed: () => _updateStatus(order, 'Shipped'),
-                                 icon: const Icon(Icons.local_shipping, size: 18),
-                                 label: const Text('شحن'),
-                                 style: ElevatedButton.styleFrom(
-                                   backgroundColor: Colors.teal,
-                                   foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(vertical: 0)
-                                 ),
-                               ),
-                             ),
-                             
-                           const SizedBox(width: 8),
-                           
-                           // Delete/Reject Button
-                           IconButton(
-                             onPressed: () => _deleteOrder(order.orderId),
-                             icon: const Icon(Icons.delete_outline, color: Colors.red),
-                             tooltip: 'حذف (إرجاع)',
-                           ),
-                        ],
+                    const SizedBox(width: 12),
+                    
+                    // Confirm / Action Button (Expanded)
+                    if (isPending)
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () => _updateStatus(order, 'Confirmed'),
+                          style: ElevatedButton.styleFrom(
+                             backgroundColor: const Color(0xFF2196F3), // Blue
+                             foregroundColor: Colors.white,
+                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)), // Pill shape
+                             padding: const EdgeInsets.symmetric(vertical: 12),
+                             elevation: 0,
+                          ),
+                          child: const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                               Text('تأكيد', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, fontFamily: 'Cairo')), 
+                               SizedBox(width: 8),
+                               Icon(Icons.check, size: 22),
+                            ],
+                          ),
+                        ),
                       )
+                    else if (order.status.toLowerCase() == 'confirmed')
+                       Expanded(
+                        child: ElevatedButton(
+                          onPressed: () => _updateStatus(order, 'Shipped'),
+                          style: ElevatedButton.styleFrom(
+                             backgroundColor: Colors.teal, 
+                             foregroundColor: Colors.white,
+                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                             padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                          child: const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                               Text('شحن', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, fontFamily: 'Cairo')), 
+                               SizedBox(width: 8),
+                               Icon(Icons.local_shipping, size: 20),
+                            ],
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),
-            ),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildMockupRow(IconData icon, String text) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          text, 
+          style: const TextStyle(color: Colors.white, fontSize: 13, fontFamily: 'Cairo'),
+          maxLines: 1, overflow: TextOverflow.ellipsis,
+        ),
+        const SizedBox(width: 8),
+        Icon(icon, size: 16, color: Colors.grey),
+      ],
+    );
+  }
+
+  String _translateStatus(String status) {
+     switch (status.toLowerCase()) {
+       case 'pending': return 'قيد الانتظار';
+       case 'confirmed': return 'تم التأكيد';
+       case 'shipped': return 'تم الشحن';
+       case 'delivered': return 'تم التسليم';
+       case 'rejected': return 'مرفوض';
+       default: return status;
+     }
   }
 
   Future<void> _updateStatus(Order order, String status) async {

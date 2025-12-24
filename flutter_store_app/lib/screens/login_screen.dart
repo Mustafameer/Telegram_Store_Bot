@@ -1,4 +1,5 @@
 
+import 'package:window_manager/window_manager.dart'; // Add this
 import 'package:flutter/material.dart';
 import '../database/database_helper.dart';
 import '../models/database_models.dart';
@@ -6,6 +7,7 @@ import 'home_screen.dart';
 import 'server_settings_screen.dart';
 import 'store_detail_screen.dart';
 import '../services/sync_service.dart';
+import '../services/exit_service.dart'; // Add this
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -14,7 +16,7 @@ class LoginScreen extends StatefulWidget {
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> {
+class _LoginScreenState extends State<LoginScreen> with WindowListener {
   final TextEditingController _idController = TextEditingController();
   bool _isLoading = false;
   String _errorMessage = '';
@@ -25,10 +27,27 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void initState() {
     super.initState();
+    windowManager.addListener(this);
+    _initWindowCloseHandler();
     // Start Sync Immediately on Launch (Startup Sync)
     WidgetsBinding.instance.addPostFrameCallback((_) {
        SyncService.instance.startSyncTimer();
     });
+  }
+  
+  Future<void> _initWindowCloseHandler() async {
+    await windowManager.setPreventClose(true);
+  }
+
+  @override
+  void dispose() {
+    windowManager.removeListener(this);
+    super.dispose();
+  }
+
+  @override
+  void onWindowClose() {
+    ExitService.startExitFlow(context);
   }
 
   Future<void> _login() async {
@@ -102,12 +121,18 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Center(
-        child: SingleChildScrollView(
-          child: Container(
-            constraints: const BoxConstraints(maxWidth: 400),
-            padding: const EdgeInsets.all(24),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        await ExitService.startExitFlow(context);
+      },
+      child: Scaffold(
+        body: Center(
+          child: SingleChildScrollView(
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 400),
+              padding: const EdgeInsets.all(24),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -183,6 +208,7 @@ class _LoginScreenState extends State<LoginScreen> {
             );
           },
         ),
+      ),
       ),
     );
   }

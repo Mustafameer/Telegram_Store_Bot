@@ -4,10 +4,12 @@ import 'dart:io';
 import 'dart:async';
 import 'package:file_picker/file_picker.dart';
 
+import 'package:window_manager/window_manager.dart'; // Add this
 import '../models/database_models.dart';
 import '../database/database_helper.dart';
 import '../services/telegram_service.dart';
 import '../services/sync_service.dart';
+import '../services/exit_service.dart'; // Add this
 import 'store_detail_screen.dart';
 import 'login_screen.dart';
 import 'cart_screen.dart';
@@ -31,7 +33,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WindowListener {
   int _selectedIndex = 0;
   bool _isExtended = true;
   StreamSubscription? _syncSub;
@@ -40,10 +42,12 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    windowManager.addListener(this);
+    _initWindowCloseHandler();
     _refreshCounts();
     // ... existing init code ...
     _syncSub = SyncService.instance.statusStream.listen((msg) {
-      // ... existing listener ...
+      // ... same listener ...
       if (msg.contains('Failed') || msg.contains('Error') || msg.toLowerCase().contains('fatal')) {
           showDialog(
             context: context,
@@ -82,6 +86,22 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  Future<void> _initWindowCloseHandler() async {
+    await windowManager.setPreventClose(true);
+  }
+
+  @override
+  void dispose() {
+    windowManager.removeListener(this);
+    super.dispose();
+  }
+
+  @override
+  void onWindowClose() {
+    ExitService.startExitFlow(context);
+  }
+
+  @override
   Future<void> _refreshCounts() async {
     // Assuming main user/admin ID for now. In multi-user app, this would use logged-in ID.
     const targetId = 1041977029; 
@@ -128,9 +148,7 @@ class _HomeScreenState extends State<HomeScreen> {
      final selectedItem = destinations[index];
     
     if (selectedItem['isExit'] == true) {
-       Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (context) => const LoginScreen()),
-       );
+       ExitService.startExitFlow(context);
        return;
     }
     
@@ -152,9 +170,22 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Intercept Back Button on Root Screen
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        await ExitService.startExitFlow(context);
+      },
+      child: _buildScaffold(context), 
+    );
+  }
+
+  Widget _buildScaffold(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
     final bool isMobile = width < 900;
     final destinations = _getDestinations();
+
 
     if (isMobile) {
        return Scaffold(
