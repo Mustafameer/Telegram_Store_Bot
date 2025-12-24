@@ -8,7 +8,6 @@ load_dotenv()
 
 import re
 import sys
-import traceback
 from datetime import datetime
 from utils.receipt_generator import generate_order_card
 import base64
@@ -2376,140 +2375,16 @@ def process_search_order(message):
              types.InlineKeyboardButton("🚫 رفض", callback_data=f"setstatus_rejected_{order_id}")
         )
         
-# ====== بحث عن طلب (مُصلح) ======
-@bot.message_handler(func=lambda message: "🔍 بحث عن طلب" in message.text and is_seller(message.from_user.id))
-def handle_search_order_request(message):
-    try:
-        msg = bot.send_message(message.chat.id, "🔍 **بحث عن طلب**\n\nيرجى إدخال رقم الطلب (ID) للبحث عنه:", parse_mode='Markdown')
-        # Set state
-        user_states[message.from_user.id] = {'state': 'searching_order'}
-        bot.register_next_step_handler(msg, process_search_order)
-    except Exception as e:
-        print(f"Error in search request: {e}")
-        bot.send_message(message.chat.id, "⚠️ حدث خطأ في بدء عملية البحث.")
-
-def process_search_order(message):
-    try:
-        telegram_id = message.from_user.id
-        
-        # التحقق من أن المستخدم لا يزال في حالة البحث
-        if telegram_id not in user_states or user_states[telegram_id].get('state') != 'searching_order':
-            bot.send_message(message.chat.id, "⚠️ انتهت جلسة البحث. يرجى المحاولة مرة أخرى.")
-            return
-            
-        # مسح الحالة
-        if telegram_id in user_states:
-             del user_states[telegram_id]
-        
-        # Validate input
-        if not message.text or not message.text.strip().isdigit():
-            bot.send_message(message.chat.id, "⚠️ الرجاء إدخال رقم صحيح.")
-            return
-
-        order_id = int(message.text.strip())
-        seller = get_seller_by_telegram(telegram_id)
-        if not seller:
-            bot.send_message(message.chat.id, "⛔ أنت لست بائعاً مسجلاً!")
-            return
-
-        # التحقق من أن الطلب يتبع لهذا البائع
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT OrderID FROM Orders WHERE OrderID = ? AND SellerID = ?", (order_id, seller[0]))
-        order = cursor.fetchone()
-        conn.close()
-
-        if not order:
-            bot.send_message(message.chat.id, f"⚠️ الطلب #{order_id} غير موجود أو لا يتبع لمتجرك.")
-            return
-
-        # جلب تفاصيل الطلب
-        order_details, items = get_order_details(order_id)
-        
-        if not order_details:
-            bot.send_message(message.chat.id, "⚠️ خطأ في استرجاع بيانات الطلب.")
-            return
-            
-        # توليد بطاقة الطلب
-        try:
-            from utils.receipt_generator import generate_order_card
-            
-            # الحصول على معلومات المشتري والمتجر
-            buyer_name = order_details[11] or "زائر"
-            buyer_phone = order_details[12] or "غير متوفر"
-            store_name = order_details[14] or "متجرك"
-            
-            # توليد الصورة
-            card_img = generate_order_card(order_details, items, buyer_name, buyer_phone, store_name)
-            
-            # إنشاء أزرار التحكم
-            markup = types.InlineKeyboardMarkup(row_width=2)
-            
-            # زر الحذف
-            markup.add(types.InlineKeyboardButton(f"🗑️ حذف الطلب #{order_id}", callback_data=f"delete_order_{order_id}"))
-            
-            # أزرار تغيير الحالة
-            status_buttons = []
-            current_status = order_details[4]
-            
-            if current_status == 'Pending':
-                status_buttons.append(types.InlineKeyboardButton("✅ تأكيد", callback_data=f"confirm_order_{order_id}"))
-            elif current_status == 'Confirmed':
-                status_buttons.append(types.InlineKeyboardButton("🚚 شحن", callback_data=f"ship_order_{order_id}"))
-            elif current_status == 'Shipped':
-                status_buttons.append(types.InlineKeyboardButton("🎉 تسليم", callback_data=f"deliver_order_{order_id}"))
-            
-            status_buttons.append(types.InlineKeyboardButton("❌ رفض", callback_data=f"reject_order_{order_id}"))
-            
-            if status_buttons:
-                markup.row(*status_buttons)
-            
-            # إضافة زر للعودة
-            markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_menu"))
-            
-            if card_img:
-                card_img.name = f"order_{order_id}.png"
-                caption = f"🔎 **نتيجة البحث: الطلب #{order_id}**\n"
-                caption += f"📊 الحالة: {order_details[4]}\n"
-                caption += f"💰 الإجمالي: {order_details[3]:,.0f} دينار\n"
-                caption += f"📅 التاريخ: {str(order_details[5]).split()[0]}"
-                
-                bot.send_photo(message.chat.id, card_img, caption=caption, reply_markup=markup, parse_mode='Markdown')
-            else:
-                # Fallback to text إذا فشل توليد الصورة
-                text = f"🔎 **نتيجة البحث: الطلب #{order_id}**\n\n"
-                text += f"📊 الحالة: {order_details[4]}\n"
-                text += f"💰 الإجمالي: {order_details[3]:,.0f} دينار\n"
-                text += f"👤 المشتري: {buyer_name}\n"
-                text += f"📞 الهاتف: {buyer_phone}\n"
-                text += f"📅 التاريخ: {str(order_details[5]).split()[0]}\n"
-                
-                if order_details[6]:  # العنوان
-                    text += f"📍 العنوان: {order_details[6]}\n"
-                
-                text += f"\n📦 **المنتجات:**\n"
-                for item in items:
-                    product_name = item[8] if len(item) > 8 else "منتج"
-                    quantity = item[3]
-                    price = item[4]
-                    text += f"• {product_name} × {quantity} = {quantity * price:,.0f} دينار\n"
-                
-                bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode='Markdown')
-                
-        except Exception as e:
-            print(f"Error generating order card: {e}")
-            # عرض نص بديل في حالة الخطأ
-            bot.send_message(message.chat.id, 
-                           f"🔎 **الطلب #{order_id}**\n\n"
-                           f"📊 الحالة: {order_details[4]}\n"
-                           f"💰 الإجمالي: {order_details[3]:,.0f} دينار\n"
-                           f"⚠️ *ملاحظة:* تعذر عرض التفاصيل المرئية، يتم عرض النص فقط.",
-                           parse_mode='Markdown')
+        if card_img:
+            card_img.name = f"order_{order_id}.png"
+            bot.send_photo(message.chat.id, card_img, caption=f"🔎 **نتيجة البحث: الطلب #{order_id}**\nحالة الطلب: {order_details[4]}", reply_markup=markup, parse_mode='Markdown')
+        else:
+            bot.send_message(message.chat.id, f"🔎 **الطلب #{order_id}**\nالمجموع: {order_details[3]}", reply_markup=markup)
 
     except Exception as e:
         print(f"Error in process_search: {e}")
+        bot.send_message(message.chat.id, "حدث خطأ أثناء البحث.")
         traceback.print_exc()
-        bot.send_message(message.chat.id, "⚠️ حدث خطأ أثناء البحث. يرجى المحاولة مرة أخرى.")
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("delete_order_"))
