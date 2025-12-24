@@ -2464,18 +2464,14 @@ def handle_seller_orders_menu(message):
                     items_text += f"\n🛍️ *{p_name}*\n"
                     items_text += f"   {qty} x {price:,.0f} = {row_total:,.0f}\n" 
 
-            if not items_text:
-                items_text = ""
-
-            # ================= تصميم الرسالة النصية =================
-            # User Request: Text Message with Data + Delete on Ship
+            # ================= تصميم البطاقة + التفاصيل النصية =================
+            # User Want: Card Image + Full Details Text + Delete on Ship
             
-            # Status Icon
+            # 1. Build Text (Caption)
             status_ico = "⏳"
             if status == 'Confirmed': status_ico = "✅"
             if status == 'Shipped': status_ico = "🚚"
             
-            # Build Text
             msg_text = f"{status_ico} *طلب رقم #{oid}*\n"
             msg_text += f"📅 {date_fmt}\n"
             msg_text += f"👤 المشتري: {buyer}\n"
@@ -2494,9 +2490,8 @@ def handle_seller_orders_menu(message):
                     msg_text += f"- {bit_name} ({bit_qty}x) = {bit_total:,.0f}\n"
 
             msg_text += f"\n💰 *الإجمالي: {total:,.0f} د.ع*\n"
-            msg_text += "------------------------"
-
-            # Buttons
+            
+            # 2. Buttons
             markup = types.InlineKeyboardMarkup()
             actions_row = []
             
@@ -2505,14 +2500,43 @@ def handle_seller_orders_menu(message):
             elif status == 'Confirmed':
                  actions_row.append(types.InlineKeyboardButton("🚚 شحن (وحذف)", callback_data=f"ship_order_{oid}"))
             
-            # View Card Button (New)
-            actions_row.append(types.InlineKeyboardButton("📄 عرض البطاقة", callback_data=f"view_card_{oid}"))
-            
             markup.row(*actions_row)
             markup.add(types.InlineKeyboardButton("🗑️ حذف", callback_data=f"delete_order_{oid}"))
-            
-            # Send Text Message
-            bot.send_message(message.chat.id, msg_text, reply_markup=markup, parse_mode='Markdown')
+
+            # 3. Generate Card Image
+            try:
+                # Force Reload for Dev
+                import importlib
+                import utils.receipt_generator
+                importlib.reload(utils.receipt_generator)
+                from utils.receipt_generator import generate_order_card
+
+                # Construct Tuple
+                mock_order_details = (oid, 0, 0, total, status, date, address, notes)
+                
+                gen_items = []
+                for db_item in items:
+                    mk = [None]*15
+                    mk[3] = db_item[1] # Qty
+                    mk[4] = db_item[2] # Price
+                    mk[8] = db_item[0] # Name
+                    mk[10] = db_item[3] # Image
+                    mk[13] = db_item[3]
+                    gen_items.append(tuple(mk))
+                
+                # Generate
+                card_img = generate_order_card(mock_order_details, gen_items, buyer, phone, seller[3])
+                
+                if card_img:
+                    card_img.name = f"card_{oid}.png"
+                    bot.send_photo(message.chat.id, card_img, caption=msg_text, reply_markup=markup, parse_mode='Markdown')
+                else:
+                    raise Exception("Image generation returned None")
+
+            except Exception as e:
+                print(f"Card generation error: {e}")
+                # Fallback to Text Only
+                bot.send_message(message.chat.id, msg_text, reply_markup=markup, parse_mode='Markdown')
                 
         conn.close()
 
