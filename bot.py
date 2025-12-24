@@ -2259,8 +2259,20 @@ def show_seller_menu(message):
     # تحديث الشارة لتظهر عدد الطلبات المعلقة
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM Orders WHERE SellerID = ? AND Status IN ('Pending', 'Confirmed')", (seller[0],))
+    cursor.execute("SELECT COUNT(*) FROM Orders WHERE SellerID = ? AND Status IN ('Pending', 'Confirmed', 'Shipped')", (seller[0],))
     pending_count = cursor.fetchone()[0]
+    
+    # Self-Cleaning: Mark messages as read for processed orders (Shipped/Delivered/Rejected)
+    # This fixes "stuck" counters for orders processed before the previous fix or outside the flow.
+    cursor.execute("""
+        UPDATE Messages 
+        SET IsRead = 1 
+        WHERE SellerID = ? 
+          AND IsRead = 0 
+          AND OrderID IN (SELECT OrderID FROM Orders WHERE Status IN ('Shipped', 'Delivered', 'Rejected'))
+    """, (seller[0],))
+    if cursor.rowcount > 0:
+        conn.commit()
     
     cursor.execute("SELECT COUNT(*) FROM Messages WHERE SellerID = ? AND IsRead = 0", (seller[0],))
     unread_messages = cursor.fetchone()[0]
