@@ -242,12 +242,13 @@ def init_db():
     """)
 
     # 3. CreditCustomers (Depends on Sellers)
+    # Create table with nullable PhoneNumber first (for compatibility with existing data)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS CreditCustomers(
             CustomerID INTEGER PRIMARY KEY AUTOINCREMENT,
             SellerID INTEGER,
             FullName TEXT NOT NULL,
-            PhoneNumber TEXT NOT NULL,
+            PhoneNumber TEXT,
             CustomerType TEXT DEFAULT 'CreditCustomer',
             CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(SellerID, PhoneNumber),
@@ -257,16 +258,43 @@ def init_db():
     
     # Migration: Add CustomerType column if it doesn't exist
     try:
-        cursor.execute("SELECT CustomerType FROM CreditCustomers LIMIT 1")
-    except:
-        # Column doesn't exist, add it
+        if IS_POSTGRES:
+            # Check if CustomerType column exists in PostgreSQL
+            cursor.execute("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name='creditcustomers' AND column_name='customertype'
+            """)
+            result = cursor.fetchone()
+            if not result:
+                # Column doesn't exist, add it
+                print("🔄 Adding CustomerType column to CreditCustomers table...")
+                cursor.execute("ALTER TABLE CreditCustomers ADD COLUMN CustomerType TEXT DEFAULT 'CreditCustomer'")
+                # Update existing records
+                cursor.execute("UPDATE CreditCustomers SET CustomerType = 'CreditCustomer' WHERE CustomerType IS NULL")
+                conn.commit()
+                print("✅ CustomerType column added successfully")
+            else:
+                print("✅ CustomerType column already exists")
+        else:
+            # SQLite - Check if column exists by trying to select it
+            try:
+                cursor.execute("SELECT CustomerType FROM CreditCustomers LIMIT 1")
+                print("✅ CustomerType column already exists (SQLite)")
+            except:
+                # Column doesn't exist, add it
+                print("🔄 Adding CustomerType column to CreditCustomers table (SQLite)...")
+                cursor.execute("ALTER TABLE CreditCustomers ADD COLUMN CustomerType TEXT DEFAULT 'CreditCustomer'")
+                cursor.execute("UPDATE CreditCustomers SET CustomerType = 'CreditCustomer' WHERE CustomerType IS NULL")
+                conn.commit()
+                print("✅ CustomerType column added successfully (SQLite)")
+    except Exception as e:
+        print(f"⚠️ Migration warning (non-critical): {e}")
         try:
-            cursor.execute("ALTER TABLE CreditCustomers ADD COLUMN CustomerType TEXT DEFAULT 'CreditCustomer'")
-            cursor.execute("ALTER TABLE CreditCustomers ADD COLUMN PhoneNumber TEXT NOT NULL DEFAULT ''")
-            # Update existing records to have phone numbers if they don't
-            cursor.execute("UPDATE CreditCustomers SET PhoneNumber = 'غير محدد' WHERE PhoneNumber IS NULL OR PhoneNumber = ''")
+            conn.rollback()
         except:
-            pass  # Column might already exist or migration not needed
+            pass
+        # Don't fail the entire init if migration fails
 
     # 4. CreditLimits (Depends on CreditCustomers, Sellers)
     # Using DEFAULT TRUE for Postgres compatibility
@@ -477,7 +505,7 @@ def init_db():
     conn.commit()
     conn.close()
 
-init_db()
+# Note: init_db() is called in if __name__ == "__main__" block, not here
 
 def check_and_fix_db():
     # ... logic skipped ...
