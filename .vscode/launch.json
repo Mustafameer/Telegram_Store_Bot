@@ -4,14 +4,35 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
-        {"name":"Python Debugger: Current File with Arguments","type":"debugpy","request":"launch","program":"${file}","console":"integratedTerminal","args":"${command:pickArgs}"},
-
+        {
+            "name": "تشغيل البوت (bot.py)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/bot.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "TELEGRAM_BOT_TOKEN": "8562406465:AAEudEf_n6ZDnMlVy_UTwJ7eG1hBdDb1Tgw",
+                "DATABASE_URL": "postgresql://postgres:bqcTJxNXLgwOftDoarrtmjmjYWurEIEh@switchback.proxy.rlwy.net:20266/railway",
+                "BOT_ADMIN_ID": "1041977029"
+            }
+        },
         {
             "name": "Python Debugger: Current File",
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
-            "console": "integratedTerminal"
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Python Debugger: Current File with Arguments",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": "${command:pickArgs}",
+            "cwd": "${workspaceFolder}"
         }
     ]
 }

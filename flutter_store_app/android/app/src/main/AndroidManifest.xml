@@ -1,6 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Internet permission for sync service -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    
     <application
-        android:label="flutter_store_app"
+        android:label="متجر تليجرام"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

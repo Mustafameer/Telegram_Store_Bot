@@ -14,16 +14,27 @@ class SyncService {
   SyncService._init();
 
 
+  /// Get the application's executable directory (where .exe is located)
+  String _getExecutableDirectory() {
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      final executablePath = Platform.resolvedExecutable;
+      return p.dirname(executablePath);
+    }
+    return Directory.current.path;
+  }
+
   // Constants
   Future<String> get _localImagesPath async {
     if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-       // Check parent directory first (Bot Integration)
-       final parentDir = Directory(p.join(Directory.current.parent.path, 'data', 'Images'));
+       final exeDir = _getExecutableDirectory();
+       // Check parent directory first (Bot Integration) - relative to executable directory
+       final parentDir = Directory(p.join(p.dirname(exeDir), 'data', 'Images'));
        if (await parentDir.exists()) {
           print("📂 Found Bot Images Directory: ${parentDir.path}");
           return parentDir.path;
        }
-       return p.join(Directory.current.path, 'data', 'Images');
+       // Use directory next to executable
+       return p.join(exeDir, 'data', 'Images');
     } else {
        final docs = await getApplicationDocumentsDirectory();
        return p.join(docs.path, 'Images');

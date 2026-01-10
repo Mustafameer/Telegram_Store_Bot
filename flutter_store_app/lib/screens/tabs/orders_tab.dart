@@ -2,8 +2,18 @@
 
 import 'package:flutter/material.dart';
 import 'dart:io';
+import 'package:intl/intl.dart';
 import '../../database/database_helper.dart';
 import '../../models/database_models.dart';
+
+// دالة لتنسيق المبالغ مع فاصلة الآلاف وإزالة الكسور
+String formatPrice(dynamic price) {
+  if (price == null) return '0';
+  final numValue = price is num ? price : double.tryParse(price.toString()) ?? 0;
+  final rounded = numValue.round();
+  final formatter = NumberFormat('#,###', 'ar');
+  return formatter.format(rounded);
+}
 
 class OrdersTab extends StatefulWidget {
   final int sellerId;
@@ -238,14 +248,14 @@ class _OrdersTabState extends State<OrdersTab> {
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Text(
-                          '${order.total.toStringAsFixed(0)} د.ع', // d.a currency
+                          '${formatPrice(order.total)} د.ع', // d.a currency
                           style: const TextStyle(
                             color: Color(0xFF1565C0), // Dark Blue Text
                             fontWeight: FontWeight.bold,
                             fontSize: 16,
                             fontFamily: 'Cairo'
                           ),
-                          textDirection: TextDirection.rtl,
+                          textAlign: TextAlign.right,
                         ),
                       ),
                     ],
@@ -270,7 +280,7 @@ class _OrdersTabState extends State<OrdersTab> {
                                  children: [
                                    // Total Item Price (Left)
                                    Text(
-                                     '${(item['Price'] * item['Quantity']).toStringAsFixed(0)}',
+                                     formatPrice(item['Price'] * item['Quantity']),
                                      style: const TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold, fontSize: 16, fontFamily: 'Cairo'),
                                    ),
                                    
@@ -286,7 +296,7 @@ class _OrdersTabState extends State<OrdersTab> {
                                          maxLines: 1, overflow: TextOverflow.ellipsis,
                                        ),
                                        Text(
-                                         '${item['Price']} x ${item['Quantity']} د.ع', // Mockup format
+                                         '${formatPrice(item['Price'])} x ${item['Quantity']} د.ع', // Mockup format
                                          style: const TextStyle(color: Colors.grey, fontSize: 12, fontFamily: 'Cairo'),
                                        ),
                                      ],
@@ -575,15 +585,15 @@ class _OrdersTabState extends State<OrdersTab> {
                               )
                             : const Icon(Icons.image, color: Colors.white54),
                         title: Text(item['Name'] ?? 'Unknown', style: const TextStyle(color: Colors.white)),
-                        subtitle: Text('${item['Price']} د.ع  x  ${item['Quantity']}', style: const TextStyle(color: Colors.white70)),
-                        trailing: Text('${(item['Price'] * item['Quantity']).toStringAsFixed(0)} د.ع', style: const TextStyle(color: Colors.greenAccent)),
+                        subtitle: Text('${formatPrice(item['Price'])} د.ع  x  ${item['Quantity']}', style: const TextStyle(color: Colors.white70)),
+                        trailing: Text('${formatPrice(item['Price'] * item['Quantity'])} د.ع', style: const TextStyle(color: Colors.greenAccent)),
                      )),
                      
                      const Divider(color: Colors.white24),
                      Align(
                        alignment: Alignment.centerLeft,
                        child: Text(
-                         'المجموع: ${order.total.toStringAsFixed(0)} د.ع',
+                         'المجموع: ${formatPrice(order.total)} د.ع',
                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blueAccent),
                        ),
                      )

@@ -11,8 +11,7 @@ class ExitService {
   /// Starts the exit flow using a non-dismissible dialog.
   /// 1. Syncs with Cloud
   /// 2. Closes Database
-  /// 3. Deletes Data Folder
-  /// 4. Exits App
+  /// 3. Exits App
   static Future<void> startExitFlow(BuildContext context) async {
     if (_isExiting) return;
     _isExiting = true;
@@ -37,7 +36,7 @@ class ExitService {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text("يتم الآن مزامنة البيانات وحذف الملفات المحلية لضمان الأمان."),
+                  const Text("يتم الآن مزامنة البيانات وإغلاق التطبيق."),
                   const SizedBox(height: 16),
                   StreamBuilder<String>(
                     stream: SyncService.instance.statusStream,
@@ -69,25 +68,8 @@ class ExitService {
       // Additional safety: give time for file locks to release
       await Future.delayed(const Duration(milliseconds: 500)); 
 
-      // 3. Delete Data Folder
-      final dataPath = await DatabaseHelper.instance.getDbPath().then((path) => p.dirname(path));
-      // Re-verify path to be safe (should be .../data)
-      // Check if it's the expected 'data' folder
-      if (dataPath.endsWith('data')) {
-          final dir = Directory(dataPath);
-          if (await dir.exists()) {
-             print("🚪 ExitFlow: Deleting Data Directory: ${dir.path}");
-             try {
-               await dir.delete(recursive: true);
-               print("🚪 ExitFlow: Data Deleted ✅");
-             } catch (e) {
-               print("❌ ExitFlow: Failed to delete data: $e");
-               // Try deleting contents if folder locked?
-             }
-          }
-      } else {
-         print("⚠️ ExitFlow: DB path weird, skipping delete to be safe: $dataPath");
-      }
+      // Note: Data folder is NOT deleted to preserve user data between sessions
+      print("🚪 ExitFlow: Data folder preserved for next session.");
 
     } catch (e) {
       print("❌ ExitFlow Error: $e");

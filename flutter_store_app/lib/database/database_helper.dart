@@ -20,16 +20,27 @@ class DatabaseHelper {
 
 
 
+  /// Get the application's executable directory (where .exe is located)
+  String _getExecutableDirectory() {
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      // Use Platform.resolvedExecutable to get the absolute path to the .exe
+      final executablePath = Platform.resolvedExecutable;
+      return p.dirname(executablePath);
+    }
+    return Directory.current.path;
+  }
+
   Future<String> getDbPath() async {
     Directory directory;
     if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-      // 1. Check Parent (Bot Shared)
-      final parentData = Directory(p.join(Directory.current.parent.path, 'data'));
+      final exeDir = _getExecutableDirectory();
+      // 1. Check Parent (Bot Shared) - relative to executable directory
+      final parentData = Directory(p.join(p.dirname(exeDir), 'data'));
       if (await parentData.exists()) {
          directory = parentData;
       } else {
-         // 2. Fallback to Local
-         directory = Directory(p.join(Directory.current.path, 'data'));
+         // 2. Fallback to Local - next to executable
+         directory = Directory(p.join(exeDir, 'data'));
       }
     } else {
       directory = await getApplicationDocumentsDirectory();
@@ -45,13 +56,15 @@ class DatabaseHelper {
     try {
       Directory directory;
       if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-          // Check Parent first
-          final parentData = Directory(p.join(Directory.current.parent.path, 'data'));
+          final exeDir = _getExecutableDirectory();
+          // Check Parent first - relative to executable directory
+          final parentData = Directory(p.join(p.dirname(exeDir), 'data'));
           if (await parentData.exists()) {
              directory = parentData;
              print("📂 Using Shared Data Directory: ${directory.path}");
           } else {
-             directory = Directory(p.join(Directory.current.path, 'data'));
+             // Use directory next to executable
+             directory = Directory(p.join(exeDir, 'data'));
              print("📂 Using App-Local Data Directory: ${directory.path}");
           }
       } else {
@@ -175,12 +188,14 @@ class DatabaseHelper {
 
       Directory directory;
       if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-        // Check Parent first
-        final parentImg = Directory(p.join(Directory.current.parent.path, 'data', 'Images'));
+        final exeDir = _getExecutableDirectory();
+        // Check Parent first - relative to executable directory
+        final parentImg = Directory(p.join(p.dirname(exeDir), 'data', 'Images'));
         if (await parentImg.exists()) {
            directory = parentImg;
         } else {
-           directory = Directory(p.join(Directory.current.path, 'data', 'Images'));
+           // Use directory next to executable
+           directory = Directory(p.join(exeDir, 'data', 'Images'));
         }
       } else {
         final docs = await getApplicationDocumentsDirectory();
@@ -234,7 +249,8 @@ class DatabaseHelper {
          final timestamp = DateTime.now().millisecondsSinceEpoch ~/ 1000;
          final uuidHex = const Uuid().v4().replaceAll('-', '');
          final fileName = '${timestamp}_$uuidHex.jpg';
-         final newPath = p.join(Directory.current.path, 'data', 'Images', fileName);
+         final exeDir = _getExecutableDirectory();
+         final newPath = p.join(exeDir, 'data', 'Images', fileName);
          
          // Ensure dir exists
          final dir = Directory(p.dirname(newPath));

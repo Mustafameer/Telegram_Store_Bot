@@ -32,8 +32,17 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
     super.initState();
     _nameController = TextEditingController(text: widget.product?.name ?? '');
     _descController = TextEditingController(text: widget.product?.description ?? '');
-    _priceController = TextEditingController(text: widget.product?.price.toString() ?? '');
-    _wholesalePriceController = TextEditingController(text: widget.product?.wholesalePrice?.toString() ?? '');
+    // عرض المبالغ كاملة بدون كسور
+    _priceController = TextEditingController(
+      text: widget.product?.price != null 
+          ? widget.product!.price.round().toString() 
+          : ''
+    );
+    _wholesalePriceController = TextEditingController(
+      text: widget.product?.wholesalePrice != null 
+          ? widget.product!.wholesalePrice!.round().toString() 
+          : ''
+    );
     _qtyController = TextEditingController(text: widget.product?.quantity.toString() ?? '');
     _imagePath = widget.product?.imagePath;
     _selectedCategoryId = widget.product?.categoryId;
@@ -94,11 +103,14 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final dialogWidth = (screenWidth < 600 ? screenWidth * 0.95 : 500.0).toDouble(); // عرض كامل على الموبايل
+    
     return AlertDialog(
       title: Text(widget.product == null ? 'إضافة منتج جديد' : 'تعديل المنتج'),
       content: SingleChildScrollView(
         child: Container(
-          width: 400,
+          width: dialogWidth,
           padding: const EdgeInsets.all(8),
           child: Form(
             key: _formKey,
@@ -142,35 +154,82 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
                   maxLines: 2,
                 ),
                 const SizedBox(height: 12),
-                  Row(
-                  children: [
-                    Expanded(
-                      child: TextFormField(
-                        controller: _priceController,
-                        decoration: const InputDecoration(labelText: 'سعر البيع', border: OutlineInputBorder()),
-                        keyboardType: TextInputType.number,
-                        validator: (v) => v!.isEmpty ? 'مطلوب' : null,
-                      ),
+                // على الموبايل: عمود واحد لكل حقل، على Desktop: صف واحد
+                MediaQuery.of(context).size.width < 600 
+                  ? Column(
+                      children: [
+                        TextFormField(
+                          controller: _priceController,
+                          decoration: const InputDecoration(
+                            labelText: 'سعر البيع', 
+                            border: OutlineInputBorder(),
+                            hintText: 'مثال: 2000',
+                          ),
+                          keyboardType: TextInputType.number,
+                          validator: (v) => v!.isEmpty ? 'مطلوب' : null,
+                          style: const TextStyle(fontSize: 16),
+                        ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: _wholesalePriceController,
+                          decoration: const InputDecoration(
+                            labelText: 'سعر الجملة', 
+                            border: OutlineInputBorder(),
+                            hintText: 'مثال: 1750',
+                          ),
+                          keyboardType: TextInputType.number,
+                          style: const TextStyle(fontSize: 16),
+                        ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: _qtyController,
+                          decoration: const InputDecoration(labelText: 'الكمية', border: OutlineInputBorder()),
+                          keyboardType: TextInputType.number,
+                          validator: (v) => v!.isEmpty ? 'مطلوب' : null,
+                          style: const TextStyle(fontSize: 16),
+                        ),
+                      ],
+                    )
+                  : Row(
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            controller: _priceController,
+                            decoration: const InputDecoration(
+                              labelText: 'سعر البيع', 
+                              border: OutlineInputBorder(),
+                              hintText: 'مثال: 2000',
+                            ),
+                            keyboardType: TextInputType.number,
+                            validator: (v) => v!.isEmpty ? 'مطلوب' : null,
+                            style: const TextStyle(fontSize: 16),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextFormField(
+                            controller: _wholesalePriceController,
+                            decoration: const InputDecoration(
+                              labelText: 'سعر الجملة', 
+                              border: OutlineInputBorder(),
+                              hintText: 'مثال: 1750',
+                            ),
+                            keyboardType: TextInputType.number,
+                            style: const TextStyle(fontSize: 16),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextFormField(
+                            controller: _qtyController,
+                            decoration: const InputDecoration(labelText: 'الكمية', border: OutlineInputBorder()),
+                            keyboardType: TextInputType.number,
+                            validator: (v) => v!.isEmpty ? 'مطلوب' : null,
+                            style: const TextStyle(fontSize: 16),
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: TextFormField(
-                        controller: _wholesalePriceController,
-                        decoration: const InputDecoration(labelText: 'سعر الجملة', border: OutlineInputBorder()),
-                        keyboardType: TextInputType.number,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: TextFormField(
-                        controller: _qtyController,
-                        decoration: const InputDecoration(labelText: 'الكمية', border: OutlineInputBorder()),
-                        keyboardType: TextInputType.number,
-                        validator: (v) => v!.isEmpty ? 'مطلوب' : null,
-                      ),
-                    ),
-                  ],
-                ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<int>(
                   value: _selectedCategoryId,

@@ -2,9 +2,19 @@
 
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import '../../database/database_helper.dart';
 import '../../models/database_models.dart';
 import '../components/product_form_dialog.dart';
+
+// دالة لتنسيق المبالغ مع فاصلة الآلاف وإزالة الكسور
+String formatPrice(dynamic price) {
+  if (price == null) return '0';
+  final numValue = price is num ? price : double.tryParse(price.toString()) ?? 0;
+  final rounded = numValue.round();
+  final formatter = NumberFormat('#,###', 'ar');
+  return formatter.format(rounded);
+}
 
 class ProductsTab extends StatefulWidget {
   final int sellerId;
@@ -180,7 +190,7 @@ class _ProductsTabState extends State<ProductsTab> {
         child: CustomScrollView(
           slivers: [
           SliverPadding(
-            padding: const EdgeInsets.all(16),
+            padding: EdgeInsets.all(MediaQuery.of(context).size.width < 600 ? 8 : 16),
             sliver: SliverMainAxisGroup(
               slivers: [
                 ..._categories.map((cat) {
@@ -212,11 +222,13 @@ class _ProductsTabState extends State<ProductsTab> {
                     },
                     childCount: productsInCat.length,
                   ),
-                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                    maxCrossAxisExtent: 250,
-                    childAspectRatio: 0.75,
-                    crossAxisSpacing: 16,
-                    mainAxisSpacing: 16,
+                  gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: MediaQuery.of(context).size.width < 600 
+                        ? (MediaQuery.of(context).size.width - 32) / 2  // Mobile: 2 columns مع padding
+                        : 250,  // Desktop: fixed size
+                    childAspectRatio: MediaQuery.of(context).size.width < 600 ? 0.52 : 0.61, // تقليل الارتفاع 1 سم من الأسفل
+                    crossAxisSpacing: MediaQuery.of(context).size.width < 600 ? 12 : 16,
+                    mainAxisSpacing: MediaQuery.of(context).size.width < 600 ? 12 : 16,
                   ),
                 ),
               ],
@@ -246,11 +258,13 @@ class _ProductsTabState extends State<ProductsTab> {
                 },
                 childCount: uncategorized.length,
               ),
-              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                maxCrossAxisExtent: 250,
-                childAspectRatio: 0.75,
-                crossAxisSpacing: 16,
-                mainAxisSpacing: 16,
+              gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                maxCrossAxisExtent: MediaQuery.of(context).size.width < 600 
+                    ? (MediaQuery.of(context).size.width - 32) / 2  // Mobile: 2 columns مع padding
+                    : 250,  // Desktop: fixed size
+                childAspectRatio: MediaQuery.of(context).size.width < 600 ? 0.52 : 0.61, // تقليل الارتفاع 1 سم من الأسفل
+                crossAxisSpacing: MediaQuery.of(context).size.width < 600 ? 12 : 16,
+                mainAxisSpacing: MediaQuery.of(context).size.width < 600 ? 12 : 16,
               ),
             ),
           ]
@@ -273,50 +287,120 @@ class _ProductsTabState extends State<ProductsTab> {
     return Card(
       clipBehavior: Clip.antiAlias,
       elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(
-            child: product.imagePath != null && File(product.imagePath!).existsSync()
-                ? Image.file(File(product.imagePath!), fit: BoxFit.cover)
-                : Container(
-                    color: Colors.grey[100],
-                    child: Icon(Icons.image, size: 50, color: Colors.grey[400]),
-                  ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(12.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  product.name,
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+          // Image Section - أكبر مساحة وأفضل عرض
+          AspectRatio(
+            aspectRatio: 1.0, // مربع مثالي للصورة
+            child: Container(
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(12),
+                  topRight: Radius.circular(12),
                 ),
-                const SizedBox(height: 4),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      '${product.price} د.ع',
-                      style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold),
+              ),
+              child: product.imagePath != null && File(product.imagePath!).existsSync()
+                  ? ClipRRect(
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(12),
+                        topRight: Radius.circular(12),
+                      ),
+                      child: Image.file(
+                        File(product.imagePath!),
+                        fit: BoxFit.cover,
+                        width: double.infinity,
+                        height: double.infinity,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Container(
+                            color: Colors.grey[200],
+                            child: const Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.broken_image, size: 40, color: Colors.grey),
+                                SizedBox(height: 8),
+                                Text('خطأ في الصورة', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    )
+                  : Container(
+                      decoration: BoxDecoration(
+                        color: Colors.grey[100],
+                        borderRadius: const BorderRadius.only(
+                          topLeft: Radius.circular(12),
+                          topRight: Radius.circular(12),
+                        ),
+                      ),
+                      child: const Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.image, size: 50, color: Colors.grey),
+                          SizedBox(height: 8),
+                          Text('لا توجد صورة', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                        ],
+                      ),
                     ),
+            ),
+          ),
+          Flexible(
+            child: Padding(
+              padding: EdgeInsets.all(MediaQuery.of(context).size.width < 600 ? 10.0 : 12.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    product.name,
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold, 
+                      fontSize: MediaQuery.of(context).size.width < 600 ? 13 : 16
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 4,
+                    runSpacing: 4,
+                    children: [
+                      Text(
+                        '${formatPrice(product.price)} د.ع',
+                        style: TextStyle(
+                          color: Colors.blue, 
+                          fontWeight: FontWeight.bold,
+                          fontSize: MediaQuery.of(context).size.width < 600 ? 11 : 14
+                        ),
+                      ),
+                      Text(
+                        'الكمية: ${product.quantity}',
+                        style: TextStyle(
+                          fontSize: MediaQuery.of(context).size.width < 600 ? 10 : 12, 
+                          color: Colors.grey[600]
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (widget.isEditable && product.wholesalePrice != null) ...[
+                    const SizedBox(height: 6),
                     Text(
-                      'الكمية: ${product.quantity}',
-                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                      'جملة: ${formatPrice(product.wholesalePrice)} د.ع',
+                      style: TextStyle(
+                        fontSize: MediaQuery.of(context).size.width < 600 ? 10 : 12, 
+                        color: Colors.green, 
+                        fontWeight: FontWeight.bold
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
                     ),
                   ],
-                ),
-                if (widget.isEditable && product.wholesalePrice != null) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    'جملة: ${product.wholesalePrice} د.ع',
-                    style: const TextStyle(fontSize: 12, color: Colors.green, fontWeight: FontWeight.bold),
-                  ),
                 ],
-              ],
+              ),
             ),
           ),
           if (widget.isEditable)
@@ -340,13 +424,25 @@ class _ProductsTabState extends State<ProductsTab> {
             )
           else
             Padding(
-              padding: const EdgeInsets.all(8.0),
+              padding: EdgeInsets.all(MediaQuery.of(context).size.width < 600 ? 4.0 : 8.0),
               child: FilledButton.icon(
                 onPressed: () => _addToCart(product),
-                icon: const Icon(Icons.add_shopping_cart, size: 16),
-                label: const Text('أضف للسلة'),
+                icon: Icon(
+                  Icons.add_shopping_cart, 
+                  size: MediaQuery.of(context).size.width < 600 ? 14 : 16
+                ),
+                label: Text(
+                  'أضف للسلة',
+                  style: TextStyle(
+                    fontSize: MediaQuery.of(context).size.width < 600 ? 12 : 14
+                  ),
+                ),
                 style: FilledButton.styleFrom(
                   visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: MediaQuery.of(context).size.width < 600 ? 8 : 16,
+                    vertical: MediaQuery.of(context).size.width < 600 ? 4 : 8,
+                  ),
                 ),
               ),
             )

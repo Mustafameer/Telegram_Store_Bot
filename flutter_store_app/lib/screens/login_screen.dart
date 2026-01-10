@@ -1,13 +1,13 @@
-
-import 'package:window_manager/window_manager.dart'; // Add this
+import 'dart:io';
 import 'package:flutter/material.dart';
 import '../database/database_helper.dart';
 import '../models/database_models.dart';
 import 'home_screen.dart';
-import 'server_settings_screen.dart';
-import 'store_detail_screen.dart';
 import '../services/sync_service.dart';
-import '../services/exit_service.dart'; // Add this
+import '../services/exit_service.dart';
+
+// Conditional import for desktop-only features
+import 'package:window_manager/window_manager.dart' if (dart.library.html) 'dart:html' as window_manager;
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -16,7 +16,7 @@ class LoginScreen extends StatefulWidget {
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> with WindowListener {
+class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _idController = TextEditingController();
   bool _isLoading = false;
   String _errorMessage = '';
@@ -27,8 +27,18 @@ class _LoginScreenState extends State<LoginScreen> with WindowListener {
   @override
   void initState() {
     super.initState();
-    windowManager.addListener(this);
-    _initWindowCloseHandler();
+    
+    // Desktop-only window management
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      try {
+        window_manager.windowManager.addListener(_WindowListener(this));
+        _initWindowCloseHandler();
+      } catch (e) {
+        // window_manager not available, continue
+        print("Window manager not available: $e");
+      }
+    }
+    
     // Start Sync Immediately on Launch (Startup Sync)
     WidgetsBinding.instance.addPostFrameCallback((_) {
        SyncService.instance.startSyncTimer();
@@ -36,18 +46,35 @@ class _LoginScreenState extends State<LoginScreen> with WindowListener {
   }
   
   Future<void> _initWindowCloseHandler() async {
-    await windowManager.setPreventClose(true);
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      try {
+        await window_manager.windowManager.setPreventClose(true);
+      } catch (e) {
+        // Ignore on mobile
+      }
+    }
   }
 
   @override
   void dispose() {
-    windowManager.removeListener(this);
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      try {
+        window_manager.windowManager.removeListener(_WindowListener(this));
+      } catch (e) {
+        // Ignore on mobile
+      }
+    }
     super.dispose();
   }
-
-  @override
-  void onWindowClose() {
-    ExitService.startExitFlow(context);
+  
+  void _handleWindowClose() {
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      try {
+        ExitService.startExitFlow(context);
+      } catch (e) {
+        // Ignore on mobile
+      }
+    }
   }
 
   Future<void> _login() async {
@@ -121,64 +148,60 @@ class _LoginScreenState extends State<LoginScreen> with WindowListener {
 
   @override
   Widget build(BuildContext context) {
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, result) async {
-        if (didPop) return;
-        await ExitService.startExitFlow(context);
-      },
-      child: Scaffold(
-        body: Center(
+    Widget scaffold = Scaffold(
+      body: SafeArea(
+        child: Center(
           child: SingleChildScrollView(
             child: Container(
               constraints: const BoxConstraints(maxWidth: 400),
               padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Icon(Icons.storefront, size: 80, color: Color(0xFF2A9D8F)),
-                const SizedBox(height: 32),
-                Text(
-                  'تسجيل الدخول',
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: const Color(0xFF264653)
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 8),
-                 Text(
-                  'الرجاء إدخال معرف تليجرام الخاص بك',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.grey),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 32),
-                TextField(
-                  controller: _idController,
-                  decoration: InputDecoration(
-                    labelText: 'Telegram ID',
-                    prefixIcon: const Icon(Icons.perm_identity),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Icon(Icons.storefront, size: 80, color: Color(0xFF2A9D8F)),
+                  const SizedBox(height: 32),
+                  Text(
+                    'تسجيل الدخول',
+                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: const Color(0xFF264653)
                     ),
-                    errorText: _errorMessage.isNotEmpty ? _errorMessage : null,
+                    textAlign: TextAlign.center,
                   ),
-                  keyboardType: TextInputType.number,
-                  onSubmitted: (_) => _login(),
-                ),
-                const SizedBox(height: 24),
-                FilledButton(
-                  onPressed: _isLoading ? null : _login,
-                  style: FilledButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  const SizedBox(height: 8),
+                  Text(
+                    'الرجاء إدخال معرف تليجرام الخاص بك',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.grey),
+                    textAlign: TextAlign.center,
                   ),
-                  child: _isLoading 
-                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) 
-                      : const Text('دخول'),
-                ),
-              ],
+                  const SizedBox(height: 32),
+                  TextField(
+                    controller: _idController,
+                    decoration: InputDecoration(
+                      labelText: 'Telegram ID',
+                      prefixIcon: const Icon(Icons.perm_identity),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      errorText: _errorMessage.isNotEmpty ? _errorMessage : null,
+                    ),
+                    keyboardType: TextInputType.number,
+                    onSubmitted: (_) => _login(),
+                  ),
+                  const SizedBox(height: 24),
+                  FilledButton(
+                    onPressed: _isLoading ? null : _login,
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: _isLoading 
+                        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) 
+                        : const Text('دخول'),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -203,13 +226,47 @@ class _LoginScreenState extends State<LoginScreen> with WindowListener {
                 if (status.contains("Starting") || status.contains("Downloading") || status.contains("Pushing") || status.contains("Synchronizing"))
                    const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
                 const SizedBox(width: 8),
-                Text(status, style: TextStyle(color: statusColor, fontWeight: FontWeight.bold, fontSize: 12)),
+                Flexible(
+                  child: Text(
+                    status, 
+                    style: TextStyle(color: statusColor, fontWeight: FontWeight.bold, fontSize: 12),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
               ],
             );
           },
         ),
       ),
-      ),
     );
+    
+    // Wrap with PopScope only on desktop
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, result) async {
+          if (didPop) return;
+          try {
+            await ExitService.startExitFlow(context);
+          } catch (e) {
+            // Ignore on mobile
+          }
+        },
+        child: scaffold,
+      );
+    }
+    
+    return scaffold;
+  }
+}
+
+// Helper class for window listener (desktop only)
+class _WindowListener extends window_manager.WindowListener {
+  final _LoginScreenState _state;
+  _WindowListener(this._state);
+  
+  @override
+  void onWindowClose() {
+    _state._handleWindowClose();
   }
 }

@@ -6,11 +6,12 @@ import 'package:uuid/uuid.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/database_models.dart';
 
-class DatabaseHelper {
-  static final DatabaseHelper instance = DatabaseHelper._init();
+// Backup file - not used in production
+class DatabaseHelperBackup {
+  static final DatabaseHelperBackup instance = DatabaseHelperBackup._init();
   static Database? _localDatabase;
 
-  DatabaseHelper._init();
+  DatabaseHelperBackup._init();
 
   Future<Database> get database async {
     if (_localDatabase != null) return _localDatabase!;
@@ -726,11 +727,6 @@ class DatabaseHelper {
      return result.map((e) => Order.fromMap(e)).toList();
   }
   
-  Future<void> updateOrderStatus(int orderId, String status) async {
-    final db = await database;
-    await db.update('Orders', {'Status': status}, where: 'OrderID = ?', whereArgs: [orderId]);
-  }
-  
   Future<int> createOrder(int buyerId, int sellerId, double total, String address, String notes, List<Map<String, dynamic>> items) async {
     final db = await database;
     try {
@@ -860,8 +856,11 @@ class DatabaseHelper {
   }
 
   Future<void> clearDeletedItems(List<int> ids) async {
+    if (ids.isEmpty) return;
     final db = await database;
-    await db.delete('DeletedSync', where: 'ID IN (${ids.join(',')})');
+    // Use placeholders for safe SQL query
+    final placeholders = List.filled(ids.length, '?').join(',');
+    await db.rawDelete('DELETE FROM DeletedSync WHERE ID IN ($placeholders)', ids);
   }
   
   // --- Counts for Badges ---

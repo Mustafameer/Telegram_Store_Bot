@@ -864,6 +864,45 @@ def add_credit_customer(seller_id, full_name, phone_number):
         conn.close()
         return None
 
+def update_credit_customer(customer_id, seller_id, full_name=None, phone_number=None):
+    """تحديث بيانات زبون آجل"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        updates = []
+        params = []
+        
+        if full_name:
+            updates.append("FullName = ?" if not IS_POSTGRES else "FullName = %s")
+            params.append(full_name)
+        
+        if phone_number is not None:
+            updates.append("PhoneNumber = ?" if not IS_POSTGRES else "PhoneNumber = %s")
+            params.append(phone_number)
+        
+        if not updates:
+            conn.close()
+            return False
+        
+        params.append(customer_id)
+        params.append(seller_id)
+        
+        if IS_POSTGRES:
+            query = f"UPDATE CreditCustomers SET {', '.join(updates)} WHERE CustomerID = %s AND SellerID = %s"
+        else:
+            query = f"UPDATE CreditCustomers SET {', '.join(updates)} WHERE CustomerID = ? AND SellerID = ?"
+        
+        cursor.execute(query, params)
+        conn.commit()
+        success = cursor.rowcount > 0
+        conn.close()
+        return success
+    except Exception as e:
+        print(f"Error updating credit customer: {e}")
+        conn.close()
+        return False
+
 def get_credit_customer(seller_id, phone_number=None, full_name=None):
     """الحصول على زبون آجل بالهاتف أو الاسم"""
     conn = get_db_connection()
@@ -4866,7 +4905,10 @@ def manage_credit_customers(message):
         text += f"📅 تاريخ الإضافة: {created_at}\n"
         text += "────\n\n"
         
-        markup.add(types.InlineKeyboardButton(f"👤 {full_name[:10]}", callback_data=f"view_credit_customer_{customer_id}"))
+        markup.row(
+            types.InlineKeyboardButton(f"👤 {full_name[:10]}", callback_data=f"view_credit_customer_{customer_id}"),
+            types.InlineKeyboardButton("🗑️ حذف", callback_data=f"delete_credit_customer_{customer_id}")
+        )
     
     markup.add(types.InlineKeyboardButton("➕ إضافة زبون آجل", callback_data="add_credit_customer"))
     markup.add(types.InlineKeyboardButton("💳 إدارة الحدود", callback_data="manage_credit_limits"))
@@ -5156,6 +5198,348 @@ def handle_view_credit_customer(call):
     
     bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode='Markdown')
     bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("edit_credit_customer_"))
+def handle_edit_credit_customer(call):
+    try:
+        print(f"DEBUG: edit_credit_customer called with data: {call.data}")
+        customer_id = int(call.data.split("_")[3])
+        telegram_id = call.from_user.id
+        seller = get_seller_by_telegram(telegram_id)
+        
+        if not seller:
+            bot.answer_callback_query(call.id, "⛔ أنت لست بائعاً مسجلاً!")
+            return
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM CreditCustomers WHERE CustomerID=? AND SellerID=?", (customer_id, seller[0]))
+        customer = cursor.fetchone()
+        conn.close()
+        
+        if not customer:
+            bot.answer_callback_query(call.id, "الزبون غير موجود")
+            return
+        
+        customer_id, seller_id, full_name, phone, created_at = customer
+        
+        text = f"✏️ **تعديل بيانات الزبون الآجل**\n\n"
+        text += f"👤 **الاسم الحالي:** {full_name}\n"
+        text += f"📞 **الهاتف الحالي:** {phone if phone else 'غير محدد'}\n\n"
+        text += "اختر ما تريد تعديله:"
+        
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(types.InlineKeyboardButton("✏️ تعديل الاسم", callback_data=f"edit_customer_name_{customer_id}"))
+        markup.add(types.InlineKeyboardButton("📞 تعديل الهاتف", callback_data=f"edit_customer_phone_{customer_id}"))
+        markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data=f"view_credit_customer_{customer_id}"))
+        
+        chat_id = call.message.chat.id if call.message else call.from_user.id
+        bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        print(f"Error in handle_edit_credit_customer: {e}")
+        bot.answer_callback_query(call.id, "❌ حدث خطأ أثناء المعالجة")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("edit_customer_name_"))
+def handle_edit_customer_name(call):
+    try:
+        customer_id = int(call.data.split("_")[3])
+        telegram_id = call.from_user.id
+        seller = get_seller_by_telegram(telegram_id)
+        
+        if not seller:
+            bot.answer_callback_query(call.id, "⛔ أنت لست بائعاً مسجلاً!")
+            return
+        
+        user_states[telegram_id] = {
+            "step": "edit_customer_name",
+            "customer_id": customer_id,
+            "seller_id": seller[0]
+        }
+        
+        chat_id = call.message.chat.id if call.message else call.from_user.id
+        bot.send_message(chat_id, "✏️ **تعديل اسم الزبون**\n\nيرجى إدخال الاسم الجديد:")
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        print(f"Error in handle_edit_customer_name: {e}")
+        bot.answer_callback_query(call.id, "❌ حدث خطأ")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("edit_customer_phone_"))
+def handle_edit_customer_phone(call):
+    try:
+        customer_id = int(call.data.split("_")[3])
+        telegram_id = call.from_user.id
+        seller = get_seller_by_telegram(telegram_id)
+        
+        if not seller:
+            bot.answer_callback_query(call.id, "⛔ أنت لست بائعاً مسجلاً!")
+            return
+        
+        user_states[telegram_id] = {
+            "step": "edit_customer_phone",
+            "customer_id": customer_id,
+            "seller_id": seller[0]
+        }
+        
+        chat_id = call.message.chat.id if call.message else call.from_user.id
+        bot.send_message(chat_id, "📞 **تعديل رقم الهاتف**\n\nيرجى إدخال رقم الهاتف الجديد:\n(أو اكتب 'حذف' لحذف رقم الهاتف)")
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        print(f"Error in handle_edit_customer_phone: {e}")
+        bot.answer_callback_query(call.id, "❌ حدث خطأ")
+
+@bot.message_handler(func=lambda message: message.from_user.id in user_states and 
+                     user_states[message.from_user.id]["step"] == "edit_customer_name")
+def process_edit_customer_name(message):
+    telegram_id = message.from_user.id
+    state = user_states[telegram_id]
+    
+    if message.text == "🏠 الرئيسية":
+        del user_states[telegram_id]
+        handle_main_menu(message)
+        return
+    
+    new_name = message.text.strip()
+    
+    if not new_name:
+        bot.send_message(message.chat.id, "الرجاء إدخال اسم صحيح.")
+        return
+    
+    customer_id = state["customer_id"]
+    seller_id = state["seller_id"]
+    
+    success = update_credit_customer(customer_id, seller_id, full_name=new_name)
+    
+    if success:
+        bot.send_message(message.chat.id, f"✅ **تم تحديث اسم الزبون بنجاح!**\n\n👤 الاسم الجديد: {new_name}")
+    else:
+        bot.send_message(message.chat.id, "⚠️ **حدث خطأ**\n\nتعذر تحديث اسم الزبون.")
+    
+    del user_states[telegram_id]
+    
+    # إعادة عرض تفاصيل الزبون
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM CreditCustomers WHERE CustomerID=?", (customer_id,))
+    customer = cursor.fetchone()
+    conn.close()
+    
+    if customer:
+        customer_id, seller_id, full_name, phone, created_at = customer
+        text = f"👤 **معلومات الزبون الآجل**\n\n"
+        text += f"🆔 معرف الزبون: {customer_id}\n"
+        text += f"👤 الاسم: {full_name}\n"
+        text += f"📞 الهاتف: {phone if phone else 'غير محدد'}\n"
+        text += f"📅 تاريخ الإضافة: {created_at}\n\n"
+        
+        balance = get_customer_balance(customer_id, seller_id)
+        text += f"💰 **الرصيد الحالي:** {balance} IQD\n"
+        
+        limit_info = get_credit_limit_info(customer_id, seller_id)
+        text += f"💳 **الحد الائتماني:** {limit_info['max_limit']:,.0f} دينار\n"
+        text += f"📊 **المستخدم:** {limit_info['current_used']:,.0f} دينار\n"
+        text += f"📈 **المتبقي:** {limit_info['available']:,.0f} دينار\n"
+        text += f"🚨 **الحالة:** {limit_info['status']}\n"
+        
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("📊 كشف حساب", callback_data=f"view_customer_statement_{customer_id}"),
+            types.InlineKeyboardButton("💰 تسجيل دفعة", callback_data=f"select_customer_payment_{customer_id}"),
+            types.InlineKeyboardButton("💳 إدارة الحد", callback_data=f"set_credit_limit_{customer_id}"),
+            types.InlineKeyboardButton("✏️ تعديل", callback_data=f"edit_credit_customer_{customer_id}"),
+            types.InlineKeyboardButton("🗑️ حذف", callback_data=f"delete_credit_customer_{customer_id}")
+        )
+        
+        bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode='Markdown')
+
+@bot.message_handler(func=lambda message: message.from_user.id in user_states and 
+                     user_states[message.from_user.id]["step"] == "edit_customer_phone")
+def process_edit_customer_phone(message):
+    telegram_id = message.from_user.id
+    state = user_states[telegram_id]
+    
+    if message.text == "🏠 الرئيسية":
+        del user_states[telegram_id]
+        handle_main_menu(message)
+        return
+    
+    new_phone = message.text.strip()
+    
+    if new_phone.lower() in ["حذف", "delete", "none", "null"]:
+        new_phone = None
+    elif not new_phone:
+        bot.send_message(message.chat.id, "الرجاء إدخال رقم هاتف صحيح أو اكتب 'حذف' لحذف رقم الهاتف.")
+        return
+    
+    customer_id = state["customer_id"]
+    seller_id = state["seller_id"]
+    
+    success = update_credit_customer(customer_id, seller_id, phone_number=new_phone)
+    
+    if success:
+        phone_display = new_phone if new_phone else "تم الحذف"
+        bot.send_message(message.chat.id, f"✅ **تم تحديث رقم الهاتف بنجاح!**\n\n📞 رقم الهاتف الجديد: {phone_display}")
+    else:
+        bot.send_message(message.chat.id, "⚠️ **حدث خطأ**\n\nتعذر تحديث رقم الهاتف.")
+    
+    del user_states[telegram_id]
+    
+    # إعادة عرض تفاصيل الزبون
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM CreditCustomers WHERE CustomerID=?", (customer_id,))
+    customer = cursor.fetchone()
+    conn.close()
+    
+    if customer:
+        customer_id, seller_id, full_name, phone, created_at = customer
+        text = f"👤 **معلومات الزبون الآجل**\n\n"
+        text += f"🆔 معرف الزبون: {customer_id}\n"
+        text += f"👤 الاسم: {full_name}\n"
+        text += f"📞 الهاتف: {phone if phone else 'غير محدد'}\n"
+        text += f"📅 تاريخ الإضافة: {created_at}\n\n"
+        
+        balance = get_customer_balance(customer_id, seller_id)
+        text += f"💰 **الرصيد الحالي:** {balance} IQD\n"
+        
+        limit_info = get_credit_limit_info(customer_id, seller_id)
+        text += f"💳 **الحد الائتماني:** {limit_info['max_limit']:,.0f} دينار\n"
+        text += f"📊 **المستخدم:** {limit_info['current_used']:,.0f} دينار\n"
+        text += f"📈 **المتبقي:** {limit_info['available']:,.0f} دينار\n"
+        text += f"🚨 **الحالة:** {limit_info['status']}\n"
+        
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("📊 كشف حساب", callback_data=f"view_customer_statement_{customer_id}"),
+            types.InlineKeyboardButton("💰 تسجيل دفعة", callback_data=f"select_customer_payment_{customer_id}"),
+            types.InlineKeyboardButton("💳 إدارة الحد", callback_data=f"set_credit_limit_{customer_id}"),
+            types.InlineKeyboardButton("✏️ تعديل", callback_data=f"edit_credit_customer_{customer_id}"),
+            types.InlineKeyboardButton("🗑️ حذف", callback_data=f"delete_credit_customer_{customer_id}")
+        )
+        
+        bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode='Markdown')
+
+@bot.callback_query_handler(func=lambda call: call.data == "delete_credit_customer_list")
+def handle_delete_credit_customer_list(call):
+    telegram_id = call.from_user.id
+    seller = get_seller_by_telegram(telegram_id)
+    
+    if not seller:
+        bot.answer_callback_query(call.id, "⛔ أنت لست بائعاً مسجلاً!")
+        return
+    
+    customers = get_all_credit_customers(seller[0])
+    
+    if not customers:
+        bot.answer_callback_query(call.id, "لا يوجد زبائن آجلين للحذف")
+        return
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for customer in customers:
+        customer_id, seller_id, full_name, phone, created_at, max_credit, current_used, limit_active = customer
+        markup.add(types.InlineKeyboardButton(f"🗑️ {full_name}", callback_data=f"delete_credit_customer_{customer_id}"))
+    
+    markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_menu"))
+    
+    bot.send_message(call.message.chat.id, "🗑️ **اختر الزبون الذي تريد حذفه:**", reply_markup=markup)
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("delete_credit_customer_"))
+def handle_delete_credit_customer(call):
+    try:
+        print(f"DEBUG: delete_credit_customer called with data: {call.data}")
+        # استخراج customer_id من callback_data بشكل آمن
+        parts = call.data.split("_")
+        if len(parts) < 4:
+            bot.answer_callback_query(call.id, "❌ خطأ في البيانات")
+            return
+        
+        customer_id = int(parts[-1])  # استخدام آخر جزء كـ customer_id
+        telegram_id = call.from_user.id
+        seller = get_seller_by_telegram(telegram_id)
+        
+        if not seller:
+            bot.answer_callback_query(call.id, "⛔ أنت لست بائعاً مسجلاً!")
+            return
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM CreditCustomers WHERE CustomerID=? AND SellerID=?", (customer_id, seller[0]))
+        customer = cursor.fetchone()
+        
+        if not customer:
+            bot.answer_callback_query(call.id, "الزبون غير موجود")
+            conn.close()
+            return
+        
+        customer_id, seller_id, full_name, phone, created_at = customer
+        
+        # التحقق من وجود رصيد
+        balance = get_customer_balance(customer_id, seller_id)
+        
+        text = f"🗑️ **حذف زبون آجل**\n\n"
+        text += f"👤 **الاسم:** {full_name}\n"
+        text += f"📞 **الهاتف:** {phone if phone else 'غير محدد'}\n"
+        text += f"💰 **الرصيد الحالي:** {balance} IQD\n\n"
+        
+        if balance != 0:
+            text += f"⚠️ **تحذير:** هذا الزبون لديه رصيد بقيمة {balance} IQD.\n"
+            text += f"سيتم حذف جميع المعاملات والحدود الائتمانية المرتبطة به.\n\n"
+        
+        text += "هل أنت متأكد من حذف هذا الزبون؟"
+        
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("✅ نعم، احذف", callback_data=f"confirm_delete_credit_customer_{customer_id}"),
+            types.InlineKeyboardButton("❌ إلغاء", callback_data=f"view_credit_customer_{customer_id}")
+        )
+        
+        chat_id = call.message.chat.id if call.message else call.from_user.id
+        bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
+        bot.answer_callback_query(call.id)
+        conn.close()
+    except Exception as e:
+        print(f"Error in handle_delete_credit_customer: {e}")
+        bot.answer_callback_query(call.id, "❌ حدث خطأ أثناء المعالجة")
+        if 'conn' in locals():
+            conn.close()
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("confirm_delete_credit_customer_"))
+def handle_confirm_delete_credit_customer(call):
+    customer_id = int(call.data.split("_")[-1])
+    telegram_id = call.from_user.id
+    seller = get_seller_by_telegram(telegram_id)
+    
+    if not seller:
+        bot.answer_callback_query(call.id, "⛔ أنت لست بائعاً مسجلاً!")
+        return
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # الحصول على معلومات الزبون قبل الحذف
+        cursor.execute("SELECT FullName FROM CreditCustomers WHERE CustomerID=? AND SellerID=?", (customer_id, seller[0]))
+        customer_info = cursor.fetchone()
+        customer_name = customer_info[0] if customer_info else "الزبون"
+        
+        # حذف البيانات المرتبطة بالزبون
+        cursor.execute("DELETE FROM CustomerCredit WHERE CustomerID=?", (customer_id,))
+        cursor.execute("DELETE FROM CreditLimits WHERE CustomerID=?", (customer_id,))
+        cursor.execute("DELETE FROM CreditCustomers WHERE CustomerID=? AND SellerID=?", (customer_id, seller[0]))
+        conn.commit()
+        
+        bot.answer_callback_query(call.id, "✅ تم حذف الزبون بنجاح")
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        bot.send_message(call.message.chat.id, f"✅ **تم حذف الزبون الآجل بنجاح!**\n\n👤 الزبون: {customer_name}")
+        
+        # إعادة عرض قائمة الزبائن
+        manage_credit_customers(call.message)
+    except Exception as e:
+        bot.answer_callback_query(call.id, "حدث خطأ أثناء الحذف")
+        print(f"Delete Credit Customer Error: {e}")
+    finally:
+        conn.close()
 
 @bot.callback_query_handler(func=lambda call: call.data == "record_payment")
 def handle_record_payment(call):
@@ -5684,6 +6068,16 @@ def handle_delete_order(call):
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
     try:
+        # تخطي معالجات الزبائن الآجلين لأنها موجودة كمعالجات منفصلة
+        if (call.data.startswith("edit_credit_customer_") or 
+            call.data.startswith("edit_customer_name_") or 
+            call.data.startswith("edit_customer_phone_") or
+            call.data.startswith("delete_credit_customer_") or
+            call.data.startswith("confirm_delete_credit_customer_") or
+            call.data == "delete_credit_customer_list"):
+            # هذه المعالجات موجودة كمعالجات منفصلة قبل هذا المعالج
+            return
+        
         if call.data.startswith("copy_store_link_"):
             handle_copy_store_link(call)
         elif call.data == "create_admin_store":
@@ -5770,6 +6164,7 @@ def callback_handler(call):
              handle_payment_cash(call)
         elif call.data in ["edit_name", "edit_phone"]:
             handle_edit_user_info(call)
+        # ملاحظة: معالجات delete_credit_customer_ و edit_credit_customer_ موجودة كمعالجات منفصلة قبل هذا المعالج
         else:
             bot.answer_callback_query(call.id, "هذا الزر غير نشط حالياً")
     except Exception as e:

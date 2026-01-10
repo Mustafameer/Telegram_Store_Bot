@@ -4,18 +4,21 @@ import 'dart:io';
 import 'dart:async';
 import 'package:file_picker/file_picker.dart';
 
-import 'package:window_manager/window_manager.dart'; // Add this
+import 'dart:io';
 import '../models/database_models.dart';
 import '../database/database_helper.dart';
 import '../services/telegram_service.dart';
 import '../services/sync_service.dart';
-import '../services/exit_service.dart'; // Add this
+import '../services/exit_service.dart';
 import 'store_detail_screen.dart';
 import 'login_screen.dart';
 import 'cart_screen.dart';
 import 'messages_screen.dart';
 import 'components/store_form_dialog.dart';
 import 'server_settings_screen.dart';
+
+// Conditional import for desktop-only features
+import 'package:window_manager/window_manager.dart' if (dart.library.html) 'dart:html' as window_manager;
 
 class HomeScreen extends StatefulWidget {
   final bool isAdmin; // Admin of the PLATFORM (can suspend stores etc)
@@ -33,7 +36,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with WindowListener {
+class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
   bool _isExtended = true;
   StreamSubscription? _syncSub;
@@ -42,43 +45,55 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
   @override
   void initState() {
     super.initState();
-    windowManager.addListener(this);
-    _initWindowCloseHandler();
-    _refreshCounts();
-    // ... existing init code ...
-    _syncSub = SyncService.instance.statusStream.listen((msg) {
-      // ... same listener ...
-      if (msg.contains('Failed') || msg.contains('Error') || msg.toLowerCase().contains('fatal')) {
-          showDialog(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: const Row(children: [Icon(Icons.error, color: Colors.red), SizedBox(width: 8), Text("Sync Error")]),
-              content: SelectableText(msg), 
-              actions: [
-                TextButton(onPressed: () => Navigator.pop(context), child: const Text("OK")),
-                TextButton(onPressed: () { 
-                    Navigator.pop(context);
-                    Navigator.push(context, MaterialPageRoute(builder: (_) => ServerSettingsScreen()));
-                  }, child: const Text("Settings"))
-              ],
-            )
-          );
+    
+    // Desktop-only window management
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      try {
+        window_manager.windowManager.addListener(_WindowListener(this));
+        _initWindowCloseHandler();
+      } catch (e) {
+        // window_manager not available, continue
+        print("Window manager not available: $e");
       }
-       ScaffoldMessenger.of(context).hideCurrentSnackBar();
-       ScaffoldMessenger.of(context).showSnackBar(
-         SnackBar(
-           content: Row(
-             children: [
-               if (msg.contains('Starting') || msg.contains('ing...')) 
-                 const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
-               const SizedBox(width: 10),
-               Expanded(child: Text(msg)),
-             ],
-           ),
-           backgroundColor: msg.contains('Failed') || msg.contains('Error') ? Colors.red : Colors.blue.shade700,
-           duration: const Duration(seconds: 4),
-         )
-       );
+    }
+    
+    _refreshCounts();
+    _syncSub = SyncService.instance.statusStream.listen((msg) {
+      if (msg.contains('Failed') || msg.contains('Error') || msg.toLowerCase().contains('fatal')) {
+          if (mounted) {
+            showDialog(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: const Row(children: [Icon(Icons.error, color: Colors.red), SizedBox(width: 8), Text("Sync Error")]),
+                content: SelectableText(msg), 
+                actions: [
+                  TextButton(onPressed: () => Navigator.pop(context), child: const Text("OK")),
+                  TextButton(onPressed: () { 
+                      Navigator.pop(context);
+                      Navigator.push(context, MaterialPageRoute(builder: (_) => ServerSettingsScreen()));
+                    }, child: const Text("Settings"))
+                ],
+              )
+            );
+          }
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                if (msg.contains('Starting') || msg.contains('ing...')) 
+                  const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+                const SizedBox(width: 10),
+                Expanded(child: Text(msg)),
+              ],
+            ),
+            backgroundColor: msg.contains('Failed') || msg.contains('Error') ? Colors.red : Colors.blue.shade700,
+            duration: const Duration(seconds: 4),
+          )
+        );
+      }
     });
 
     Future.delayed(const Duration(seconds: 1), () {
@@ -87,18 +102,36 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
   }
 
   Future<void> _initWindowCloseHandler() async {
-    await windowManager.setPreventClose(true);
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      try {
+        await window_manager.windowManager.setPreventClose(true);
+      } catch (e) {
+        // Ignore on mobile
+      }
+    }
   }
 
   @override
   void dispose() {
-    windowManager.removeListener(this);
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      try {
+        window_manager.windowManager.removeListener(_WindowListener(this));
+      } catch (e) {
+        // Ignore on mobile
+      }
+    }
+    _syncSub?.cancel();
     super.dispose();
   }
-
-  @override
-  void onWindowClose() {
-    ExitService.startExitFlow(context);
+  
+  void _handleWindowClose() {
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      try {
+        ExitService.startExitFlow(context);
+      } catch (e) {
+        // Ignore on mobile
+      }
+    }
   }
 
   @override
@@ -142,6 +175,32 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
     ];
   }
 
+  int? _mapBottomNavToDestinationIndex(int bottomNavIndex) {
+    final destinations = _getDestinations();
+    final bottomNavDestinations = destinations.where((d) => 
+      d['icon'] != Icons.logout && d['icon'] != Icons.settings
+    ).toList();
+    
+    if (bottomNavIndex >= bottomNavDestinations.length) return null;
+    
+    final selectedItem = bottomNavDestinations[bottomNavIndex];
+    return destinations.indexWhere((d) => d['icon'] == selectedItem['icon']);
+  }
+  
+  int _getBottomNavIndex() {
+    final destinations = _getDestinations();
+    final bottomNavDestinations = destinations.where((d) => 
+      d['icon'] != Icons.logout && d['icon'] != Icons.settings
+    ).toList();
+    
+    if (_selectedIndex >= destinations.length) return 0;
+    final selectedItem = destinations[_selectedIndex];
+    
+    // If selected item is in bottom nav, return its index
+    final bottomNavIndex = bottomNavDestinations.indexWhere((d) => d['icon'] == selectedItem['icon']);
+    return bottomNavIndex >= 0 ? bottomNavIndex : 0;
+  }
+
   void _onDestinationSelected(int index) {
      final destinations = _getDestinations();
      if (index >= destinations.length) return;
@@ -170,15 +229,21 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
 
   @override
   Widget build(BuildContext context) {
-    // Intercept Back Button on Root Screen
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, result) async {
-        if (didPop) return;
-        await ExitService.startExitFlow(context);
-      },
-      child: _buildScaffold(context), 
-    );
+    Widget scaffold = _buildScaffold(context);
+    
+    // Intercept Back Button on Root Screen (Desktop only)
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, result) async {
+          if (didPop) return;
+          await ExitService.startExitFlow(context);
+        },
+        child: scaffold, 
+      );
+    }
+    
+    return scaffold;
   }
 
   Widget _buildScaffold(BuildContext context) {
@@ -186,8 +251,13 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
     final bool isMobile = width < 900;
     final destinations = _getDestinations();
 
-
+    // Mobile: Use Bottom Navigation Bar
     if (isMobile) {
+       // Filter out exit and settings from bottom nav (they go in app bar menu)
+       final bottomNavDestinations = destinations.where((d) => 
+         d['icon'] != Icons.logout && d['icon'] != Icons.settings
+       ).toList();
+       
        return Scaffold(
          appBar: AppBar(
             title: const Text('المتجر المحلي'),
@@ -200,60 +270,48 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
                     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('جاري بدء المزامنة...')));
                  },
                ),
-               IconButton(
-                 icon: const Icon(Icons.settings),
-                 onPressed: () {
-                    Navigator.push(context, MaterialPageRoute(builder: (_) => ServerSettingsScreen()));
+               PopupMenuButton<String>(
+                 icon: const Icon(Icons.more_vert),
+                 onSelected: (value) {
+                   if (value == 'settings') {
+                     Navigator.push(context, MaterialPageRoute(builder: (_) => ServerSettingsScreen()));
+                   } else if (value == 'logout') {
+                     _onDestinationSelected(destinations.indexWhere((d) => d['isExit'] == true));
+                   }
                  },
-               )
+                 itemBuilder: (context) => [
+                   const PopupMenuItem(value: 'settings', child: Row(
+                     children: [Icon(Icons.settings, size: 20), SizedBox(width: 8), Text('الإعدادات')],
+                   )),
+                   const PopupMenuItem(value: 'logout', child: Row(
+                     children: [Icon(Icons.logout, size: 20, color: Colors.red), SizedBox(width: 8), Text('خروج', style: TextStyle(color: Colors.red))],
+                   )),
+                 ],
+               ),
             ],
          ),
-         drawer: Drawer(
-           child: ListView(
-             children: [
-               const DrawerHeader(
-                 decoration: BoxDecoration(color: Colors.blue),
-                 child: Column(
-                   mainAxisAlignment: MainAxisAlignment.center,
-                   children: [
-                     Icon(Icons.store, size: 50, color: Colors.white),
-                     SizedBox(height: 10),
-                     Text('Hypermarket Local', style: TextStyle(color: Colors.white, fontSize: 20)),
-                   ],
-                 ),
-               ),
-               ...destinations.asMap().entries.map((e) {
-                 final idx = e.key;
-                 final item = e.value;
-                 final isExit = item['isExit'] == true;
-                 final count = item['count'] as int? ?? 0;
-                 return ListTile(
-                   leading: Icon(item['icon'], color: isExit ? Colors.red : null),
-                   title: Row(
-                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                     children: [
-                       Text(item['label'], style: TextStyle(color: isExit ? Colors.red : null)),
-                       if (count > 0) 
-                         Container(
-                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                           decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(12)),
-                           child: Text('$count', style: const TextStyle(color: Colors.white, fontSize: 12)),
-                         )
-                     ],
-                   ),
-                   selected: _selectedIndex == idx,
-                   onTap: () {
-                      if (!isExit) {
-                        Navigator.pop(context);
-                      }
-                      _onDestinationSelected(idx);
-                   },
-                 );
-               })
-             ],
-           ),
-         ),
          body: _buildContent(),
+         bottomNavigationBar: NavigationBar(
+           selectedIndex: _getBottomNavIndex(),
+           onDestinationSelected: (index) {
+             // Map bottom nav index to actual destination index
+             final actualIndex = _mapBottomNavToDestinationIndex(index);
+             if (actualIndex != null) {
+               _onDestinationSelected(actualIndex);
+             }
+           },
+           destinations: bottomNavDestinations.map((item) {
+             final count = item['count'] as int? ?? 0;
+             return NavigationDestination(
+               icon: Badge(
+                 isLabelVisible: count > 0,
+                 label: Text('$count'),
+                 child: Icon(item['icon']),
+               ),
+               label: item['label'],
+             );
+           }).toList(),
+         ),
        );
     }
 
@@ -317,6 +375,17 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
       return AdminMessagesLoader(currentUserId: widget.currentUserId);
     }
     return const Center(child: Text('جاري العمل...'));
+  }
+}
+
+// Helper class for window listener (desktop only)
+class _WindowListener extends window_manager.WindowListener {
+  final _HomeScreenState _state;
+  _WindowListener(this._state);
+  
+  @override
+  void onWindowClose() {
+    _state._handleWindowClose();
   }
 }
 
@@ -441,7 +510,10 @@ class _DashboardViewState extends State<DashboardView> {
             tooltip: 'إنشاء مجلد الصور',
             onPressed: () async {
               try {
-                final dir = Directory(p.join(Directory.current.path, 'data', 'Images'));
+                // Get executable directory
+                final executablePath = Platform.resolvedExecutable;
+                final exeDir = p.dirname(executablePath);
+                final dir = Directory(p.join(exeDir, 'data', 'Images'));
                 if (!await dir.exists()) {
                   await dir.create(recursive: true);
                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تم إنشاء المجلد في:\n${dir.path}'), backgroundColor: Colors.green));
@@ -507,7 +579,15 @@ class _DashboardViewState extends State<DashboardView> {
       bottomNavigationBar: FutureBuilder<List<String>>(
         future: Future.wait([
           DatabaseHelper.instance.getDbPath(),
-          Future(() async => (await Directory(p.join(Directory.current.path, 'data', 'Images')).exists()) ? '✅ Images Folder Found' : '❌ Images Folder MISSING')
+          Future(() async {
+            if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+              final executablePath = Platform.resolvedExecutable;
+              final exeDir = p.dirname(executablePath);
+              final imgDir = Directory(p.join(exeDir, 'data', 'Images'));
+              return (await imgDir.exists()) ? '✅ Images Folder Found' : '❌ Images Folder MISSING';
+            }
+            return 'N/A';
+          })
         ]),
         builder: (context, snapshot) {
           final dbPath = snapshot.data?[0] ?? "Loading...";

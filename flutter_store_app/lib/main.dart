@@ -4,44 +4,63 @@ import 'package:path/path.dart' as p;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:window_manager/window_manager.dart';
 import 'services/sync_service.dart';
-import 'screens/login_screen.dart'; // Keep for now or remove if unused, but removing might break if other files ref it.
-import 'screens/home_screen.dart'; // Add this
+import 'screens/login_screen.dart';
+import 'screens/home_screen.dart';
 
-import 'package:sqflite_common_ffi/sqflite_ffi.dart'; // Add this import
+// Conditional imports for desktop-only features
+import 'package:sqflite_common_ffi/sqflite_ffi.dart' if (dart.library.html) 'dart:html' as sqflite_ffi;
+import 'package:window_manager/window_manager.dart' if (dart.library.html) 'dart:html' as window_manager;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Initialize FFI (Desktop Only)
   if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-    sqfliteFfiInit();
-    databaseFactory = databaseFactoryFfi;
+    sqflite_ffi.sqfliteFfiInit();
+    sqflite_ffi.databaseFactory = sqflite_ffi.databaseFactoryFfi;
   
-    await windowManager.ensureInitialized();
+    try {
+      await window_manager.windowManager.ensureInitialized();
 
-    WindowOptions windowOptions = const WindowOptions(
-      size: Size(1280, 720),
-      minimumSize: Size(800, 600),
-      center: true,
-      skipTaskbar: false,
-      titleBarStyle: TitleBarStyle.normal,
-    );
-    
-    // Force show immediately to avoid "ghost app"
-    await windowManager.ensureInitialized();
-    await windowManager.show(); 
-    await windowManager.maximize();
-    await windowManager.focus();
+      // Get screen size to calculate optimal window size
+      final screenSize = await window_manager.windowManager.getSize();
+      final screenWidth = screenSize.width;
+      final screenHeight = screenSize.height;
+      
+      // Use 90% of screen size for a large but centered window
+      final windowWidth = (screenWidth * 0.9).round();
+      final windowHeight = (screenHeight * 0.9).round();
+      
+      window_manager.WindowOptions windowOptions = window_manager.WindowOptions(
+        size: Size(windowWidth.toDouble(), windowHeight.toDouble()),
+        minimumSize: const Size(800, 600),
+        center: true,
+        skipTaskbar: false,
+        titleBarStyle: window_manager.TitleBarStyle.normal,
+      );
+      
+      // Set window options and show centered
+      await window_manager.windowManager.waitUntilReadyToShow(windowOptions, () async {
+        await window_manager.windowManager.show();
+      });
+      
+      // Ensure window is centered
+      await window_manager.windowManager.center();
+      await window_manager.windowManager.focus();
+    } catch (e) {
+      // window_manager not available (mobile), continue
+      print("Window manager not available (mobile platform): $e");
+    }
   }
 
-  // Force create Images directory (Desktop Only path check for now to avoid premature crash, 
-  // though main.dart shouldn't really be doing this IO manually if DB helper handles it.
-  // We'll leave it conditional for Desktop for now or remove it.)
+  // Force create Images directory (Desktop Only)
   if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
     try {
-       final imgDir = Directory(p.join(Directory.current.path, 'data', 'Images'));
+       // Get executable directory
+       final executablePath = Platform.resolvedExecutable;
+       final exeDir = p.dirname(executablePath);
+       final imgDir = Directory(p.join(exeDir, 'data', 'Images'));
        if (!await imgDir.exists()) {
          await imgDir.create(recursive: true);
          print("✅ Created Images Directory in main: ${imgDir.path}");
@@ -50,9 +69,6 @@ void main() async {
        print("❌ Failed to create Images directory in main: $e");
     }
   }
-
-  // Start Sync Service
-  // SyncService.instance.startSyncTimer(); // Moved to HomeScreen to capture UI events 
 
   runApp(const MyApp());
 }

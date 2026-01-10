@@ -1,7 +1,17 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import '../../database/database_helper.dart';
 import '../../services/telegram_service.dart';
+
+// دالة لتنسيق المبالغ مع فاصلة الآلاف وإزالة الكسور
+String formatPrice(dynamic price) {
+  if (price == null) return '0';
+  final numValue = price is num ? price : double.tryParse(price.toString()) ?? 0;
+  final rounded = numValue.round();
+  final formatter = NumberFormat('#,###', 'ar');
+  return formatter.format(rounded);
+}
 
 class CartScreen extends StatefulWidget {
   final int userId;
@@ -180,7 +190,7 @@ class _CartScreenState extends State<CartScreen> {
                            ),
                            ...storeItems.map((item) => ListTile(
                              title: Text(item['Name'] ?? 'منتج محذوف'),
-                             subtitle: Text('السعر: ${item['Price']} د.ع'),
+                             subtitle: Text('السعر: ${formatPrice(item['Price'])} د.ع'),
                              leading: item['ImagePath'] != null 
                               ? CircleAvatar(backgroundImage: FileImage(File(item['ImagePath']))) 
                               : const CircleAvatar(child: Icon(Icons.image)),
@@ -209,7 +219,7 @@ class _CartScreenState extends State<CartScreen> {
                                  ),
                                  const SizedBox(width: 8),
                                  // Total Price for Item
-                                 Text('${(double.parse(item['Price'].toString()) * int.parse(item['Quantity'].toString()))} د.ع', style: const TextStyle(color: Colors.grey)),
+                                 Text('${formatPrice(double.parse(item['Price'].toString()) * int.parse(item['Quantity'].toString()))} د.ع', style: const TextStyle(color: Colors.grey)),
                                  const SizedBox(width: 8),
                                  // Delete Button
                                  IconButton(
@@ -239,7 +249,7 @@ class _CartScreenState extends State<CartScreen> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('المجموع الكلي: $total د.ع', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+                    Text('المجموع الكلي: ${formatPrice(total)} د.ع', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
                     FilledButton.icon(
                       icon: const Icon(Icons.check),
                       onPressed: _isLoading ? null : () => _placeOrder(items),
