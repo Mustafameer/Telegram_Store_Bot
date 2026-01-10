@@ -247,12 +247,26 @@ def init_db():
             CustomerID INTEGER PRIMARY KEY AUTOINCREMENT,
             SellerID INTEGER,
             FullName TEXT NOT NULL,
-            PhoneNumber TEXT,
+            PhoneNumber TEXT NOT NULL,
+            CustomerType TEXT DEFAULT 'CreditCustomer',
             CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(SellerID, PhoneNumber),
             FOREIGN KEY (SellerID) REFERENCES Sellers(SellerID)
         )
     """)
+    
+    # Migration: Add CustomerType column if it doesn't exist
+    try:
+        cursor.execute("SELECT CustomerType FROM CreditCustomers LIMIT 1")
+    except:
+        # Column doesn't exist, add it
+        try:
+            cursor.execute("ALTER TABLE CreditCustomers ADD COLUMN CustomerType TEXT DEFAULT 'CreditCustomer'")
+            cursor.execute("ALTER TABLE CreditCustomers ADD COLUMN PhoneNumber TEXT NOT NULL DEFAULT ''")
+            # Update existing records to have phone numbers if they don't
+            cursor.execute("UPDATE CreditCustomers SET PhoneNumber = 'غير محدد' WHERE PhoneNumber IS NULL OR PhoneNumber = ''")
+        except:
+            pass  # Column might already exist or migration not needed
 
     # 4. CreditLimits (Depends on CreditCustomers, Sellers)
     # Using DEFAULT TRUE for Postgres compatibility
@@ -839,28 +853,33 @@ def download_image_from_cloud(filename):
         traceback.print_exc()
         return False
 
-def add_credit_customer(seller_id, full_name, phone_number):
-    """إضافة زبون آجل"""
+def add_credit_customer(seller_id, full_name, phone_number, customer_type='CreditCustomer'):
+    """إضافة زبون آجل أو نقطة بيع"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
     try:
+        if not phone_number or phone_number.strip() == '':
+            conn.close()
+            return None
+        
         if IS_POSTGRES:
             cursor.execute("""
-                INSERT INTO CreditCustomers (SellerID, FullName, PhoneNumber)
-                VALUES (%s, %s, %s)
+                INSERT INTO CreditCustomers (SellerID, FullName, PhoneNumber, CustomerType)
+                VALUES (%s, %s, %s, %s)
                 ON CONFLICT DO NOTHING
-            """, (seller_id, full_name, phone_number))
+            """, (seller_id, full_name, phone_number, customer_type))
         else:
             cursor.execute("""
-                INSERT OR IGNORE INTO CreditCustomers (SellerID, FullName, PhoneNumber)
-                VALUES (?, ?, ?)
-            """, (seller_id, full_name, phone_number))
+                INSERT OR IGNORE INTO CreditCustomers (SellerID, FullName, PhoneNumber, CustomerType)
+                VALUES (?, ?, ?, ?)
+            """, (seller_id, full_name, phone_number, customer_type))
         conn.commit()
         customer_id = cursor.lastrowid
         conn.close()
         return customer_id
-    except:
+    except Exception as e:
+        print(f"Error adding credit customer: {e}")
         conn.close()
         return None
 
@@ -927,12 +946,13 @@ def get_credit_customer(seller_id, phone_number=None, full_name=None):
     return customer
 
 def get_all_credit_customers(seller_id):
-    """الحصول على جميع الزبائن الآجلين"""
+    """الحصول على جميع الزبائن الآجلين ونقاط البيع"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
     cursor.execute("""
-        SELECT cc.*, 
+        SELECT cc.CustomerID, cc.SellerID, cc.FullName, cc.PhoneNumber, 
+               COALESCE(cc.CustomerType, 'CreditCustomer') as CustomerType, cc.CreatedAt,
                COALESCE(cl.MaxCreditAmount, 1000000) as MaxCredit,
                COALESCE(cl.CurrentUsedAmount, 0) as CurrentUsed,
                COALESCE(cl.IsActive, TRUE) as LimitActive
@@ -1307,19 +1327,35 @@ def get_product_by_id(pid):
     return product
 
 def get_product_price_for_customer(product_id, seller_id, phone_number=None, full_name=None):
-    """الحصول على سعر المنتج للزبون (سعر الجملة إذا كان زبوناً آجلاً)"""
+    """الحصول على سعر المنتج للزبون
+    - زبون آجل (CreditCustomer): سعر المفرد
+    - نقطة بيع (PointOfSale): سعر الجملة
+    """
     product = get_product_by_id(product_id)
     if not product:
         return None
     
-    # التحقق إذا كان الزبون آجلاً (فقط للمستخدمين المسجلين)
+    # التحقق إذا كان الزبون مسجلاً
     if phone_number or full_name:
-        if is_credit_customer(seller_id, phone_number, full_name):
-            # إرجاع سعر الجملة إذا كان موجوداً
-            return product[6] if product[6] is not None and product[6] > 0 else product[5]
+        customer = get_credit_customer(seller_id, phone_number, full_name)
+        if customer:
+            customer_type = customer[4] if len(customer) > 4 else 'CreditCustomer'
+            # نقطة بيع: سعر الجملة
+            if customer_type == 'PointOfSale':
+                return product[6] if product[6] is not None and product[6] > 0 else product[5]
+            # زبون آجل: سعر المفرد
+            else:
+                return product[5]
     
     # إرجاع سعر البيع العادي
     return product[5]
+
+def get_customer_type(seller_id, phone_number=None, full_name=None):
+    """الحصول على نوع الزبون"""
+    customer = get_credit_customer(seller_id, phone_number, full_name)
+    if customer:
+        return customer[4] if len(customer) > 4 else 'CreditCustomer'
+    return None
 
 def add_to_cart_db(user_id, product_id, quantity=1, price=None):
     conn = get_db_connection()
@@ -1426,15 +1462,27 @@ def create_order(buyer_id, seller_id, cart_items, delivery_address=None, notes=N
             new_qty = 0
         cursor.execute("UPDATE Products SET Quantity=? WHERE ProductID=?", (new_qty, pid))
     
-    # إذا كان الشراء على الحساب ولم يكن مدفوعاً بالكامل، نضيف المعاملة
-    if payment_method == 'credit' and not fully_paid:
-        # البحث عن الزبون الآجل
-        buyer_info = get_user(buyer_id)
-        if buyer_info:
-            phone = buyer_info[4]
-            full_name = buyer_info[5]
-            customer = get_credit_customer(seller_id, phone, full_name)
-            if customer:
+    # تسجيل المعاملة في كشف الحساب حسب نوع الزبون وطريقة الدفع
+    buyer_info = get_user(buyer_id)
+    if buyer_info:
+        phone = buyer_info[4]
+        full_name = buyer_info[5]
+        customer = get_credit_customer(seller_id, phone, full_name)
+        if customer:
+            customer_type = customer[4] if len(customer) > 4 else 'CreditCustomer'
+            
+            # تحديد متى نسجل المعاملة:
+            # - زبون آجل: دائماً نسجل إذا كان الدفع آجل
+            # - نقطة بيع: نسجل فقط إذا كان الدفع آجل (لا نسجل إذا كان نقدي)
+            should_record = False
+            if customer_type == 'CreditCustomer':
+                # زبون آجل: نسجل إذا كان الدفع آجل
+                should_record = (payment_method == 'credit' and not fully_paid)
+            elif customer_type == 'PointOfSale':
+                # نقطة بيع: نسجل فقط إذا كان الدفع آجل
+                should_record = (payment_method == 'credit' and not fully_paid)
+            
+            if should_record:
                 # التحقق من الحد الائتماني قبل إتمام الشراء
                 can_purchase, message, max_limit, current_used, remaining = check_credit_limit(customer[0], seller_id, total)
                 if not can_purchase:
@@ -4893,10 +4941,11 @@ def manage_credit_customers(message):
     markup = types.InlineKeyboardMarkup(row_width=2)
     
     for customer in customers:
-        customer_id, seller_id, full_name, phone, created_at, max_credit, current_used, limit_active = customer
+        customer_id, seller_id, full_name, phone, customer_type, created_at, max_credit, current_used, limit_active = customer
         
-        text += f"👤 **{full_name}**\n"
-        text += f"📞 {phone if phone else 'لا يوجد'}\n"
+        customer_type_arabic = "👤 زبون آجل" if customer_type == 'CreditCustomer' else "🏪 نقطة بيع"
+        text += f"{customer_type_arabic} **{full_name}**\n"
+        text += f"📞 {phone}\n"
         
         if limit_active == 1:
             percentage_used = (current_used / max_credit * 100) if max_credit > 0 else 0
@@ -4958,8 +5007,7 @@ def process_credit_customer_name(message):
     
     bot.send_message(message.chat.id,
                     "📞 **رقم هاتف الزبون**\n\n"
-                    "يرجى إدخال رقم هاتف الزبون (اختياري):\n"
-                    "يمكنك كتابة 'تخطي' إذا لم يكن هناك رقم هاتف.")
+                    "يرجى إدخال رقم هاتف الزبون (إجباري):")
 
 @bot.message_handler(func=lambda message: message.from_user.id in user_states and 
                      user_states[message.from_user.id]["step"] == "add_credit_customer_phone")
@@ -4967,14 +5015,67 @@ def process_credit_customer_phone(message):
     telegram_id = message.from_user.id
     state = user_states[telegram_id]
     
+    if message.text == "🏠 الرئيسية":
+        del user_states[telegram_id]
+        handle_main_menu(message)
+        return
+    
     phone = message.text.strip()
-    if phone.lower() == "تخطي":
-        phone = None
+    
+    if not phone or phone == '':
+        bot.send_message(message.chat.id, "⚠️ **رقم الهاتف إجباري**\n\nيرجى إدخال رقم هاتف صحيح.")
+        return
+    
+    user_states[telegram_id]["phone"] = phone
+    user_states[telegram_id]["step"] = "add_credit_customer_type"
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(types.InlineKeyboardButton("👤 زبون آجل (سعر المفرد)", callback_data="customer_type_CreditCustomer"))
+    markup.add(types.InlineKeyboardButton("🏪 نقطة بيع (سعر الجملة)", callback_data="customer_type_PointOfSale"))
+    
+    bot.send_message(message.chat.id,
+                    "📋 **نوع الزبون**\n\n"
+                    "اختر نوع الزبون:\n\n"
+                    "👤 **زبون آجل:** التعامل بسعر المفرد\n"
+                    "🏪 **نقطة بيع:** التعامل بسعر الجملة\n"
+                    "   - إذا الدفع آجل: يسجل في كشف الحساب\n"
+                    "   - إذا الدفع نقدي: لا يسجل في كشف الحساب",
+                    reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("customer_type_"))
+def handle_customer_type(call):
+    telegram_id = call.from_user.id
+    state = user_states.get(telegram_id)
+    
+    if not state or state.get("step") != "add_credit_customer_type":
+        bot.answer_callback_query(call.id, "❌ انتهت الجلسة")
+        return
+    
+    customer_type = call.data.split("_")[2]  # CreditCustomer or PointOfSale
     
     seller_id = state["seller_id"]
     full_name = state["full_name"]
+    phone = state["phone"]
     
-    customer_id = add_credit_customer(seller_id, full_name, phone)
+    customer_id = add_credit_customer(seller_id, full_name, phone, customer_type)
+    
+    if customer_id:
+        customer_type_arabic = "زبون آجل" if customer_type == "CreditCustomer" else "نقطة بيع"
+        bot.send_message(call.message.chat.id,
+                        f"✅ **تم إضافة الزبون بنجاح!**\n\n"
+                        f"👤 الاسم: {full_name}\n"
+                        f"📞 الهاتف: {phone}\n"
+                        f"📋 النوع: {customer_type_arabic}\n"
+                        f"🆔 معرف الزبون: {customer_id}\n\n"
+                        f"💡 **تلميح:** يمكنك تعيين حد ائتماني للزبون من خلال قائمة '💳 إدارة الحدود'")
+    else:
+        bot.send_message(call.message.chat.id,
+                        "⚠️ **حدث خطأ**\n\n"
+                        "تعذر إضافة الزبون. قد يكون رقم الهاتف مسجلاً مسبقاً.")
+    
+    del user_states[telegram_id]
+    manage_credit_customers(call.message)
+    bot.answer_callback_query(call.id)
     
     if customer_id:
         bot.send_message(message.chat.id,
@@ -5168,12 +5269,19 @@ def handle_view_credit_customer(call):
         bot.answer_callback_query(call.id, "الزبون غير موجود")
         return
     
-    customer_id, seller_id, full_name, phone, created_at = customer
+    # Handle both old and new schema
+    if len(customer) >= 6:
+        customer_id, seller_id, full_name, phone, customer_type, created_at = customer[:6]
+    else:
+        customer_id, seller_id, full_name, phone, created_at = customer
+        customer_type = 'CreditCustomer'
     
-    text = f"👤 **معلومات الزبون الآجل**\n\n"
+    customer_type_arabic = "👤 زبون آجل" if customer_type == 'CreditCustomer' else "🏪 نقطة بيع"
+    text = f"{customer_type_arabic} **معلومات الزبون**\n\n"
     text += f"🆔 معرف الزبون: {customer_id}\n"
     text += f"👤 الاسم: {full_name}\n"
-    text += f"📞 الهاتف: {phone if phone else 'غير محدد'}\n"
+    text += f"📞 الهاتف: {phone}\n"
+    text += f"📋 النوع: {'زبون آجل (سعر المفرد)' if customer_type == 'CreditCustomer' else 'نقطة بيع (سعر الجملة)'}\n"
     text += f"📅 تاريخ الإضافة: {created_at}\n\n"
     
     # الحصول على الرصيد الحالي
@@ -6164,6 +6272,8 @@ def callback_handler(call):
              handle_payment_cash(call)
         elif call.data in ["edit_name", "edit_phone"]:
             handle_edit_user_info(call)
+        elif call.data.startswith("customer_type_"):
+            handle_customer_type(call)
         # ملاحظة: معالجات delete_credit_customer_ و edit_credit_customer_ موجودة كمعالجات منفصلة قبل هذا المعالج
         else:
             bot.answer_callback_query(call.id, "هذا الزر غير نشط حالياً")
