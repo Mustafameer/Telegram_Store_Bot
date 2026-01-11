@@ -1021,59 +1021,35 @@ def get_credit_customer(seller_id, phone_number=None, full_name=None):
     conn.close()
     return customer
 
-def is_customer_registered_for_store(telegram_id, seller_id):
-    """التحقق من أن المستخدم مسجل في CreditCustomers لهذا المتجر"""
+def is_customer_registered_for_store_by_phone(phone_number, seller_id):
+    """التحقق من أن رقم الهاتف مسجل في CreditCustomers لهذا المتجر"""
     try:
-        # الحصول على معلومات المستخدم
-        user = get_user(telegram_id)
-        if not user:
+        if not phone_number or not phone_number.strip():
             return False
         
-        # الحصول على PhoneNumber و FullName من Users
-        user_phone = user[4] if len(user) > 4 else None  # PhoneNumber
-        user_full_name = user[5] if len(user) > 5 else None  # FullName
+        # تنظيف رقم الهاتف (إزالة المسافات والرموز)
+        phone_number = phone_number.strip().replace(" ", "").replace("-", "").replace("+", "")
         
-        # التحقق من وجوده في CreditCustomers
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        if user_phone:
-            if IS_POSTGRES:
-                cursor.execute("""
-                    SELECT CustomerID FROM CreditCustomers 
-                    WHERE SellerID=%s AND PhoneNumber=%s
-                """, (seller_id, user_phone))
-            else:
-                cursor.execute("""
-                    SELECT CustomerID FROM CreditCustomers 
-                    WHERE SellerID=? AND PhoneNumber=?
-                """, (seller_id, user_phone))
-            
-            if cursor.fetchone():
-                conn.close()
-                return True
+        if IS_POSTGRES:
+            cursor.execute("""
+                SELECT CustomerID FROM CreditCustomers 
+                WHERE SellerID=%s AND PhoneNumber=%s
+            """, (seller_id, phone_number))
+        else:
+            cursor.execute("""
+                SELECT CustomerID FROM CreditCustomers 
+                WHERE SellerID=? AND PhoneNumber=?
+            """, (seller_id, phone_number))
         
-        # إذا لم يوجد بالهاتف، جرب الاسم
-        if user_full_name:
-            if IS_POSTGRES:
-                cursor.execute("""
-                    SELECT CustomerID FROM CreditCustomers 
-                    WHERE SellerID=%s AND FullName LIKE %s
-                """, (seller_id, f"%{user_full_name}%"))
-            else:
-                cursor.execute("""
-                    SELECT CustomerID FROM CreditCustomers 
-                    WHERE SellerID=? AND FullName LIKE ?
-                """, (seller_id, f"%{user_full_name}%"))
-            
-            if cursor.fetchone():
-                conn.close()
-                return True
-        
+        result = cursor.fetchone()
         conn.close()
-        return False
+        
+        return result is not None
     except Exception as e:
-        print(f"⚠️ خطأ في التحقق من تسجيل الزبون: {e}")
+        print(f"⚠️ خطأ في التحقق من تسجيل الزبون بالهاتف: {e}")
         return False
 
 def get_all_credit_customers(seller_id):
@@ -6624,14 +6600,51 @@ def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id, customer_tele
     # التحقق من أن المستخدم مسجل في CreditCustomers لهذا المتجر (فقط إذا كان الإعداد مفعلاً)
     # استثناء: صاحب المتجر نفسه يمكنه الدخول دائماً
     if require_registration and customer_telegram_id and customer_telegram_id != seller_telegram_id:
-        if not is_customer_registered_for_store(customer_telegram_id, seller_id):
+        # التحقق من وجود رقم هاتف محفوظ في user_states
+        user_phone = None
+        if customer_telegram_id in user_states:
+            state = user_states[customer_telegram_id]
+            if 'verified_phone' in state and 'verified_seller_id' in state:
+                if state['verified_seller_id'] == seller_id:
+                    user_phone = state['verified_phone']
+        
+        # إذا لم يكن هناك رقم هاتف محفوظ، نطلب من المستخدم إرساله
+        if not user_phone:
+            markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+            # زر مشاركة جهة الاتصال
+            contact_button = types.KeyboardButton("📱 مشاركة رقم الهاتف", request_contact=True)
+            markup.add(contact_button)
+            markup.add(types.KeyboardButton("❌ إلغاء"))
+            
+            # حفظ حالة المستخدم
+            user_states[customer_telegram_id] = {
+                'step': 'verify_store_access',
+                'seller_id': seller_id,
+                'store_name': store_name,
+                'username': username
+            }
+            
+            bot.send_message(chat_id,
+                f"🔒 **الدخول مقيد**\n\n"
+                f"🏪 المتجر: {store_name}\n\n"
+                f"⚠️ للوصول إلى هذا المتجر، يجب أن تكون مسجلاً كزبون آجل من قبل البائع.\n\n"
+                f"📱 **يرجى إرسال رقم هاتفك المسجل:**\n"
+                f"• اضغط على زر '📱 مشاركة رقم الهاتف' أدناه\n"
+                f"• أو أرسل رقم هاتفك يدوياً (مثال: 07701234567)\n\n"
+                f"سيتم التحقق من أن رقم هاتفك مسجل في قائمة الزبائن الآجلين.",
+                reply_markup=markup,
+                parse_mode='Markdown')
+            return
+        
+        # التحقق من رقم الهاتف
+        if not is_customer_registered_for_store_by_phone(user_phone, seller_id):
             markup = types.InlineKeyboardMarkup()
             markup.add(types.InlineKeyboardButton("📞 التواصل مع البائع", url=f"https://t.me/{username}" if username else None))
             
             bot.send_message(chat_id,
                 f"🔒 **الدخول مقيد**\n\n"
                 f"🏪 المتجر: {store_name}\n\n"
-                f"⚠️ للوصول إلى هذا المتجر، يجب أن تكون مسجلاً كزبون آجل من قبل البائع.\n\n"
+                f"⚠️ رقم الهاتف {user_phone} غير مسجل في قائمة الزبائن الآجلين.\n\n"
                 f"📝 **للحصول على الوصول:**\n"
                 f"• تواصل مع البائع لإضافتك كزبون آجل\n"
                 f"• أو اطلب من البائع إضافتك من خلال قائمة '🏪 إدارة الزبائن الآجلين'\n\n"
@@ -8566,6 +8579,162 @@ def handle_back_to_returns(call):
     else:
         show_buyer_main_menu(call.message)
     bot.answer_callback_query(call.id)
+
+@bot.message_handler(content_types=['contact'])
+def handle_contact_message(message):
+    """معالج رسائل جهة الاتصال (رقم الهاتف)"""
+    telegram_id = message.from_user.id
+    
+    if telegram_id not in user_states:
+        return
+    
+    state = user_states[telegram_id]
+    
+    if state.get('step') == 'verify_store_access':
+        # التحقق من رقم الهاتف للوصول للمتجر
+        phone_number = message.contact.phone_number if message.contact else None
+        
+        if not phone_number:
+            bot.send_message(message.chat.id, "⚠️ لم يتم الحصول على رقم الهاتف. يرجى المحاولة مرة أخرى.")
+            return
+        
+        seller_id = state.get('seller_id')
+        store_name = state.get('store_name', 'المتجر')
+        username = state.get('username')
+        
+        # التحقق من رقم الهاتف
+        if is_customer_registered_for_store_by_phone(phone_number, seller_id):
+            # حفظ رقم الهاتف للجلسة
+            user_states[telegram_id]['verified_phone'] = phone_number
+            user_states[telegram_id]['verified_seller_id'] = seller_id
+            user_states[telegram_id]['step'] = None
+            
+            # إزالة لوحة المفاتيح
+            markup = types.ReplyKeyboardRemove()
+            bot.send_message(message.chat.id,
+                f"✅ **تم التحقق بنجاح!**\n\n"
+                f"📱 رقم الهاتف: {phone_number}\n"
+                f"🏪 المتجر: {store_name}\n\n"
+                f"يمكنك الآن الوصول إلى جميع منتجات المتجر.",
+                reply_markup=markup,
+                parse_mode='Markdown')
+            
+            # عرض المتجر
+            seller_telegram_id = None
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            if IS_POSTGRES:
+                cursor.execute("SELECT TelegramID FROM Sellers WHERE SellerID=%s", (seller_id,))
+            else:
+                cursor.execute("SELECT TelegramID FROM Sellers WHERE SellerID=?", (seller_id,))
+            result = cursor.fetchone()
+            conn.close()
+            
+            if result:
+                seller_telegram_id = result[0]
+                send_store_catalog_by_telegram_id(message.chat.id, seller_telegram_id, telegram_id)
+        else:
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("📞 التواصل مع البائع", url=f"https://t.me/{username}" if username else None))
+            
+            bot.send_message(message.chat.id,
+                f"❌ **رقم الهاتف غير مسجل**\n\n"
+                f"📱 رقم الهاتف: {phone_number}\n"
+                f"🏪 المتجر: {store_name}\n\n"
+                f"⚠️ هذا الرقم غير مسجل في قائمة الزبائن الآجلين.\n\n"
+                f"📝 **للحصول على الوصول:**\n"
+                f"• تواصل مع البائع لإضافتك كزبون آجل\n"
+                f"• أو اطلب من البائع إضافتك من خلال قائمة '🏪 إدارة الزبائن الآجلين'",
+                reply_markup=markup if username else None,
+                parse_mode='Markdown')
+            
+            # إزالة الحالة
+            del user_states[telegram_id]
+
+@bot.message_handler(func=lambda message: message.from_user.id in user_states and 
+                     user_states[message.from_user.id].get("step") == "verify_store_access" and
+                     message.text and message.text != "❌ إلغاء")
+def handle_phone_number_text(message):
+    """معالج إدخال رقم الهاتف يدوياً"""
+    telegram_id = message.from_user.id
+    
+    if telegram_id not in user_states:
+        return
+    
+    state = user_states[telegram_id]
+    
+    if state.get('step') == 'verify_store_access':
+        phone_number = message.text.strip()
+        
+        # التحقق من أن النص هو رقم هاتف
+        if not phone_number or len(phone_number) < 7:
+            bot.send_message(message.chat.id, "⚠️ يرجى إدخال رقم هاتف صحيح (مثال: 07701234567)")
+            return
+        
+        seller_id = state.get('seller_id')
+        store_name = state.get('store_name', 'المتجر')
+        username = state.get('username')
+        
+        # التحقق من رقم الهاتف
+        if is_customer_registered_for_store_by_phone(phone_number, seller_id):
+            # حفظ رقم الهاتف للجلسة
+            user_states[telegram_id]['verified_phone'] = phone_number
+            user_states[telegram_id]['verified_seller_id'] = seller_id
+            user_states[telegram_id]['step'] = None
+            
+            # إزالة لوحة المفاتيح
+            markup = types.ReplyKeyboardRemove()
+            bot.send_message(message.chat.id,
+                f"✅ **تم التحقق بنجاح!**\n\n"
+                f"📱 رقم الهاتف: {phone_number}\n"
+                f"🏪 المتجر: {store_name}\n\n"
+                f"يمكنك الآن الوصول إلى جميع منتجات المتجر.",
+                reply_markup=markup,
+                parse_mode='Markdown')
+            
+            # عرض المتجر
+            seller_telegram_id = None
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            if IS_POSTGRES:
+                cursor.execute("SELECT TelegramID FROM Sellers WHERE SellerID=%s", (seller_id,))
+            else:
+                cursor.execute("SELECT TelegramID FROM Sellers WHERE SellerID=?", (seller_id,))
+            result = cursor.fetchone()
+            conn.close()
+            
+            if result:
+                seller_telegram_id = result[0]
+                send_store_catalog_by_telegram_id(message.chat.id, seller_telegram_id, telegram_id)
+        else:
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("📞 التواصل مع البائع", url=f"https://t.me/{username}" if username else None))
+            
+            bot.send_message(message.chat.id,
+                f"❌ **رقم الهاتف غير مسجل**\n\n"
+                f"📱 رقم الهاتف: {phone_number}\n"
+                f"🏪 المتجر: {store_name}\n\n"
+                f"⚠️ هذا الرقم غير مسجل في قائمة الزبائن الآجلين.\n\n"
+                f"📝 **للحصول على الوصول:**\n"
+                f"• تواصل مع البائع لإضافتك كزبون آجل\n"
+                f"• أو اطلب من البائع إضافتك من خلال قائمة '🏪 إدارة الزبائن الآجلين'",
+                reply_markup=markup if username else None,
+                parse_mode='Markdown')
+            
+            # إزالة الحالة
+            del user_states[telegram_id]
+
+@bot.message_handler(func=lambda message: message.text == "❌ إلغاء" and 
+                     message.from_user.id in user_states and
+                     user_states[message.from_user.id].get("step") == "verify_store_access")
+def handle_cancel_phone_verification(message):
+    """إلغاء عملية التحقق من رقم الهاتف"""
+    telegram_id = message.from_user.id
+    if telegram_id in user_states:
+        del user_states[telegram_id]
+    
+    markup = types.ReplyKeyboardRemove()
+    bot.send_message(message.chat.id, "❌ تم إلغاء عملية التحقق.", reply_markup=markup)
 
 @bot.message_handler(func=lambda message: message.from_user.id in user_states and 
                      user_states[message.from_user.id]["step"] in ["approve_return", "reject_return"])
