@@ -380,6 +380,18 @@ def init_db():
             FOREIGN KEY (CategoryID) REFERENCES Categories(CategoryID)
         )
     """)
+    
+    # 6.1. ProductImages (Depends on Products) - صور متعددة لكل منتج
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS ProductImages(
+            ImageID INTEGER PRIMARY KEY AUTOINCREMENT,
+            ProductID INTEGER,
+            ImagePath TEXT NOT NULL,
+            ImageOrder INTEGER DEFAULT 0,
+            CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (ProductID) REFERENCES Products(ProductID) ON DELETE CASCADE
+        )
+    """)
 
     # 7. Carts (Depends on Users, Products)
     cursor.execute("""
@@ -1313,7 +1325,10 @@ def get_seller_by_telegram(telegram_id):
 def get_seller_by_id(seller_id):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM Sellers WHERE SellerID=?", (seller_id,))
+    if IS_POSTGRES:
+        cursor.execute("SELECT * FROM Sellers WHERE SellerID=%s", (seller_id,))
+    else:
+        cursor.execute("SELECT * FROM Sellers WHERE SellerID=?", (seller_id,))
     seller = cursor.fetchone()
     conn.close()
     return seller
@@ -1433,6 +1448,83 @@ def get_products(seller_id=None, category_id=None):
     products = cursor.fetchall()
     conn.close()
     return products
+
+def get_product_images(product_id):
+    """الحصول على جميع صور المنتج"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    if IS_POSTGRES:
+        cursor.execute("""
+            SELECT ImageID, ImagePath, ImageOrder 
+            FROM ProductImages 
+            WHERE ProductID=%s 
+            ORDER BY ImageOrder, ImageID
+        """, (product_id,))
+    else:
+        cursor.execute("""
+            SELECT ImageID, ImagePath, ImageOrder 
+            FROM ProductImages 
+            WHERE ProductID=? 
+            ORDER BY ImageOrder, ImageID
+        """, (product_id,))
+    images = cursor.fetchall()
+    conn.close()
+    return images
+
+def get_customer_by_phone_for_seller(phone_number, seller_id):
+    """الحصول على معلومات الزبون من رقم الهاتف والبائع"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # تنظيف رقم الهاتف
+    phone_number = phone_number.strip().replace(" ", "").replace("-", "").replace("+", "")
+    
+    if IS_POSTGRES:
+        cursor.execute("""
+            SELECT CustomerID, FullName, PhoneNumber 
+            FROM CreditCustomers 
+            WHERE SellerID=%s AND PhoneNumber=%s
+        """, (seller_id, phone_number))
+    else:
+        cursor.execute("""
+            SELECT CustomerID, FullName, PhoneNumber 
+            FROM CreditCustomers 
+            WHERE SellerID=? AND PhoneNumber=?
+        """, (seller_id, phone_number))
+    
+    customer = cursor.fetchone()
+    conn.close()
+    return customer
+
+def add_credit_transaction(customer_id, seller_id, amount, description):
+    """إضافة معاملة ائتمانية للزبون"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # الحصول على الرصيد الحالي
+        current_balance = get_customer_balance(customer_id, seller_id)
+        new_balance = current_balance + amount
+        
+        if IS_POSTGRES:
+            cursor.execute("""
+                INSERT INTO CustomerCredit (CustomerID, SellerID, TransactionType, Amount, Description, BalanceBefore, BalanceAfter)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (customer_id, seller_id, 'Purchase', amount, description, current_balance, new_balance))
+        else:
+            cursor.execute("""
+                INSERT INTO CustomerCredit (CustomerID, SellerID, TransactionType, Amount, Description, BalanceBefore, BalanceAfter)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (customer_id, seller_id, 'Purchase', amount, description, current_balance, new_balance))
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error adding credit transaction: {e}")
+        if 'conn' in locals():
+            conn.close()
+        return False
 
 def get_product_by_id(pid):
     conn = get_db_connection()
@@ -4342,6 +4434,7 @@ def handle_select_product_to_edit(call):
             types.InlineKeyboardButton("📦 تعديل الكمية", callback_data="edit_prod_qty"),
             types.InlineKeyboardButton("📁 تغيير القسم", callback_data="edit_prod_cat"),
             types.InlineKeyboardButton("📸 تغيير الصورة", callback_data="edit_prod_img"),
+            types.InlineKeyboardButton("🖼️ إدارة الصور المتعددة", callback_data=f"manage_product_images_{product_id}"),
             types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_edit_product")
         )
         
@@ -6384,6 +6477,18 @@ def callback_handler(call):
             handle_toggle_store_registration(call)
         elif call.data.startswith("viewcat_"):
             handle_view_category(call)
+        elif call.data.startswith("select_images_"):
+            handle_select_images(call)
+        elif call.data.startswith("buy_images_"):
+            handle_buy_images(call)
+        elif call.data == "cancel_image_selection":
+            handle_cancel_image_selection(call)
+        elif call.data.startswith("manage_product_images_"):
+            handle_manage_product_images(call)
+        elif call.data.startswith("add_product_image_"):
+            handle_add_product_image(call)
+        elif call.data.startswith("delete_product_image_"):
+            handle_delete_product_image(call)
         elif call.data.startswith("addtocart_"):
             handle_add_to_cart(call)
         elif call.data == "back_to_returns":
@@ -6666,12 +6771,23 @@ def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id, customer_tele
         for product in products:
             pid, name, desc, price, wholesale_price, qty, img_path = product
             if qty > 0:
-                markup = types.InlineKeyboardMarkup()
-                # Do not allow adding admin store products to cart -> FIXED: Allow for everyone
-                # if not is_admin_store:
-                markup = create_product_markup_with_qty(pid, 1)
-
-                send_product_with_image(chat_id, product, markup, store_name)
+                # للمتاجر المقفولة: عرض بدون صور مع زر خاص لاختيار الصور
+                if require_registration:
+                    markup = types.InlineKeyboardMarkup()
+                    markup.add(types.InlineKeyboardButton("📸 اختر الصور", callback_data=f"select_images_{pid}"))
+                    
+                    text = f"📦 **{name}**\n"
+                    if desc:
+                        text += f"📝 {desc[:100]}{'...' if len(desc) > 100 else ''}\n"
+                    text += f"💰 السعر: {price:,.0f} د.ع للصورة الواحدة\n"
+                    text += f"📊 الكمية المتاحة: {qty} صورة"
+                    
+                    bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
+                else:
+                    # للمتاجر المفتوحة: العرض العادي مع الصور
+                    markup = types.InlineKeyboardMarkup()
+                    markup = create_product_markup_with_qty(pid, 1)
+                    send_product_with_image(chat_id, product, markup, store_name)
     else:
         markup = types.InlineKeyboardMarkup(row_width=2)
         for cat_id, cat_name in categories:
@@ -6912,21 +7028,510 @@ def handle_view_category(call):
         seller_name = seller[3] if seller else "المتجر"
         is_admin_store = (seller[1] == BOT_ADMIN_ID) if seller else False
         
+        # التحقق من إعداد RequireCustomerRegistration
+        require_registration = False
+        if len(seller) > 9:
+            require_registration = seller[9] == 1 if not IS_POSTGRES else (seller[9] if seller[9] is not None else False)
+        
         text = f"📁 **قسم: {category[2]}**\n🏪 {seller_name}\n\n🛍️ المنتجات المتاحة:\n\n"
         
         for product in products:
             pid, name, desc, price, wholesale_price, qty, img_path = product
             if qty > 0:
-                markup = types.InlineKeyboardMarkup()
-                # Always create buying markup
-                markup = create_product_markup_with_qty(pid, 1)
-
-                send_product_with_image(call.message.chat.id, product, markup, seller_name)
+                # للمتاجر المقفولة: عرض بدون صور مع زر خاص لاختيار الصور
+                if require_registration:
+                    markup = types.InlineKeyboardMarkup()
+                    markup.add(types.InlineKeyboardButton("📸 اختر الصور", callback_data=f"select_images_{pid}"))
+                    
+                    product_text = f"📦 **{name}**\n"
+                    if desc:
+                        product_text += f"📝 {desc[:100]}{'...' if len(desc) > 100 else ''}\n"
+                    product_text += f"💰 السعر: {price:,.0f} د.ع للصورة الواحدة\n"
+                    product_text += f"📊 الكمية المتاحة: {qty} صورة"
+                    
+                    bot.send_message(call.message.chat.id, product_text, reply_markup=markup, parse_mode='Markdown')
+                else:
+                    # للمتاجر المفتوحة: العرض العادي مع الصور
+                    markup = types.InlineKeyboardMarkup()
+                    markup = create_product_markup_with_qty(pid, 1)
+                    send_product_with_image(call.message.chat.id, product, markup, seller_name)
         
         bot.answer_callback_query(call.id)
     except Exception as e:
         print(f"Error in handle_view_category: {e}")
         bot.answer_callback_query(call.id, "حدث خطأ")
+
+def handle_select_images(call):
+    """معالج اختيار عدد الصور للمنتج"""
+    try:
+        product_id = int(call.data.split("_")[2])
+        product = get_product_by_id(product_id)
+        
+        if not product:
+            bot.answer_callback_query(call.id, "⚠️ المنتج غير موجود")
+            return
+        
+        seller_id = product[1]
+        product_name = product[3]
+        price = product[5]
+        available_qty = product[7]
+        
+        # الحصول على صور المنتج
+        images = get_product_images(product_id)
+        
+        if not images:
+            bot.answer_callback_query(call.id, "⚠️ لا توجد صور متاحة لهذا المنتج")
+            return
+        
+        # التحقق من رقم الهاتف المسجل
+        telegram_id = call.from_user.id
+        user_phone = None
+        if telegram_id in user_states:
+            state = user_states[telegram_id]
+            if 'verified_phone' in state and 'verified_seller_id' in state:
+                if state['verified_seller_id'] == seller_id:
+                    user_phone = state['verified_phone']
+        
+        if not user_phone:
+            bot.answer_callback_query(call.id, "⚠️ يجب التحقق من رقم الهاتف أولاً")
+            return
+        
+        # الحصول على معلومات الزبون
+        customer = get_customer_by_phone_for_seller(user_phone, seller_id)
+        if not customer:
+            bot.answer_callback_query(call.id, "⚠️ أنت غير مسجل كزبون آجل")
+            return
+        
+        customer_id, customer_name, customer_phone = customer
+        
+        # عرض عدد الصور المتاحة واختيار العدد
+        text = f"📸 **اختر عدد الصور**\n\n"
+        text += f"📦 المنتج: {product_name}\n"
+        text += f"💰 السعر: {price:,.0f} د.ع للصورة الواحدة\n"
+        text += f"📊 الصور المتاحة: {len(images)} صورة\n"
+        text += f"📦 الكمية المتاحة: {available_qty} صورة\n\n"
+        text += f"👤 الزبون: {customer_name}\n"
+        text += f"📱 الهاتف: {customer_phone}\n\n"
+        text += f"اختر عدد الصور التي تريد شراءها:"
+        
+        markup = types.InlineKeyboardMarkup(row_width=3)
+        
+        # أزرار الكمية (1-10)
+        qty_buttons = []
+        max_qty = min(available_qty, len(images), 10)
+        for i in range(1, max_qty + 1):
+            qty_buttons.append(types.InlineKeyboardButton(str(i), callback_data=f"buy_images_{product_id}_{i}"))
+            if len(qty_buttons) == 3:
+                markup.row(*qty_buttons)
+                qty_buttons = []
+        
+        if qty_buttons:
+            markup.row(*qty_buttons)
+        
+        markup.add(types.InlineKeyboardButton("❌ إلغاء", callback_data="cancel_image_selection"))
+        
+        bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode='Markdown')
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        print(f"Error in handle_select_images: {e}")
+        import traceback
+        traceback.print_exc()
+        bot.answer_callback_query(call.id, "❌ حدث خطأ")
+
+def handle_buy_images(call):
+    """معالج شراء الصور وإرسالها للمستخدم"""
+    try:
+        parts = call.data.split("_")
+        product_id = int(parts[2])
+        quantity = int(parts[3])
+        
+        product = get_product_by_id(product_id)
+        if not product:
+            bot.answer_callback_query(call.id, "⚠️ المنتج غير موجود")
+            return
+        
+        seller_id = product[1]
+        product_name = product[3]
+        price = product[5]
+        available_qty = product[7]
+        
+        if quantity > available_qty:
+            bot.answer_callback_query(call.id, f"⚠️ الكمية المتاحة فقط {available_qty} صورة")
+            return
+        
+        # الحصول على صور المنتج
+        images = get_product_images(product_id)
+        if not images or len(images) < quantity:
+            bot.answer_callback_query(call.id, "⚠️ لا توجد صور كافية")
+            return
+        
+        # التحقق من رقم الهاتف المسجل
+        telegram_id = call.from_user.id
+        user_phone = None
+        if telegram_id in user_states:
+            state = user_states[telegram_id]
+            if 'verified_phone' in state and 'verified_seller_id' in state:
+                if state['verified_seller_id'] == seller_id:
+                    user_phone = state['verified_phone']
+        
+        if not user_phone:
+            bot.answer_callback_query(call.id, "⚠️ يجب التحقق من رقم الهاتف أولاً")
+            return
+        
+        # الحصول على معلومات الزبون
+        customer = get_customer_by_phone_for_seller(user_phone, seller_id)
+        if not customer:
+            bot.answer_callback_query(call.id, "⚠️ أنت غير مسجل كزبون آجل")
+            return
+        
+        customer_id, customer_name, customer_phone = customer
+        
+        # حساب المبلغ الإجمالي
+        total_amount = price * quantity
+        
+        # إرسال الصور للمستخدم
+        sent_images = []
+        for i in range(quantity):
+            image_path = images[i][1]  # ImagePath
+            
+            # محاولة إرسال الصورة
+            try:
+                if os.path.exists(image_path):
+                    with open(image_path, 'rb') as photo:
+                        bot.send_photo(telegram_id, photo)
+                        sent_images.append(image_path)
+                elif IS_POSTGRES:
+                    # محاولة تحميل من السحابة
+                    base_name = os.path.basename(image_path)
+                    if download_image_from_cloud(base_name):
+                        alt_path = os.path.join(IMAGES_FOLDER, base_name)
+                        if os.path.exists(alt_path):
+                            with open(alt_path, 'rb') as photo:
+                                bot.send_photo(telegram_id, photo)
+                                sent_images.append(base_name)
+            except Exception as e:
+                print(f"Error sending image {i+1}: {e}")
+        
+        if not sent_images:
+            bot.answer_callback_query(call.id, "❌ فشل إرسال الصور")
+            return
+        
+        # إضافة المبلغ لحساب الزبون
+        description = f"شراء {quantity} صورة من منتج: {product_name}"
+        if add_credit_transaction(customer_id, seller_id, total_amount, description):
+            # تحديث كمية المنتج
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            if IS_POSTGRES:
+                cursor.execute("UPDATE Products SET Quantity = Quantity - %s WHERE ProductID = %s", (quantity, product_id))
+            else:
+                cursor.execute("UPDATE Products SET Quantity = Quantity - ? WHERE ProductID = ?", (quantity, product_id))
+            conn.commit()
+            conn.close()
+            
+            # إرسال رسالة للمستخدم
+            bot.send_message(telegram_id,
+                f"✅ **تم الشراء بنجاح!**\n\n"
+                f"📦 المنتج: {product_name}\n"
+                f"📸 عدد الصور: {quantity}\n"
+                f"💰 المبلغ: {total_amount:,.0f} د.ع\n\n"
+                f"تم إضافة المبلغ إلى حسابك الآجل.",
+                parse_mode='Markdown')
+            
+            # إرسال إشعار للبائع
+            seller = get_seller_by_id(seller_id)
+            if seller:
+                seller_telegram_id = seller[1]
+                images_list = "\n".join([f"• {os.path.basename(img)}" for img in sent_images])
+                
+                bot.send_message(seller_telegram_id,
+                    f"🛒 **طلب شراء صور**\n\n"
+                    f"👤 الزبون: {customer_name}\n"
+                    f"📱 الهاتف: {customer_phone}\n\n"
+                    f"📦 المنتج: {product_name}\n"
+                    f"📸 عدد الصور: {quantity}\n"
+                    f"💰 المبلغ: {total_amount:,.0f} د.ع\n\n"
+                    f"📸 الصور المشتراة:\n{images_list}\n\n"
+                    f"✅ تم إضافة المبلغ {total_amount:,.0f} د.ع إلى حساب الزبون.",
+                    parse_mode='Markdown')
+            
+            bot.answer_callback_query(call.id, f"✅ تم إرسال {len(sent_images)} صورة")
+        else:
+            bot.answer_callback_query(call.id, "❌ فشل إضافة المبلغ للحساب")
+    except Exception as e:
+        print(f"Error in handle_buy_images: {e}")
+        import traceback
+        traceback.print_exc()
+        bot.answer_callback_query(call.id, "❌ حدث خطأ")
+
+@bot.callback_query_handler(func=lambda call: call.data == "cancel_image_selection")
+def handle_cancel_image_selection(call):
+    """إلغاء اختيار الصور"""
+    bot.answer_callback_query(call.id, "تم الإلغاء")
+    try:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+    except:
+        pass
+
+def add_product_image_db(product_id, image_path, image_order=0):
+    """إضافة صورة للمنتج في قاعدة البيانات"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        if IS_POSTGRES:
+            cursor.execute("""
+                INSERT INTO ProductImages (ProductID, ImagePath, ImageOrder)
+                VALUES (%s, %s, %s)
+            """, (product_id, image_path, image_order))
+        else:
+            cursor.execute("""
+                INSERT INTO ProductImages (ProductID, ImagePath, ImageOrder)
+                VALUES (?, ?, ?)
+            """, (product_id, image_path, image_order))
+        
+        conn.commit()
+        image_id = cursor.lastrowid
+        conn.close()
+        return image_id
+    except Exception as e:
+        print(f"Error adding product image: {e}")
+        if 'conn' in locals():
+            conn.close()
+        return None
+
+def delete_product_image_db(image_id):
+    """حذف صورة من المنتج"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        if IS_POSTGRES:
+            cursor.execute("DELETE FROM ProductImages WHERE ImageID=%s", (image_id,))
+        else:
+            cursor.execute("DELETE FROM ProductImages WHERE ImageID=?", (image_id,))
+        
+        conn.commit()
+        deleted = cursor.rowcount > 0
+        conn.close()
+        return deleted
+    except Exception as e:
+        print(f"Error deleting product image: {e}")
+        if 'conn' in locals():
+            conn.close()
+        return False
+
+def handle_manage_product_images(call):
+    """إدارة صور المنتج"""
+    try:
+        product_id = int(call.data.split("_")[3])
+        telegram_id = call.from_user.id
+        
+        product = get_product_by_id(product_id)
+        if not product:
+            bot.answer_callback_query(call.id, "⚠️ المنتج غير موجود")
+            return
+        
+        # التحقق من أن البائع يملك المنتج
+        seller = get_seller_by_telegram(telegram_id)
+        if not seller or product[1] != seller[0]:
+            bot.answer_callback_query(call.id, "⛔ ليس لديك صلاحية لتعديل هذا المنتج")
+            return
+        
+        product_name = product[3]
+        images = get_product_images(product_id)
+        
+        text = f"🖼️ **إدارة صور المنتج**\n\n"
+        text += f"📦 المنتج: {product_name}\n"
+        text += f"📸 عدد الصور الحالية: {len(images)}\n\n"
+        
+        if images:
+            text += "**الصور الحالية:**\n"
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            
+            for img_id, img_path, img_order in images:
+                img_name = os.path.basename(img_path)
+                text += f"• {img_name}\n"
+                markup.add(types.InlineKeyboardButton(f"🗑️ {img_name[:15]}", callback_data=f"delete_product_image_{img_id}"))
+            
+            markup.add(types.InlineKeyboardButton("➕ إضافة صورة جديدة", callback_data=f"add_product_image_{product_id}"))
+            markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data=f"edit_product_{product_id}"))
+        else:
+            text += "لا توجد صور حالياً.\n"
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("➕ إضافة صورة جديدة", callback_data=f"add_product_image_{product_id}"))
+            markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data=f"edit_product_{product_id}"))
+        
+        bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode='Markdown')
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        print(f"Error in handle_manage_product_images: {e}")
+        import traceback
+        traceback.print_exc()
+        bot.answer_callback_query(call.id, "❌ حدث خطأ")
+
+def handle_add_product_image(call):
+    """بدء عملية إضافة صورة جديدة للمنتج"""
+    try:
+        product_id = int(call.data.split("_")[3])
+        telegram_id = call.from_user.id
+        
+        product = get_product_by_id(product_id)
+        if not product:
+            bot.answer_callback_query(call.id, "⚠️ المنتج غير موجود")
+            return
+        
+        # التحقق من أن البائع يملك المنتج
+        seller = get_seller_by_telegram(telegram_id)
+        if not seller or product[1] != seller[0]:
+            bot.answer_callback_query(call.id, "⛔ ليس لديك صلاحية لتعديل هذا المنتج")
+            return
+        
+        # حفظ الحالة
+        user_states[telegram_id] = {
+            'step': 'add_product_image_to_db',
+            'product_id': product_id
+        }
+        
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+        markup.row("📸 إرسال صورة", "❌ إلغاء")
+        
+        bot.send_message(call.message.chat.id,
+            f"📸 **إضافة صورة جديدة**\n\n"
+            f"📦 المنتج: {product[3]}\n\n"
+            f"يرجى إرسال الصورة التي تريد إضافتها للمنتج:",
+            reply_markup=markup,
+            parse_mode='Markdown')
+        
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        print(f"Error in handle_add_product_image: {e}")
+        bot.answer_callback_query(call.id, "❌ حدث خطأ")
+
+@bot.message_handler(content_types=['photo'], func=lambda message: message.from_user.id in user_states and 
+                     user_states[message.from_user.id].get("step") == "add_product_image_to_db")
+def handle_save_product_image(message):
+    """حفظ الصورة الجديدة للمنتج"""
+    try:
+        telegram_id = message.from_user.id
+        state = user_states[telegram_id]
+        product_id = state['product_id']
+        
+        # حفظ الصورة
+        image_path = save_photo_from_message(message)
+        if not image_path:
+            bot.send_message(message.chat.id, "❌ حدث خطأ في حفظ الصورة")
+            del user_states[telegram_id]
+            return
+        
+        # إضافة الصورة لقاعدة البيانات
+        images = get_product_images(product_id)
+        image_order = len(images)  # ترتيب الصورة الجديدة
+        
+        image_id = add_product_image_db(product_id, image_path, image_order)
+        
+        if image_id:
+            bot.send_message(message.chat.id,
+                f"✅ **تم إضافة الصورة بنجاح!**\n\n"
+                f"📸 تم حفظ الصورة: {os.path.basename(image_path)}\n\n"
+                f"يمكنك إضافة المزيد من الصور أو العودة لإدارة المنتج.",
+                parse_mode='Markdown')
+        else:
+            bot.send_message(message.chat.id, "❌ حدث خطأ في إضافة الصورة لقاعدة البيانات")
+        
+        # إزالة الحالة
+        del user_states[telegram_id]
+        
+        # إعادة عرض قائمة إدارة الصور
+        call_data = f"manage_product_images_{product_id}"
+        fake_call = type('obj', (object,), {
+            'data': call_data,
+            'from_user': message.from_user,
+            'message': message
+        })()
+        handle_manage_product_images(fake_call)
+    except Exception as e:
+        print(f"Error in handle_save_product_image: {e}")
+        import traceback
+        traceback.print_exc()
+        bot.send_message(message.chat.id, "❌ حدث خطأ في حفظ الصورة")
+        if telegram_id in user_states:
+            del user_states[telegram_id]
+
+@bot.message_handler(func=lambda message: message.from_user.id in user_states and 
+                     user_states[message.from_user.id].get("step") == "add_product_image_to_db" and
+                     message.text == "❌ إلغاء")
+def handle_cancel_add_image(message):
+    """إلغاء إضافة صورة"""
+    telegram_id = message.from_user.id
+    if telegram_id in user_states:
+        state = user_states[telegram_id]
+        product_id = state.get('product_id')
+        del user_states[telegram_id]
+        
+        if product_id:
+            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            markup.row("🏠 الرئيسية")
+            bot.send_message(message.chat.id, "❌ تم إلغاء العملية", reply_markup=markup)
+
+def handle_delete_product_image(call):
+    """حذف صورة من المنتج"""
+    try:
+        image_id = int(call.data.split("_")[3])
+        
+        # الحصول على معلومات الصورة
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        if IS_POSTGRES:
+            cursor.execute("""
+                SELECT pi.ImageID, pi.ProductID, pi.ImagePath, p.SellerID, p.Name
+                FROM ProductImages pi
+                JOIN Products p ON pi.ProductID = p.ProductID
+                WHERE pi.ImageID = %s
+            """, (image_id,))
+        else:
+            cursor.execute("""
+                SELECT pi.ImageID, pi.ProductID, pi.ImagePath, p.SellerID, p.Name
+                FROM ProductImages pi
+                JOIN Products p ON pi.ProductID = p.ProductID
+                WHERE pi.ImageID = ?
+            """, (image_id,))
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        if not result:
+            bot.answer_callback_query(call.id, "⚠️ الصورة غير موجودة")
+            return
+        
+        img_id, product_id, img_path, seller_id, product_name = result
+        
+        # التحقق من أن البائع يملك المنتج
+        telegram_id = call.from_user.id
+        seller = get_seller_by_telegram(telegram_id)
+        if not seller or seller[0] != seller_id:
+            bot.answer_callback_query(call.id, "⛔ ليس لديك صلاحية لحذف هذه الصورة")
+            return
+        
+        # حذف الصورة
+        if delete_product_image_db(image_id):
+            bot.answer_callback_query(call.id, "✅ تم حذف الصورة")
+            
+            # إعادة عرض قائمة إدارة الصور
+            call_data = f"manage_product_images_{product_id}"
+            fake_call = type('obj', (object,), {
+                'data': call_data,
+                'from_user': call.from_user,
+                'message': call.message
+            })()
+            handle_manage_product_images(fake_call)
+        else:
+            bot.answer_callback_query(call.id, "❌ فشل حذف الصورة")
+    except Exception as e:
+        print(f"Error in handle_delete_product_image: {e}")
+        import traceback
+        traceback.print_exc()
+        bot.answer_callback_query(call.id, "❌ حدث خطأ")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("addtocart_"))
 def handle_add_to_cart(call):
