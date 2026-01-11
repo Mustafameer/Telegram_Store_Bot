@@ -253,12 +253,17 @@ def init_db():
             if not cursor.fetchone():
                 print("🔄 Adding RequireCustomerRegistration column to Sellers table...")
                 cursor.execute("ALTER TABLE Sellers ADD COLUMN RequireCustomerRegistration INTEGER DEFAULT 0")
-                cursor.execute("UPDATE Sellers SET RequireCustomerRegistration = 0 WHERE RequireCustomerRegistration IS NULL")
                 conn.commit()
                 print("✅ RequireCustomerRegistration column added successfully")
+            # تأكد من أن جميع المتاجر لديها القيمة 0 (مفتوحة) افتراضياً
+            cursor.execute("UPDATE Sellers SET RequireCustomerRegistration = 0 WHERE RequireCustomerRegistration IS NULL")
+            conn.commit()
         else:
             try:
                 cursor.execute("SELECT RequireCustomerRegistration FROM Sellers LIMIT 1")
+                # تأكد من أن جميع المتاجر لديها القيمة 0 (مفتوحة) افتراضياً
+                cursor.execute("UPDATE Sellers SET RequireCustomerRegistration = 0 WHERE RequireCustomerRegistration IS NULL")
+                conn.commit()
             except:
                 print("🔄 Adding RequireCustomerRegistration column to Sellers table (SQLite)...")
                 cursor.execute("ALTER TABLE Sellers ADD COLUMN RequireCustomerRegistration INTEGER DEFAULT 0")
@@ -6751,6 +6756,126 @@ def handle_view_store(call):
         bot.answer_callback_query(call.id)
     except:
         bot.answer_callback_query(call.id, "خطأ في عرض المتجر")
+
+def handle_manage_store_registration(call):
+    """إدارة إعداد قيد الدخول للمتجر"""
+    try:
+        seller_id = int(call.data.split("_")[3])
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        if IS_POSTGRES:
+            cursor.execute("""
+                SELECT SellerID, StoreName, COALESCE(RequireCustomerRegistration, 0) as RequireCustomerRegistration
+                FROM Sellers WHERE SellerID=%s
+            """, (seller_id,))
+        else:
+            cursor.execute("""
+                SELECT SellerID, StoreName, COALESCE(RequireCustomerRegistration, 0) as RequireCustomerRegistration
+                FROM Sellers WHERE SellerID=?
+            """, (seller_id,))
+        
+        store = cursor.fetchone()
+        conn.close()
+        
+        if not store:
+            bot.answer_callback_query(call.id, "⚠️ المتجر غير موجود")
+            return
+        
+        store_name = store[1]
+        current_setting = store[2] if len(store) > 2 else 0
+        
+        text = f"🔐 **إدارة قيد الدخول للمتجر**\n\n"
+        text += f"🏪 **المتجر:** {store_name}\n\n"
+        text += f"**الحالة الحالية:**\n"
+        if current_setting == 1:
+            text += f"🔒 **مفعل** - المتجر مفتوح فقط للزبائن المسجلين في CreditCustomers\n\n"
+            text += f"⚠️ **ملاحظة:** الزبائن غير المسجلين لن يتمكنوا من الوصول للمتجر."
+        else:
+            text += f"🔓 **معطل** - المتجر مفتوح للجميع\n\n"
+            text += f"✅ **ملاحظة:** أي شخص يمكنه الوصول للمتجر بدون تسجيل."
+        
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        if current_setting == 1:
+            markup.add(types.InlineKeyboardButton("🔓 إلغاء قيد الدخول (فتح للجميع)", callback_data=f"toggle_store_reg_{seller_id}_0"))
+        else:
+            markup.add(types.InlineKeyboardButton("🔒 تفعيل قيد الدخول (الزبائن المسجلين فقط)", callback_data=f"toggle_store_reg_{seller_id}_1"))
+        markup.add(types.InlineKeyboardButton("🔙 العودة للقائمة", callback_data="back_to_stores_list"))
+        
+        bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode='Markdown')
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        print(f"Error in handle_manage_store_registration: {e}")
+        import traceback
+        traceback.print_exc()
+        bot.answer_callback_query(call.id, "❌ حدث خطأ")
+
+def handle_toggle_store_registration(call):
+    """تفعيل/إلغاء قيد الدخول للمتجر"""
+    try:
+        parts = call.data.split("_")
+        seller_id = int(parts[3])
+        new_value = int(parts[4])
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        if IS_POSTGRES:
+            cursor.execute("""
+                UPDATE Sellers 
+                SET RequireCustomerRegistration = %s 
+                WHERE SellerID = %s
+            """, (new_value, seller_id))
+        else:
+            cursor.execute("""
+                UPDATE Sellers 
+                SET RequireCustomerRegistration = ? 
+                WHERE SellerID = ?
+            """, (new_value, seller_id))
+        
+        conn.commit()
+        
+        # الحصول على اسم المتجر
+        if IS_POSTGRES:
+            cursor.execute("SELECT StoreName FROM Sellers WHERE SellerID=%s", (seller_id,))
+        else:
+            cursor.execute("SELECT StoreName FROM Sellers WHERE SellerID=?", (seller_id,))
+        
+        store_result = cursor.fetchone()
+        store_name = store_result[0] if store_result else "المتجر"
+        conn.close()
+        
+        status_text = "تم تفعيل قيد الدخول" if new_value == 1 else "تم إلغاء قيد الدخول"
+        icon = "🔒" if new_value == 1 else "🔓"
+        
+        bot.answer_callback_query(call.id, f"✅ {status_text}")
+        bot.send_message(call.message.chat.id, 
+            f"{icon} **{status_text}**\n\n"
+            f"🏪 المتجر: {store_name}\n\n"
+            f"{'المتجر الآن مفتوح فقط للزبائن المسجلين في CreditCustomers' if new_value == 1 else 'المتجر الآن مفتوح للجميع'}",
+            parse_mode='Markdown')
+        
+        # تحديث الرسالة السابقة
+        try:
+            bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+        except:
+            pass
+    except Exception as e:
+        print(f"Error in handle_toggle_store_registration: {e}")
+        import traceback
+        traceback.print_exc()
+        bot.answer_callback_query(call.id, "❌ حدث خطأ")
+
+@bot.callback_query_handler(func=lambda call: call.data == "back_to_stores_list")
+def handle_back_to_stores_list(call):
+    """العودة لقائمة المتاجر"""
+    if is_bot_admin(call.from_user.id):
+        # إعادة عرض قائمة المتاجر
+        message = call.message
+        message.text = "📋 قائمة المتاجر"
+        list_stores(message)
+        bot.answer_callback_query(call.id)
 
 def handle_view_category(call):
     try:
