@@ -237,9 +237,40 @@ def init_db():
             SuspensionReason TEXT,
             SuspendedBy INTEGER,
             SuspendedAt DATETIME,
+            RequireCustomerRegistration INTEGER DEFAULT 0,
             FOREIGN KEY (SuspendedBy) REFERENCES Users(TelegramID)
         )
     """)
+    
+    # Migration: Add RequireCustomerRegistration column if it doesn't exist
+    try:
+        if IS_POSTGRES:
+            cursor.execute("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name='sellers' AND column_name='requirecustomerregistration'
+            """)
+            if not cursor.fetchone():
+                print("🔄 Adding RequireCustomerRegistration column to Sellers table...")
+                cursor.execute("ALTER TABLE Sellers ADD COLUMN RequireCustomerRegistration INTEGER DEFAULT 0")
+                cursor.execute("UPDATE Sellers SET RequireCustomerRegistration = 0 WHERE RequireCustomerRegistration IS NULL")
+                conn.commit()
+                print("✅ RequireCustomerRegistration column added successfully")
+        else:
+            try:
+                cursor.execute("SELECT RequireCustomerRegistration FROM Sellers LIMIT 1")
+            except:
+                print("🔄 Adding RequireCustomerRegistration column to Sellers table (SQLite)...")
+                cursor.execute("ALTER TABLE Sellers ADD COLUMN RequireCustomerRegistration INTEGER DEFAULT 0")
+                cursor.execute("UPDATE Sellers SET RequireCustomerRegistration = 0 WHERE RequireCustomerRegistration IS NULL")
+                conn.commit()
+                print("✅ RequireCustomerRegistration column added successfully (SQLite)")
+    except Exception as e:
+        print(f"⚠️ Migration warning (non-critical): {e}")
+        try:
+            conn.rollback()
+        except:
+            pass
 
     # 3. CreditCustomers (Depends on Sellers)
     # Create table with nullable PhoneNumber first (for compatibility with existing data)
@@ -956,15 +987,27 @@ def get_credit_customer(seller_id, phone_number=None, full_name=None):
     cursor = conn.cursor()
     
     if phone_number:
-        cursor.execute("""
-            SELECT * FROM CreditCustomers 
-            WHERE SellerID=? AND PhoneNumber=?
-        """, (seller_id, phone_number))
+        if IS_POSTGRES:
+            cursor.execute("""
+                SELECT * FROM CreditCustomers 
+                WHERE SellerID=%s AND PhoneNumber=%s
+            """, (seller_id, phone_number))
+        else:
+            cursor.execute("""
+                SELECT * FROM CreditCustomers 
+                WHERE SellerID=? AND PhoneNumber=?
+            """, (seller_id, phone_number))
     elif full_name:
-        cursor.execute("""
-            SELECT * FROM CreditCustomers 
-            WHERE SellerID=? AND FullName LIKE ?
-        """, (seller_id, f"%{full_name}%"))
+        if IS_POSTGRES:
+            cursor.execute("""
+                SELECT * FROM CreditCustomers 
+                WHERE SellerID=%s AND FullName LIKE %s
+            """, (seller_id, f"%{full_name}%"))
+        else:
+            cursor.execute("""
+                SELECT * FROM CreditCustomers 
+                WHERE SellerID=? AND FullName LIKE ?
+            """, (seller_id, f"%{full_name}%"))
     else:
         conn.close()
         return None
@@ -972,6 +1015,61 @@ def get_credit_customer(seller_id, phone_number=None, full_name=None):
     customer = cursor.fetchone()
     conn.close()
     return customer
+
+def is_customer_registered_for_store(telegram_id, seller_id):
+    """التحقق من أن المستخدم مسجل في CreditCustomers لهذا المتجر"""
+    try:
+        # الحصول على معلومات المستخدم
+        user = get_user(telegram_id)
+        if not user:
+            return False
+        
+        # الحصول على PhoneNumber و FullName من Users
+        user_phone = user[4] if len(user) > 4 else None  # PhoneNumber
+        user_full_name = user[5] if len(user) > 5 else None  # FullName
+        
+        # التحقق من وجوده في CreditCustomers
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        if user_phone:
+            if IS_POSTGRES:
+                cursor.execute("""
+                    SELECT CustomerID FROM CreditCustomers 
+                    WHERE SellerID=%s AND PhoneNumber=%s
+                """, (seller_id, user_phone))
+            else:
+                cursor.execute("""
+                    SELECT CustomerID FROM CreditCustomers 
+                    WHERE SellerID=? AND PhoneNumber=?
+                """, (seller_id, user_phone))
+            
+            if cursor.fetchone():
+                conn.close()
+                return True
+        
+        # إذا لم يوجد بالهاتف، جرب الاسم
+        if user_full_name:
+            if IS_POSTGRES:
+                cursor.execute("""
+                    SELECT CustomerID FROM CreditCustomers 
+                    WHERE SellerID=%s AND FullName LIKE %s
+                """, (seller_id, f"%{user_full_name}%"))
+            else:
+                cursor.execute("""
+                    SELECT CustomerID FROM CreditCustomers 
+                    WHERE SellerID=? AND FullName LIKE ?
+                """, (seller_id, f"%{user_full_name}%"))
+            
+            if cursor.fetchone():
+                conn.close()
+                return True
+        
+        conn.close()
+        return False
+    except Exception as e:
+        print(f"⚠️ خطأ في التحقق من تسجيل الزبون: {e}")
+        return False
 
 def get_all_credit_customers(seller_id):
     """الحصول على جميع الزبائن الآجلين ونقاط البيع"""
@@ -1145,7 +1243,10 @@ def add_user(telegram_id, username, usertype, phone_number=None, full_name=None)
 def get_user(telegram_id):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM Users WHERE TelegramID=?", (telegram_id,))
+    if IS_POSTGRES:
+        cursor.execute("SELECT * FROM Users WHERE TelegramID=%s", (telegram_id,))
+    else:
+        cursor.execute("SELECT * FROM Users WHERE TelegramID=?", (telegram_id,))
     user = cursor.fetchone()
     conn.close()
     return user
@@ -1201,7 +1302,10 @@ def add_seller(telegram_id, username, store_name):
 def get_seller_by_telegram(telegram_id):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM Sellers WHERE TelegramID=?", (telegram_id,))
+    if IS_POSTGRES:
+        cursor.execute("SELECT * FROM Sellers WHERE TelegramID=%s", (telegram_id,))
+    else:
+        cursor.execute("SELECT * FROM Sellers WHERE TelegramID=?", (telegram_id,))
     seller = cursor.fetchone()
     conn.close()
     
@@ -1216,7 +1320,10 @@ def get_seller_by_telegram(telegram_id):
             add_seller(telegram_id, username, store_name)
             conn = get_db_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM Sellers WHERE TelegramID=?", (telegram_id,))
+            if IS_POSTGRES:
+                cursor.execute("SELECT * FROM Sellers WHERE TelegramID=%s", (telegram_id,))
+            else:
+                cursor.execute("SELECT * FROM Sellers WHERE TelegramID=?", (telegram_id,))
             seller = cursor.fetchone()
             conn.close()
     
@@ -2179,7 +2286,7 @@ def start(message):
             token = text[idx+len("store_"):].strip()
             token = token.split()[0]
             seller_telegram_id = int(token)
-            send_store_catalog_by_telegram_id(message.chat.id, seller_telegram_id)
+            send_store_catalog_by_telegram_id(message.chat.id, seller_telegram_id, telegram_id)
             return
         except Exception:
             pass
@@ -3194,8 +3301,8 @@ def start(message):
                                     "يبدو أنك لست مسجلاً كصاحب متجر.\n"
                                     "يرجى التواصل مع الإدارة.")
             else:
-                # إذا كان زائراً للمتجر، نعرض له المنتجات
-                send_store_catalog_by_telegram_id(message.chat.id, seller_telegram_id)
+                # إذا كان زائراً للمتجر، نعرض له المنتجات (مع التحقق من التسجيل)
+                send_store_catalog_by_telegram_id(message.chat.id, seller_telegram_id, telegram_id)
             return
         except Exception as e:
             print(f"⚠️ خطأ في فتح رابط المتجر: {e}")
@@ -3258,11 +3365,20 @@ def list_stores(message):
         conn = get_db_connection()
         cursor = conn.cursor()
         # Explicitly select columns to avoid index errors if schema changes
-        cursor.execute("""
-            SELECT SellerID, TelegramID, UserName, StoreName, CreatedAt, Status
-            FROM Sellers
-            ORDER BY CreatedAt DESC
-        """)
+        if IS_POSTGRES:
+            cursor.execute("""
+                SELECT SellerID, TelegramID, UserName, StoreName, CreatedAt, Status, 
+                       COALESCE(RequireCustomerRegistration, 0) as RequireCustomerRegistration
+                FROM Sellers
+                ORDER BY CreatedAt DESC
+            """)
+        else:
+            cursor.execute("""
+                SELECT SellerID, TelegramID, UserName, StoreName, CreatedAt, Status, 
+                       COALESCE(RequireCustomerRegistration, 0) as RequireCustomerRegistration
+                FROM Sellers
+                ORDER BY CreatedAt DESC
+            """)
         stores = cursor.fetchall()
         conn.close()
         
@@ -3270,23 +3386,34 @@ def list_stores(message):
             bot.send_message(message.chat.id, "لا توجد متاجر مسجلة بعد.")
             return
         
+        markup = types.InlineKeyboardMarkup(row_width=1)
         text = "📋 **قائمة جميع المتاجر:**\n\n"
         
         for store in stores:
-            seller_id, telegram_id, username, store_name, created_at, status = store
+            seller_id, telegram_id, username, store_name, created_at, status = store[:6]
+            require_reg = store[6] if len(store) > 6 else 0
             status_icon = "✅" if status == 'active' else "⏸️"
+            reg_icon = "🔒" if require_reg == 1 else "🔓"
             
             # Escape store name to prevent markdown errors
             safe_store_name = escape_markdown_v1(store_name)
             
-            text += f"{status_icon} **المتجر:** {safe_store_name}\n"
+            text += f"{status_icon} {reg_icon} **المتجر:** {safe_store_name}\n"
             text += f"👤 المالك: {format_seller_mention(username, telegram_id)}\n"
             text += f"🆔 المعرف: {telegram_id}\n"
             text += f"📅 تاريخ الإنشاء: {created_at}\n"
             text += f"📊 الحالة: {'نشط' if status == 'active' else 'معلق'}\n"
+            text += f"🔐 قيد الدخول: {'مفعل (يتطلب تسجيل)' if require_reg == 1 else 'معطل (مفتوح للجميع)'}\n"
             text += "────\n\n"
+            
+            # إضافة زر لإدارة إعدادات المتجر
+            label = f"{safe_store_name[:30]} - {'🔒' if require_reg == 1 else '🔓'}"
+            markup.add(types.InlineKeyboardButton(
+                label,
+                callback_data=f"manage_store_reg_{seller_id}"
+            ))
         
-        bot.send_message(message.chat.id, text, parse_mode='Markdown')
+        bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=markup)
     except Exception as e:
         traceback.print_exc()
         bot.send_message(message.chat.id, f"⚠️ حدث خطأ أثناء عرض القائمة:\n{e}")
@@ -6270,6 +6397,10 @@ def callback_handler(call):
             handle_reject_return(call)
         elif call.data.startswith("viewstore_"):
             handle_view_store(call)
+        elif call.data.startswith("manage_store_reg_"):
+            handle_manage_store_registration(call)
+        elif call.data.startswith("toggle_store_reg_"):
+            handle_toggle_store_registration(call)
         elif call.data.startswith("viewcat_"):
             handle_view_category(call)
         elif call.data.startswith("addtocart_"):
@@ -6466,8 +6597,8 @@ def activate_store_selected(call):
     bot.send_message(call.message.chat.id, "✅ تم تنشيط المتجر بنجاح")
 
 # ====== معالجة المتاجر والعرض ======
-def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id):
-    """إرسال كتالوج المتجر"""
+def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id, customer_telegram_id=None):
+    """إرسال كتالوج المتجر - يتطلب تسجيل الزبون في CreditCustomers إذا كان الإعداد مفعلاً"""
     seller = get_seller_by_telegram(seller_telegram_id)
     
     if not seller or seller[5] != 'active':
@@ -6478,6 +6609,31 @@ def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id):
     store_name = seller[3]
     username = seller[2] or "بائع"
     is_admin_store = (seller[1] == BOT_ADMIN_ID)
+    
+    # التحقق من إعداد RequireCustomerRegistration (العمود 9 في جدول Sellers)
+    # إذا كان الإعداد مفعلاً (1)، يجب التحقق من تسجيل الزبون
+    require_registration = False
+    if len(seller) > 9:
+        require_registration = seller[9] == 1 if not IS_POSTGRES else (seller[9] if seller[9] is not None else False)
+    
+    # التحقق من أن المستخدم مسجل في CreditCustomers لهذا المتجر (فقط إذا كان الإعداد مفعلاً)
+    # استثناء: صاحب المتجر نفسه يمكنه الدخول دائماً
+    if require_registration and customer_telegram_id and customer_telegram_id != seller_telegram_id:
+        if not is_customer_registered_for_store(customer_telegram_id, seller_id):
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("📞 التواصل مع البائع", url=f"https://t.me/{username}" if username else None))
+            
+            bot.send_message(chat_id,
+                f"🔒 **الدخول مقيد**\n\n"
+                f"🏪 المتجر: {store_name}\n\n"
+                f"⚠️ للوصول إلى هذا المتجر، يجب أن تكون مسجلاً كزبون آجل من قبل البائع.\n\n"
+                f"📝 **للحصول على الوصول:**\n"
+                f"• تواصل مع البائع لإضافتك كزبون آجل\n"
+                f"• أو اطلب من البائع إضافتك من خلال قائمة '🏪 إدارة الزبائن الآجلين'\n\n"
+                f"بعد التسجيل، يمكنك الوصول إلى جميع منتجات المتجر.",
+                reply_markup=markup if username else None,
+                parse_mode='Markdown')
+            return
     
     categories = get_categories(seller_id)
     
@@ -6590,7 +6746,8 @@ def browse_stores(message):
 def handle_view_store(call):
     try:
         telegram_id = int(call.data.split("_")[1])
-        send_store_catalog_by_telegram_id(call.message.chat.id, telegram_id)
+        customer_telegram_id = call.from_user.id
+        send_store_catalog_by_telegram_id(call.message.chat.id, telegram_id, customer_telegram_id)
         bot.answer_callback_query(call.id)
     except:
         bot.answer_callback_query(call.id, "خطأ في عرض المتجر")
