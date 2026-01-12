@@ -170,6 +170,37 @@ DB_FILE = os.path.join(DATA_DIR, "store_local_new.db")
 IMAGES_FOLDER = os.path.join(DATA_DIR, "Images")
 os.makedirs(IMAGES_FOLDER, exist_ok=True)
 
+# ===================== نسخ الصور من seed_data عند بدء البوت =====================
+def ensure_images_synced():
+    """
+    نسخ الصور من seed_data/Images إلى data/Images في كل مرة يبدأ البوت
+    هذا يضمن أن الصور متوفرة حتى لو كانت قاعدة البيانات موجودة بالفعل
+    """
+    seed_images_dir = os.path.join(SEED_DIR, "Images")
+    
+    if os.path.exists(seed_images_dir):
+        try:
+            # نسخ جميع الصور من seed_data/Images إلى data/Images
+            for image_file in os.listdir(seed_images_dir):
+                src = os.path.join(seed_images_dir, image_file)
+                dst = os.path.join(IMAGES_FOLDER, image_file)
+                
+                # نسخ الملف إذا لم يكن موجوداً أو إذا كان مختلفاً
+                if os.path.isfile(src):
+                    # نسخ بدون حذف الصور الموجودة الأخرى
+                    if not os.path.exists(dst):
+                        shutil.copy2(src, dst)
+                        print(f"✅ تم نسخ الصورة: {image_file}")
+            
+            print(f"✅ تم مزامنة الصور بنجاح من seed_data/Images")
+        except Exception as e:
+            print(f"⚠️ خطأ في مزامنة الصور: {e}")
+    else:
+        print(f"⚠️ لم يتم العثور على مجلد seed_data/Images")
+
+# تشغيل مزامنة الصور عند بدء البوت
+ensure_images_synced()
+
 # ----------------- استعادة البيانات عند إضافة Volume جديد -----------------
 import shutil
 import urllib.parse
@@ -3076,10 +3107,16 @@ def send_product_with_image(chat_id, product, markup=None, seller_name=""):
             base_name = os.path.basename(img_path)
             alt_path = os.path.join(IMAGES_FOLDER, base_name)
             
+            # 3. Try download from Cloud if not exists locally
             if not os.path.exists(alt_path) and IS_POSTGRES:
-                # 3. Try download from Cloud
-                download_image_from_cloud(base_name)
+                print(f"🔄 محاولة تحميل الصورة من السحابة: {base_name}")
+                download_success = download_image_from_cloud(base_name)
+                if download_success:
+                    print(f"✅ تم تحميل الصورة من السحابة: {base_name}")
+                else:
+                    print(f"❌ فشل تحميل الصورة من السحابة: {base_name}")
             
+            # 4. Send image if available
             if os.path.exists(alt_path):
                 try:
                     with open(alt_path, 'rb') as photo:
@@ -3087,6 +3124,8 @@ def send_product_with_image(chat_id, product, markup=None, seller_name=""):
                     return
                 except Exception as e:
                     print(f"⚠️ Error sending image from alt path {alt_path}: {e}")
+            else:
+                print(f"⚠️ الصورة غير موجودة محلياً ولم يتم تحميلها من السحابة: {base_name}")
 
         # Fallback: Send message without image
         if markup:
@@ -3276,21 +3315,8 @@ def browse_without_registration(message):
         'name': message.from_user.first_name,
         'username': message.from_user.username
     }
-    
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
-    markup.row("تصفح المتاجر 🛍️", "سلة المشتريات 🛒", "👤 تسجيل حساب جديد")
-    markup.row("🏠 الرئيسية")
-    
-    bot.send_message(message.chat.id,
-                    "👀 **مرحباً بك كزائر!**\n\n"
-                    "يمكنك تصفح المتاجر وإضافة المنتجات للسلة.\n"
-                    "عند إنهاء الطلب، سيُطلب منك إدخال معلوماتك.\n\n"
-                    "💡 **للاستفادة من جميع المزايا:**\n"
-                    "• حفظ طلباتك السابقة\n"
-                    "• الشراء على الحساب\n"
-                    "• متابعة مرتجعاتك\n\n"
-                    "اختر '👤 تسجيل حساب جديد' للتسجيل.",
-                    reply_markup=markup)
+    # Reuse the unified buyer menu so guests see the same cart/edit-profile keyboard
+    show_buyer_main_menu(message)
 
 # ====== القوائم الرئيسية ======
 def show_bot_admin_menu(message):
@@ -3751,9 +3777,9 @@ def show_buyer_main_menu(message=None, chat_id=None, user_id=None):
     
     # التحقق إذا كان المستخدم زائراً (غير مسجل)
     if telegram_id in user_states and user_states.get(telegram_id, {}).get('is_guest'):
-        # For guest buyers show only the Cart button
+        # For guest buyers show Cart and Edit Profile buttons only
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.row("سلة المشتريات 🛒")
+        markup.row("سلة المشتريات 🛒", "👤 تعديل بياناتي")
 
         bot.send_message(chat_id,
                         "👀 **مرحباً بك كزائر!**\n\n"
@@ -3762,9 +3788,9 @@ def show_buyer_main_menu(message=None, chat_id=None, user_id=None):
                         reply_markup=markup)
         return
     
-    # For registered buyers show only the Cart button
+    # For registered buyers show only Cart and Edit Profile buttons
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row("سلة المشتريات 🛒")
+    markup.row("سلة المشتريات 🛒", "👤 تعديل بياناتي")
 
     welcome_msg = "👋 **مرحباً بك كـ مشتري!**"
     
@@ -7837,10 +7863,25 @@ def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id, customer_tele
             # إرسال الأزرار مباشرة باستخدام chat_id و user_id
             show_buyer_main_menu(chat_id=chat_id, user_id=customer_telegram_id)
             print(f"✅ Buyer menu sent successfully")
+            # Send an Inline keyboard fallback so mobile clients always have access
+            # to Cart and Edit Profile even if the ReplyKeyboard is hidden/ignored.
+            try:
+                # Send cart button first (ensures visibility on all clients)
+                inline_cart = types.InlineKeyboardMarkup(row_width=1)
+                inline_cart.add(types.InlineKeyboardButton("سلة المشتريات 🛒", callback_data="inline_open_cart"))
+                bot.send_message(chat_id, "استخدم زر السلة السريعة:", reply_markup=inline_cart)
+
+                # Send edit-profile as a separate inline button to avoid client-side hiding
+                inline_profile = types.InlineKeyboardMarkup(row_width=1)
+                inline_profile.add(types.InlineKeyboardButton("👤 تعديل بياناتي", callback_data="inline_edit_profile"))
+                bot.send_message(chat_id, "أو اضغط لتعديل بياناتك:", reply_markup=inline_profile)
+            except Exception as e:
+                print(f"⚠️ Failed to send inline buyer menu: {e}")
         except Exception as e:
             print(f"❌ Error showing buyer menu: {e}")
             import traceback
             traceback.print_exc()
+
 
 @bot.message_handler(func=lambda message: message.text == "تصفح المتاجر 🛍️")
 def browse_stores(message):
@@ -7928,6 +7969,35 @@ def handle_view_store(call):
         bot.answer_callback_query(call.id)
     except:
         bot.answer_callback_query(call.id, "خطأ في عرض المتجر")
+
+
+# Inline callbacks for buyer quick actions (useful for mobile clients)
+@bot.callback_query_handler(func=lambda call: call.data == 'inline_open_cart')
+def handle_inline_open_cart(call):
+    try:
+        # Open cart for the pressing user
+        view_cart(call.message, user_id=call.from_user.id)
+    except Exception as e:
+        print(f"Error in handle_inline_open_cart: {e}")
+    finally:
+        try:
+            bot.answer_callback_query(call.id)
+        except:
+            pass
+
+
+@bot.callback_query_handler(func=lambda call: call.data == 'inline_edit_profile')
+def handle_inline_edit_profile(call):
+    try:
+        # Show edit-profile menu for the pressing user (use call.from_user.id)
+        send_edit_profile_menu(call.message.chat.id, call.from_user.id)
+    except Exception as e:
+        print(f"Error in handle_inline_edit_profile: {e}")
+    finally:
+        try:
+            bot.answer_callback_query(call.id)
+        except:
+            pass
 
 def handle_manage_store_registration(call):
     """إدارة إعداد قيد الدخول للمتجر"""
@@ -10507,19 +10577,23 @@ def process_return_decision(message):
 # ====== تعديل بيانات المستخدم ======
 @bot.message_handler(func=lambda message: message.text == "👤 تعديل بياناتي")
 def edit_user_info(message):
-    user = get_user(message.from_user.id)
-    
+    # Delegate to helper so callbacks can reuse the same UI
+    send_edit_profile_menu(message.chat.id, message.from_user.id)
+
+
+def send_edit_profile_menu(chat_id, user_id):
+    user = get_user(user_id)
     if not user:
-        bot.send_message(message.chat.id, "⚠️ لم يتم العثور على بياناتك.")
+        bot.send_message(chat_id, "⚠️ لم يتم العثور على بياناتك.")
         return
-    
+
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
         types.InlineKeyboardButton("✏️ تعديل الاسم", callback_data="edit_name"),
         types.InlineKeyboardButton("📞 تعديل الهاتف", callback_data="edit_phone")
     )
-    
-    bot.send_message(message.chat.id,
+
+    bot.send_message(chat_id,
                     f"👤 **بياناتك الحالية:**\n\n"
                     f"🆔 المعرف: {user[1]}\n"
                     f"👤 الاسم: {user[5] if user[5] else 'غير محدد'}\n"
