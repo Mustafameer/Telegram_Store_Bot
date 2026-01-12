@@ -168,7 +168,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return [
       {'icon': Icons.dashboard, 'label': 'لوحة التحكم'},
       if (widget.isAdmin || widget.isSeller) {'icon': Icons.store, 'label': 'متجري', 'count': _counts['products']},
-      {'icon': Icons.shopping_cart, 'label': 'سلة المشتريات', 'count': _counts['cart']},
+      {'icon': Icons.shopping_cart, 'label': 'سلة المشتريات 🛒', 'count': _counts['cart']},
       {'icon': Icons.settings, 'label': 'الاعدادات'},
       if (widget.isAdmin || widget.isSeller) {'icon': Icons.message, 'label': 'الرسائل', 'count': _counts['messages']},
       {'icon': Icons.logout, 'label': 'خروج', 'isExit': true},
@@ -279,14 +279,19 @@ class _HomeScreenState extends State<HomeScreen> {
                      _onDestinationSelected(destinations.indexWhere((d) => d['isExit'] == true));
                    }
                  },
-                 itemBuilder: (context) => [
-                   const PopupMenuItem(value: 'settings', child: Row(
-                     children: [Icon(Icons.settings, size: 20), SizedBox(width: 8), Text('الإعدادات')],
-                   )),
-                   const PopupMenuItem(value: 'logout', child: Row(
+                 itemBuilder: (context) {
+                   // Only show settings to app admin
+                   final items = <PopupMenuEntry<String>>[];
+                   if (widget.isAdmin) {
+                     items.add(const PopupMenuItem(value: 'settings', child: Row(
+                       children: [Icon(Icons.settings, size: 20), SizedBox(width: 8), Text('الإعدادات')],
+                     )));
+                   }
+                   items.add(const PopupMenuItem(value: 'logout', child: Row(
                      children: [Icon(Icons.logout, size: 20, color: Colors.red), SizedBox(width: 8), Text('خروج', style: TextStyle(color: Colors.red))],
-                   )),
-                 ],
+                   )));
+                   return items;
+                 },
                ),
             ],
          ),
@@ -343,14 +348,18 @@ class _HomeScreenState extends State<HomeScreen> {
                   _onDestinationSelected(destinations.indexWhere((d) => d['isExit'] == true));
                 }
               },
-              itemBuilder: (context) => [
-                const PopupMenuItem(value: 'settings', child: Row(
-                  children: [Icon(Icons.settings, size: 20), SizedBox(width: 8), Text('الإعدادات')],
-                )),
-                const PopupMenuItem(value: 'logout', child: Row(
+              itemBuilder: (context) {
+                final items = <PopupMenuEntry<String>>[];
+                if (widget.isAdmin) {
+                  items.add(const PopupMenuItem(value: 'settings', child: Row(
+                    children: [Icon(Icons.settings, size: 20), SizedBox(width: 8), Text('الإعدادات')],
+                  )));
+                }
+                items.add(const PopupMenuItem(value: 'logout', child: Row(
                   children: [Icon(Icons.logout, size: 20, color: Colors.red), SizedBox(width: 8), Text('خروج', style: TextStyle(color: Colors.red))],
-                )),
-              ],
+                )));
+                return items;
+              },
             ),
           ],
         ),

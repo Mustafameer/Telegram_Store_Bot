@@ -285,19 +285,13 @@ class _ProductsTabState extends State<ProductsTab> {
                         ? (MediaQuery.of(context).size.width - 32) / 2  // Mobile: 2 columns مع padding
                         : 250,  // Desktop: fixed size
                     childAspectRatio: () {
-                      // للمشترين في المتاجر المقفولة: استخدام الارتفاع 4.97 سم
+                      // للمشترين في المتاجر المقفولة: استخدام نسبة مربع (1.0) لبطاقة 4.97 × 4.97
                       // لصاحب المتجر أو المتاجر المفتوحة: استخدام الأبعاد الأصلية
                       final isRestrictedForBuyer = !widget.isEditable && widget.requireCustomerRegistration;
                       
                       if (isRestrictedForBuyer) {
-                        // حساب النسبة بناءً على الارتفاع المطلوب 4.97 سم
-                        final maxWidth = MediaQuery.of(context).size.width < 600 
-                            ? (MediaQuery.of(context).size.width - 32) / 2
-                            : 250.0;
-                        final targetHeightCm = 4.97;
-                        final cmToPx = 37.8; // تقريباً على معظم الشاشات
-                        final targetHeightPx = targetHeightCm * cmToPx;
-                        return maxWidth / targetHeightPx;
+                        // للمتاجر المقفولة: نسبة مربع تماماً (1.0)
+                        return 1.0;
                   } else {
                     // الأبعاد للمتاجر المفتوحة أو لصاحب المتجر (زيادة النسبة لتجنب overflow)
                     return MediaQuery.of(context).size.width < 600 ? 0.58 : 0.62;
@@ -339,19 +333,13 @@ class _ProductsTabState extends State<ProductsTab> {
                     ? (MediaQuery.of(context).size.width - 32) / 2  // Mobile: 2 columns مع padding
                     : 250,  // Desktop: fixed size
                 childAspectRatio: () {
-                  // للمشترين في المتاجر المقفولة: استخدام الارتفاع 4.97 سم
+                  // للمشترين في المتاجر المقفولة: استخدام نسبة مربع (1.0) لبطاقة 4.97 × 4.97
                   // لصاحب المتجر أو المتاجر المفتوحة: استخدام الأبعاد الأصلية
                   final isRestrictedForBuyer = !widget.isEditable && widget.requireCustomerRegistration;
                   
                   if (isRestrictedForBuyer) {
-                    // حساب النسبة بناءً على الارتفاع المطلوب 4.97 سم
-                    final maxWidth = MediaQuery.of(context).size.width < 600 
-                        ? (MediaQuery.of(context).size.width - 32) / 2
-                        : 250.0;
-                    final targetHeightCm = 4.97;
-                    final cmToPx = 37.8; // تقريباً على معظم الشاشات
-                    final targetHeightPx = targetHeightCm * cmToPx;
-                    return maxWidth / targetHeightPx;
+                    // للمتاجر المقفولة: نسبة مربع تماماً (1.0)
+                    return 1.0;
                   } else {
                     // الأبعاد للمتاجر المفتوحة أو لصاحب المتجر (زيادة النسبة لتجنب overflow)
                     return MediaQuery.of(context).size.width < 600 ? 0.58 : 0.62;

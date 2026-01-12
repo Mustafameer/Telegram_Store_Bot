@@ -147,7 +147,7 @@ class _CartScreenState extends State<CartScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('سلة المشتريات')),
+      appBar: AppBar(title: const Text('سلة المشتريات 🛒')),
       body: FutureBuilder<List<Map<String, dynamic>>>(
         future: _cartFuture,
         builder: (context, snapshot) {

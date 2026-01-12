@@ -170,10 +170,10 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
                 GestureDetector(
                   onTap: _pickImage,
                   child: Container(
-                    // للمتاجر المقفولة: استخدام نفس ارتفاع البطاقة (4.97 سم)
+                    // للمتاجر المقفولة: استخدام أبعاد مربع 4.97 * 4.97 سم (186 * 186 بكسل)
                     // للمتاجر المفتوحة: استخدام ارتفاع أكبر قليلاً (150 بكسل)
-                    height: widget.requireCustomerRegistration ? 188 : 150,
-                    width: double.infinity,
+                    height: widget.requireCustomerRegistration ? 186 : 150,
+                    width: widget.requireCustomerRegistration ? 186 : double.infinity,
                     decoration: BoxDecoration(
                       color: Colors.grey[200],
                       borderRadius: BorderRadius.circular(12),

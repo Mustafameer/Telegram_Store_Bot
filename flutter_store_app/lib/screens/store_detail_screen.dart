@@ -200,11 +200,11 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
 
     if (isExit) {
       if (canPop) {
-        Navigator.of(context).pop();
+        // قبل الرجوع: تنفيذ مزامنة سريعة
+        _performSyncAndExit();
       } else {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (context) => const LoginScreen()),
-        );
+        // قبل الخروج: تنفيذ مزامنة كاملة ثم الخروج للشاشة الرئيسية
+        _performSyncAndLogout();
       }
       return;
     }
@@ -212,6 +212,42 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
       _selectedIndex = index;
     });
     _refreshCounts(); 
+  }
+
+  Future<void> _performSyncAndExit() async {
+    try {
+      print("🔄 Syncing before pop...");
+      await SyncService.instance.syncNow();
+      print("✅ Sync completed, popping...");
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    } catch (e) {
+      print("⚠️ Sync error (non-critical): $e");
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    }
+  }
+
+  Future<void> _performSyncAndLogout() async {
+    try {
+      print("🔄 Syncing before logout...");
+      await SyncService.instance.syncNow();
+      print("✅ Sync completed, logging out...");
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (context) => const LoginScreen()),
+        );
+      }
+    } catch (e) {
+      print("⚠️ Sync error (non-critical): $e");
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (context) => const LoginScreen()),
+        );
+      }
+    }
   }
 
   @override

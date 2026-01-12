@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import '../../database/database_helper.dart';
 import '../../models/database_models.dart';
 import '../../services/telegram_service.dart';
+import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 
 // دالة لتنسيق المبالغ مع فاصلة الآلاف وإزالة الكسور
 String formatPrice(dynamic price) {
@@ -113,14 +114,20 @@ class _OrdersTabState extends State<OrdersTab> {
                 return const Center(child: Text('لا يوجد طلبات مطابقة'));
               }
 
-              return GridView.builder(
+              // Use a Masonry grid so each order card can grow vertically
+              // to fit its content and avoid overflow. We compute a max
+              // cross-axis extent (card width) and let heights be intrinsic.
+              final double baseMaxExtent = 250;
+              // Add 2 cm to card width when height is variable so content has room.
+              // 1 cm ≈ 38 logical pixels, so 2 cm ≈ 76 logical pixels.
+              final double extraWidthFor2cm = 76.0; // ~2 cm
+              final double newMaxExtent = baseMaxExtent + extraWidthFor2cm;
+
+              return MasonryGridView.extent(
+                maxCrossAxisExtent: newMaxExtent,
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                  maxCrossAxisExtent: 250, 
-                  childAspectRatio: 0.62, // Taller for list
-                  crossAxisSpacing: 16,
-                  mainAxisSpacing: 16,
-                ),
+                mainAxisSpacing: 16,
+                crossAxisSpacing: 16,
                 itemCount: _filteredOrders.length,
                 itemBuilder: (context, index) {
                   final order = _filteredOrders[index];
@@ -226,20 +233,19 @@ class _OrdersTabState extends State<OrdersTab> {
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start, 
                     children: [
-                      // Info Column (Rightmost in RTL)
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start, // Align text to start (Right)
-                        children: [
-                           // Add direction ltr to numbers if needed, but here simple text
-                          _buildMockupRow(Icons.calendar_today, order.createdAt.split(' ').first),
-                          const SizedBox(height: 4),
-                          _buildMockupRow(Icons.phone_android, order.notes?.isNotEmpty == true ? order.notes! : '----------'), 
-                          const SizedBox(height: 4),
-                          _buildMockupRow(Icons.location_on, order.deliveryAddress ?? '---'),
-                        ],
+                      // Info Column (Rightmost in RTL) - make flexible to avoid overflow
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _buildMockupRow(Icons.calendar_today, order.createdAt.split(' ').first),
+                            const SizedBox(height: 4),
+                            _buildMockupRow(Icons.phone_android, order.notes?.isNotEmpty == true ? order.notes! : '----------'),
+                            const SizedBox(height: 4),
+                            _buildMockupRow(Icons.location_on, order.deliveryAddress ?? '---'),
+                          ],
+                        ),
                       ),
-                      
-                      const Spacer(),
 
                       // Total Price Pill (Leftmost in RTL)
                       Container(
@@ -322,10 +328,10 @@ class _OrdersTabState extends State<OrdersTab> {
                                      child: item['ImagePath'] == null ? const Icon(Icons.image, size: 20, color: Colors.white24) : null,
                                    ),
                                  ],
-                               ),
-                             )),
+                              ),
+                                           )),
                              
-                             if (items.length > 2)
+                                           if (items.length > 2)
                                Align(
                                  alignment: Alignment.centerRight,
                                  child: Text(
@@ -341,7 +347,8 @@ class _OrdersTabState extends State<OrdersTab> {
               ),
             ),
             
-            const Spacer(),
+            // Removed `Spacer()` to allow the card to size itself based on content
+            const SizedBox(height: 8),
 
             // 4. Buttons (Footer)
             // Only if Editable
@@ -418,12 +425,14 @@ class _OrdersTabState extends State<OrdersTab> {
 
   Widget _buildMockupRow(IconData icon, String text) {
     return Row(
-      mainAxisSize: MainAxisSize.min,
       children: [
-        Text(
-          text, 
-          style: const TextStyle(color: Colors.white, fontSize: 13, fontFamily: 'Cairo'),
-          maxLines: 1, overflow: TextOverflow.ellipsis,
+        Flexible(
+          child: Text(
+            text,
+            style: const TextStyle(color: Colors.white, fontSize: 13, fontFamily: 'Cairo'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
         ),
         const SizedBox(width: 8),
         Icon(icon, size: 16, color: Colors.grey),

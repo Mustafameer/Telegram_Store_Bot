@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../database/database_helper.dart';
 import '../models/database_models.dart';
 import 'home_screen.dart';
+import 'store_detail_screen.dart';
 import '../services/sync_service.dart';
 import '../services/exit_service.dart';
 
@@ -114,15 +115,15 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
-      // 2. Check if Seller
+      // 2. Check if Seller -> open StoreDetailScreen directly for sellers
       final seller = await DatabaseHelper.instance.getSellerByTelegramId(telegramId);
       if (seller != null) {
         if (!mounted) return;
         Navigator.of(context).pushReplacement(
-           MaterialPageRoute(builder: (context) => HomeScreen(
-             isAdmin: false, 
-             isSeller: true,
-             currentUserId: telegramId
+           MaterialPageRoute(builder: (context) => StoreDetailScreen(
+             seller: seller,
+             isSellerMode: true,
+             currentUserId: telegramId,
            )),
         );
         return;
