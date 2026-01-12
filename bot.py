@@ -7774,23 +7774,10 @@ def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id, customer_tele
             pid, name, desc, price, wholesale_price, qty, img_path = product
             print(f"DEBUG: Displaying product {pid}: {name}, qty={qty}")
             if qty > 0:
-                # للمتاجر المقفولة: عرض بدون صور مع زر خاص لاختيار الصور
-                if require_registration:
-                    markup = types.InlineKeyboardMarkup()
-                    markup.add(types.InlineKeyboardButton("📸 اختر الصور", callback_data=f"select_images_{pid}"))
-                    
-                    text = f"📦 **{name}**\n"
-                    if desc:
-                        text += f"📝 {desc[:100]}{'...' if len(desc) > 100 else ''}\n"
-                    text += f"💰 السعر: {price:,.0f} د.ع للصورة الواحدة\n"
-                    text += f"📊 الكمية المتاحة: {qty} صورة"
-                    
-                    bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
-                else:
-                    # للمتاجر المفتوحة: العرض العادي مع الصور
-                    markup = types.InlineKeyboardMarkup()
-                    markup = create_product_markup_with_qty(pid, 1)
-                    send_product_with_image(chat_id, product, markup, store_name)
+                # دائماً: عرض مع الصور والأزرار
+                markup = types.InlineKeyboardMarkup()
+                markup = create_product_markup_with_qty(pid, 1)
+                send_product_with_image(chat_id, product, markup, store_name)
     else:
         markup = types.InlineKeyboardMarkup(row_width=2)
         for cat_id, cat_name in categories:
