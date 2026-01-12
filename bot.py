@@ -10106,25 +10106,135 @@ def handle_confirm_order_seller(call):
     except:
         pass
 
+def send_order_images_to_buyer(order_id, buyer_id, seller_id):
+    """إرسال صور المنتجات المطلوبة للزبون عند الشحن"""
+    try:
+        from db_manager import get_product_images_for_order, delete_product_images
+        
+        # الحصول على تفاصيل الطلب
+        order_details, items = get_order_details(order_id)
+        if not order_details or not items:
+            print(f"❌ لم يتم العثور على تفاصيل الطلب {order_id}")
+            return False
+        
+        seller = get_seller_by_id(seller_id)
+        seller_name = seller[3] if seller else "المتجر"
+        
+        # إرسال رسالة ترحيب
+        bot.send_message(buyer_id,
+                        f"📦 **صور طلبك #{order_id}** 📸\n\n"
+                        f"🏪 المتجر: {seller_name}\n"
+                        f"جاري إرسال صور المنتجات المطلوبة...",
+                        parse_mode='Markdown')
+        
+        images_to_delete = []
+        product_updates = {}
+        
+        # معالجة كل منتج في الطلب
+        for product_id, quantity, price in items:
+            product = get_product_by_id(product_id)
+            if not product:
+                continue
+            
+            # الحصول على الصور المطلوبة
+            images = get_product_images_for_order(product_id, quantity)
+            
+            if not images:
+                bot.send_message(buyer_id,
+                                f"⚠️ لم توجد صور متاحة للمنتج: {product.name}",
+                                parse_mode='Markdown')
+                continue
+            
+            # إرسال رسالة المنتج
+            product_msg = f"📦 **{product.name}**\n"
+            if product.description:
+                product_msg += f"📝 {product.description}\n"
+            product_msg += f"💰 السعر: {price:,.0f} د.ع\n"
+            product_msg += f"📊 العدد المطلوب: {quantity}\n\n"
+            product_msg += f"📸 الصور ({len(images)}):"
+            
+            bot.send_message(buyer_id, product_msg, parse_mode='Markdown')
+            
+            # إرسال الصور
+            for idx, image_data in enumerate(images):
+                image_id, prod_id, image_path = image_data
+                
+                try:
+                    # محاولة إرسال الصورة
+                    if os.path.exists(image_path):
+                        with open(image_path, 'rb') as f:
+                            bot.send_photo(buyer_id, f,
+                                         caption=f"صورة {idx + 1} من {len(images)}")
+                    else:
+                        print(f"⚠️ الصورة غير موجودة: {image_path}")
+                        bot.send_message(buyer_id,
+                                       f"⚠️ لم تتمكن من إرسال الصورة {idx + 1}",
+                                       parse_mode='Markdown')
+                    
+                    # إضافة الصورة قائمة الحذف
+                    images_to_delete.append(image_id)
+                    
+                except Exception as e:
+                    print(f"❌ خطأ في إرسال الصورة {image_id}: {e}")
+            
+            # تسجيل تحديث الكمية
+            product_updates[product_id] = quantity
+        
+        # حذف الصور بعد الإرسال
+        if images_to_delete:
+            if delete_product_images(images_to_delete):
+                print(f"✅ تم حذف {len(images_to_delete)} صورة من الطلب {order_id}")
+        
+        # تحديث كمية المنتجات
+        for product_id, quantity in product_updates.items():
+            try:
+                product = get_product_by_id(product_id)
+                if product:
+                    new_qty = max(0, product.quantity - quantity)
+                    conn = get_db_connection()
+                    cursor = conn.cursor()
+                    cursor.execute("UPDATE Products SET Quantity = ? WHERE ProductID = ?",
+                                 (new_qty, product_id))
+                    conn.commit()
+                    conn.close()
+                    print(f"✅ تم تحديث كمية المنتج {product_id}: {new_qty}")
+            except Exception as e:
+                print(f"❌ خطأ في تحديث كمية المنتج {product_id}: {e}")
+        
+        # رسالة ختامية
+        bot.send_message(buyer_id,
+                        f"✅ **انتهاء الشحن**\n\n"
+                        f"🎉 تم إرسال جميع صور طلبك #{order_id}\n"
+                        f"شكراً لك على الشراء! 💝",
+                        parse_mode='Markdown')
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ خطأ في إرسال صور الطلب {order_id}: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
 def handle_ship_order(call):
     order_id = int(call.data.split("_")[2])
     update_order_status(order_id, "Shipped")
     mark_messages_read_by_order(order_id) # Fix: Clear message counter
     
-    bot.answer_callback_query(call.id, "🚚 تم تحديث حالة الشحن")
-    
-    order_details, _ = get_order_details(order_id)
+    # الحصول على معلومات الطلب
+    order_details, items = get_order_details(order_id)
     if order_details and order_details[1]:
-        try:
-            bot.send_message(order_details[1], 
-                           f"🚚 **تم شحن طلبك #{order_id}**\n\n"
-                           f"تم شحن طلبك وهو في الطريق إليك.")
-        except:
-            pass
+        buyer_id = order_details[1]
+        seller_id = order_details[2]
+        
+        # إرسال الصور للزبون
+        send_order_images_to_buyer(order_id, buyer_id, seller_id)
+    
+    bot.answer_callback_query(call.id, "🚚 تم تحديث حالة الشحن وإرسال الصور")
     
     try:
         bot.edit_message_text(
-            f"{call.message.text}\n\n🚚 **تم شحن الطلب**",
+            f"{call.message.text}\n\n🚚 **تم شحن الطلب وإرسال الصور**",
             call.message.chat.id,
             call.message.message_id,
             parse_mode='Markdown',

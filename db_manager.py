@@ -90,3 +90,47 @@ def get_product_by_id(product_id) -> Product:
         cursor.execute(query, (product_id,))
         row = cursor.fetchone()
         return Product.from_tuple(row) if row else None
+# ==================== Product Images Functions ====================
+
+def get_product_images(product_id):
+    """الحصول على صور المنتج من جدول ProductImages"""
+    query = normalize_query("SELECT ImageID, ProductID, ImagePath FROM ProductImages WHERE ProductID = ? ORDER BY ImageID")
+    with get_db_cursor() as cursor:
+        cursor.execute(query, (product_id,))
+        rows = cursor.fetchall()
+        return rows
+
+def get_product_images_for_order(product_id, quantity):
+    """الحصول على عدد معين من الصور للطلب (حسب الكمية المطلوبة)"""
+    query = normalize_query("SELECT ImageID, ProductID, ImagePath FROM ProductImages WHERE ProductID = ? LIMIT ?")
+    with get_db_cursor() as cursor:
+        cursor.execute(query, (product_id, quantity))
+        rows = cursor.fetchall()
+        return rows
+
+def delete_product_images(image_ids):
+    """حذف صور المنتج بعد الشحن"""
+    if not image_ids:
+        return True
+    
+    placeholders = ','.join(['%s' if IS_POSTGRES else '?' for _ in image_ids])
+    query = f"DELETE FROM ProductImages WHERE ImageID IN ({placeholders})"
+    
+    try:
+        with get_db_cursor(commit=True) as cursor:
+            cursor.execute(query, image_ids)
+        return True
+    except Exception as e:
+        print(f"Error deleting product images: {e}")
+        return False
+
+def update_product_quantity(product_id, quantity):
+    """تحديث كمية المنتج"""
+    query = normalize_query("UPDATE Products SET Quantity = Quantity - ? WHERE ProductID = ?")
+    try:
+        with get_db_cursor(commit=True) as cursor:
+            cursor.execute(query, (quantity, product_id))
+        return True
+    except Exception as e:
+        print(f"Error updating product quantity: {e}")
+        return False
