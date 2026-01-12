@@ -113,15 +113,31 @@ def delete_product_images(image_ids):
     if not image_ids:
         return True
     
-    placeholders = ','.join(['%s' if IS_POSTGRES else '?' for _ in image_ids])
-    query = f"DELETE FROM ProductImages WHERE ImageID IN ({placeholders})"
-    
     try:
-        with get_db_cursor(commit=True) as cursor:
-            cursor.execute(query, image_ids)
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        # إنشء قائمة من علامات الاستفهام
+        placeholders = ','.join(['%s' if IS_POSTGRES else '?' for _ in image_ids])
+        query = f"DELETE FROM ProductImages WHERE ImageID IN ({placeholders})"
+        
+        print(f"🔍 DEBUG: Query: {query}")
+        print(f"🔍 DEBUG: Params: {image_ids}")
+        
+        cursor.execute(query, image_ids)
+        conn.commit()
+        
+        rows_deleted = cursor.rowcount
+        print(f"✅ تم حذف {rows_deleted} صورة")
+        
+        cursor.close()
+        conn.close()
         return True
+        
     except Exception as e:
-        print(f"Error deleting product images: {e}")
+        print(f"❌ Error deleting product images: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def update_product_quantity(product_id, quantity):
