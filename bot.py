@@ -2475,37 +2475,37 @@ def create_order(buyer_id, seller_id, cart_items, delivery_address=None, notes=N
                 new_qty = 0
             cursor_wrapper.execute("UPDATE Products SET Quantity=? WHERE ProductID=?", (new_qty, pid))
     
-    # تسجيل المعاملة في كشف الحساب حسب نوع الزبون وطريقة الدفع
-    buyer_info = get_user(buyer_id)
-    if buyer_info:
-        phone = buyer_info[4]
-        full_name = buyer_info[5]
-        customer = get_credit_customer(seller_id, phone, full_name)
-        if customer:
-            customer_type = customer[4] if len(customer) > 4 else 'CreditCustomer'
-            
-            # تحديد متى نسجل المعاملة:
-            # - زبون آجل: دائماً نسجل إذا كان الدفع آجل
-            # - نقطة بيع: نسجل فقط إذا كان الدفع آجل (لا نسجل إذا كان نقدي)
-            should_record = False
-            if customer_type == 'CreditCustomer':
-                # زبون آجل: نسجل إذا كان الدفع آجل
-                should_record = (payment_method == 'credit' and not fully_paid)
-            elif customer_type == 'PointOfSale':
-                # نقطة بيع: نسجل فقط إذا كان الدفع آجل
-                should_record = (payment_method == 'credit' and not fully_paid)
-            
-            if should_record:
-                # التحقق من الحد الائتماني قبل إتمام الشراء
-                can_purchase, message, max_limit, current_used, remaining = check_credit_limit(customer[0], seller_id, total)
-                if not can_purchase:
-                    # إرجاع الطلب
-                    conn.rollback()
-                    cursor_wrapper.close()
-                    conn.close()
-                    return None, message
+        # تسجيل المعاملة في كشف الحساب حسب نوع الزبون وطريقة الدفع
+        buyer_info = get_user(buyer_id)
+        if buyer_info:
+            phone = buyer_info[4]
+            full_name = buyer_info[5]
+            customer = get_credit_customer(seller_id, phone, full_name)
+            if customer:
+                customer_type = customer[4] if len(customer) > 4 else 'CreditCustomer'
                 
-                add_credit_transaction(customer[0], seller_id, 'purchase', total, f"شراء طلب #{order_id}")
+                # تحديد متى نسجل المعاملة:
+                # - زبون آجل: دائماً نسجل إذا كان الدفع آجل
+                # - نقطة بيع: نسجل فقط إذا كان الدفع آجل (لا نسجل إذا كان نقدي)
+                should_record = False
+                if customer_type == 'CreditCustomer':
+                    # زبون آجل: نسجل إذا كان الدفع آجل
+                    should_record = (payment_method == 'credit' and not fully_paid)
+                elif customer_type == 'PointOfSale':
+                    # نقطة بيع: نسجل فقط إذا كان الدفع آجل
+                    should_record = (payment_method == 'credit' and not fully_paid)
+                
+                if should_record:
+                    # التحقق من الحد الائتماني قبل إتمام الشراء
+                    can_purchase, message, max_limit, current_used, remaining = check_credit_limit(customer[0], seller_id, total)
+                    if not can_purchase:
+                        # إرجاع الطلب
+                        conn.rollback()
+                        cursor_wrapper.close()
+                        conn.close()
+                        return None, message
+                    
+                    add_credit_transaction(customer[0], seller_id, 'purchase', total, f"شراء طلب #{order_id}")
 
         conn.commit()
         notify_seller_of_order(order_id, buyer_id, seller_id)
@@ -3751,28 +3751,22 @@ def show_buyer_main_menu(message=None, chat_id=None, user_id=None):
     
     # التحقق إذا كان المستخدم زائراً (غير مسجل)
     if telegram_id in user_states and user_states.get(telegram_id, {}).get('is_guest'):
+        # For guest buyers show only the Cart button
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.row("تصفح المتاجر 🛍️", "سلة المشتريات 🛒")
-        markup.row("👤 تسجيل حساب جديد", "🏠 الرئيسية")
-        
+        markup.row("سلة المشتريات 🛒")
+
         bot.send_message(chat_id,
                         "👀 **مرحباً بك كزائر!**\n\n"
                         "يمكنك تصفح المتاجر وإضافة المنتجات للسلة.\n"
-                        "عند إنهاء الطلب، سيُطلب منك إدخال معلوماتك.\n\n"
-                        "💡 **للاستفادة من جميع المزايا:**\n"
-                        "• حفظ طلباتك السابقة\n"
-                        "• الشراء على الحساب\n"
-                        "• متابعة مرتجعاتك\n\n"
-                        "اختر '👤 تسجيل حساب جديد' للتسجيل.",
+                        "عند إنهاء الطلب، سيُطلب منك إدخال معلوماتك.",
                         reply_markup=markup)
         return
     
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
-    markup.row("تصفح المتاجر 🛍️", "سلة المشتريات 🛒")
-    markup.row("💰 كشف حسابي الآجل", "👤 تعديل بياناتي", "🏪 إنشاء متجر جديد")
-    markup.row("🏠 الرئيسية")
-    
-    welcome_msg = "👋 **مرحباً بك كـ مشتري!**\nاختر من القائمة:"
+    # For registered buyers show only the Cart button
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row("سلة المشتريات 🛒")
+
+    welcome_msg = "👋 **مرحباً بك كـ مشتري!**"
     
     if user and (user[4] or user[5]):
         welcome_msg += f"\n\n👤 الاسم: {user[5] if user[5] else 'غير محدد'}"
