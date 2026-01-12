@@ -1301,18 +1301,19 @@ def get_suspended_sellers():
 
 # ===================== نظام الزبائن الآجل =====================
 
-def download_image_from_cloud(filename):
+def get_image_from_cloud(filename):
     """
-    Downloads an image from the Cloud 'ImageStorage' table if it exists
-    and saves it to the local IMAGES_FOLDER.
-    Returns True if successful, False otherwise.
+    جلب صورة من السحابة مباشرة دون الحاجة لحفظها محلياً
+    Returns bytes إذا وُجدت، None إذا لم تُوجد
     """
     if not IS_POSTGRES:
-        return False
+        return None
         
     try:
-        # Sanitize filename
-        filename = os.path.basename(filename)
+        filename = os.path.basename(filename) if filename else None
+        
+        if not filename:
+            return None
         
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -1321,36 +1322,117 @@ def download_image_from_cloud(filename):
         cursor.execute("SELECT FileData FROM ImageStorage WHERE FileName = %s", (filename,))
         result = cursor.fetchone()
         
-        # If exact match fails, try partial match (for cases where path differs)
+        # If exact match fails, try case-insensitive
         if not result:
-            print(f"⚠️ Exact match failed for: {filename}, trying partial match...")
-            cursor.execute("SELECT FileName, FileData FROM ImageStorage WHERE FileName LIKE %s LIMIT 1", (f"%{filename}%",))
-            partial_result = cursor.fetchone()
-            
-            if partial_result:
-                print(f"✅ Found partial match: {partial_result[0]}")
-                result = (partial_result[1],)
-                # Update filename to matched one
-                filename = os.path.basename(partial_result[0])
+            cursor.execute("SELECT FileData FROM ImageStorage WHERE LOWER(FileName) = LOWER(%s) LIMIT 1", (filename,))
+            result = cursor.fetchone()
+        
+        # If still not found, try partial match
+        if not result:
+            base_without_ext = os.path.splitext(filename)[0]
+            cursor.execute("""
+                SELECT FileData 
+                FROM ImageStorage 
+                WHERE FileName LIKE %s 
+                ORDER BY UpdatedAt DESC 
+                LIMIT 1
+            """, (f"%{base_without_ext}%",))
+            result = cursor.fetchone()
+        
+        conn.close()
         
         if result and result[0]:
             file_data = result[0]
             
-            # Handle different data types (memoryview, bytes, etc.)
+            # Handle different data types
+            if isinstance(file_data, memoryview):
+                return file_data.tobytes()
+            elif isinstance(file_data, bytes):
+                return file_data
+            elif isinstance(file_data, str):
+                return file_data.encode('latin1')
+            
+            return file_data
+        
+        return None
+        
+    except Exception as e:
+        print(f"❌ Error getting image from cloud: {e}")
+        return None
+
+
+def download_image_from_cloud(filename):
+    """
+    تحميل صورة من السحابة وحفظها محلياً.
+    مع دعم البحث الذكي عن الصور
+    """
+    if not IS_POSTGRES:
+        return False
+        
+    try:
+        # Sanitize filename
+        filename = os.path.basename(filename) if filename else None
+        
+        if not filename:
+            print(f"❌ No filename provided")
+            return False
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Try exact match first
+        cursor.execute("SELECT FileData FROM ImageStorage WHERE FileName = %s", (filename,))
+        result = cursor.fetchone()
+        found_filename = filename
+        
+        # If exact match fails, try case-insensitive match
+        if not result:
+            print(f"⚠️ Exact match failed for: {filename}, trying case-insensitive match...")
+            cursor.execute("SELECT FileName, FileData FROM ImageStorage WHERE LOWER(FileName) = LOWER(%s) LIMIT 1", (filename,))
+            row = cursor.fetchone()
+            
+            if row:
+                found_filename = row[0]
+                result = (row[1],)
+                print(f"✅ Found case-insensitive match: {found_filename}")
+        
+        # If still not found, try partial match
+        if not result:
+            print(f"⚠️ Case-insensitive match failed, trying partial match...")
+            # Extract just the basename without extension for matching
+            base_without_ext = os.path.splitext(filename)[0]
+            cursor.execute("""
+                SELECT FileName, FileData 
+                FROM ImageStorage 
+                WHERE FileName LIKE %s 
+                ORDER BY UpdatedAt DESC 
+                LIMIT 1
+            """, (f"%{base_without_ext}%",))
+            row = cursor.fetchone()
+            
+            if row:
+                found_filename = row[0]
+                result = (row[1],)
+                print(f"✅ Found partial match: {found_filename}")
+        
+        if result and result[0]:
+            file_data = result[0]
+            
+            # Handle different data types
             if isinstance(file_data, memoryview):
                 file_data = file_data.tobytes()
             elif isinstance(file_data, str):
-                # If somehow it's a string, encode it
                 file_data = file_data.encode('latin1')
                 
             # Ensure IMAGES_FOLDER exists
             os.makedirs(IMAGES_FOLDER, exist_ok=True)
             
-            local_path = os.path.join(IMAGES_FOLDER, filename)
+            # Save with the found filename
+            local_path = os.path.join(IMAGES_FOLDER, found_filename)
             with open(local_path, 'wb') as f:
                 f.write(file_data)
             
-            print(f"✅ Downloaded {filename} ({len(file_data):,} bytes) to {local_path}")
+            print(f"✅ Downloaded {found_filename} ({len(file_data):,} bytes) to {local_path}")
             conn.close()
             return True
             
@@ -3078,7 +3160,25 @@ def send_product_with_image(chat_id, product, markup=None, seller_name=""):
         
         if img_path:
             print(f"DEBUG: Image path for {pid}: {img_path}")
-            # 1. Check direct path
+            
+            # 1. Try to get image from cloud directly (faster for mobile users)
+            if IS_POSTGRES:
+                base_name = os.path.basename(img_path)
+                print(f"🔄 محاولة جلب الصورة من السحابة مباشرة: {base_name}")
+                
+                cloud_image = get_image_from_cloud(base_name)
+                if cloud_image:
+                    try:
+                        print(f"✅ Got image from cloud ({len(cloud_image):,} bytes), sending directly")
+                        from io import BytesIO
+                        image_file = BytesIO(cloud_image)
+                        image_file.name = base_name
+                        bot.send_photo(chat_id, image_file, caption=caption, reply_markup=markup, parse_mode='Markdown')
+                        return
+                    except Exception as e:
+                        print(f"⚠️ Error sending image from cloud: {e}")
+            
+            # 2. Check direct path
             if os.path.exists(img_path):
                 try:
                     print(f"✅ Found image at direct path: {img_path}")
@@ -3088,12 +3188,12 @@ def send_product_with_image(chat_id, product, markup=None, seller_name=""):
                 except Exception as e:
                     print(f"⚠️ Error sending image from direct path {img_path}: {e}")
             
-            # 2. Check in IMAGES_FOLDER by basename
+            # 3. Check in IMAGES_FOLDER by basename
             base_name = os.path.basename(img_path)
             alt_path = os.path.join(IMAGES_FOLDER, base_name)
             print(f"DEBUG: Checking alt path: {alt_path}, exists={os.path.exists(alt_path)}")
             
-            # 3. Try download from Cloud if not exists locally
+            # 4. Try download from Cloud if not exists locally
             if not os.path.exists(alt_path) and IS_POSTGRES:
                 print(f"🔄 محاولة تحميل الصورة من السحابة: {base_name}")
                 download_success = download_image_from_cloud(base_name)
@@ -3102,7 +3202,7 @@ def send_product_with_image(chat_id, product, markup=None, seller_name=""):
                 else:
                     print(f"❌ فشل تحميل الصورة من السحابة: {base_name}")
             
-            # 4. Send image if available
+            # 5. Send image if available locally
             if os.path.exists(alt_path):
                 try:
                     print(f"✅ Sending image from alt path: {alt_path}")
