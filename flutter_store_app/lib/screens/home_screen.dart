@@ -315,6 +315,70 @@ class _HomeScreenState extends State<HomeScreen> {
        );
     }
 
+    // Desktop: Show NavigationRail only for Admin, use BottomNavigationBar for sellers
+    if (!widget.isAdmin) {
+      // For sellers on desktop, use bottom navigation bar
+      final bottomNavDestinations = destinations.where((d) => 
+        d['icon'] != Icons.logout && d['icon'] != Icons.settings
+      ).toList();
+      
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('المتجر المحلي'),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.sync),
+              tooltip: 'مزامنة',
+              onPressed: () {
+                SyncService.instance.syncNow();
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('جاري بدء المزامنة...')));
+              },
+            ),
+            PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert),
+              onSelected: (value) {
+                if (value == 'settings') {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => ServerSettingsScreen()));
+                } else if (value == 'logout') {
+                  _onDestinationSelected(destinations.indexWhere((d) => d['isExit'] == true));
+                }
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem(value: 'settings', child: Row(
+                  children: [Icon(Icons.settings, size: 20), SizedBox(width: 8), Text('الإعدادات')],
+                )),
+                const PopupMenuItem(value: 'logout', child: Row(
+                  children: [Icon(Icons.logout, size: 20, color: Colors.red), SizedBox(width: 8), Text('خروج', style: TextStyle(color: Colors.red))],
+                )),
+              ],
+            ),
+          ],
+        ),
+        body: _buildContent(),
+        bottomNavigationBar: NavigationBar(
+          selectedIndex: _getBottomNavIndex(),
+          onDestinationSelected: (index) {
+            final actualIndex = _mapBottomNavToDestinationIndex(index);
+            if (actualIndex != null) {
+              _onDestinationSelected(actualIndex);
+            }
+          },
+          destinations: bottomNavDestinations.map((item) {
+            final count = item['count'] as int? ?? 0;
+            return NavigationDestination(
+              icon: Badge(
+                isLabelVisible: count > 0,
+                label: Text('$count'),
+                child: Icon(item['icon']),
+              ),
+              label: item['label'],
+            );
+          }).toList(),
+        ),
+      );
+    }
+
+    // Admin on desktop: Show NavigationRail (Sidebar)
     return Scaffold(
       body: Row(
         children: [
@@ -441,11 +505,15 @@ class _DashboardViewState extends State<DashboardView> {
         initialTelegramId: seller?.telegramId.toString(),
         initialUserName: seller?.userName,
         initialImagePath: seller?.imagePath,
+        initialRequireCustomerRegistration: seller?.requireCustomerRegistration,
         isEdit: seller != null,
-        onSave: (storeName, telegramId, userName, imagePath) async {
+        onSave: (storeName, telegramId, userName, imagePath, requireCustomerRegistration) async {
+          print("💾 HomeScreen.onSave: requireCustomerRegistration = $requireCustomerRegistration");
           if (seller == null) {
              await DatabaseHelper.instance.addSeller(storeName, telegramId, userName, imagePath: imagePath);
           } else {
+             print("💾 HomeScreen.onSave: Updating seller #${seller.sellerId}");
+             print("💾 HomeScreen.onSave: Current seller.requireCustomerRegistration = ${seller.requireCustomerRegistration}");
              // If editing, we typically keep the original TelegramID unless you want to allow changing it?
              // Since ID is unique/key, changing it might require care.
              // But DatabaseHelper.updateSeller uses SellerID (Primary Key) to find record, 
@@ -456,10 +524,22 @@ class _DashboardViewState extends State<DashboardView> {
              final updatedSeller = seller.copyWith(
                storeName: storeName,
                userName: userName,
-               imagePath: imagePath
+               imagePath: imagePath,
+               requireCustomerRegistration: requireCustomerRegistration,
                // ignoring telegramId change for now as updateSeller doesn't support it
              );
+             print("💾 HomeScreen.onSave: Updated seller.requireCustomerRegistration = ${updatedSeller.requireCustomerRegistration}");
              await DatabaseHelper.instance.updateSeller(updatedSeller);
+             print("✅ HomeScreen.onSave: Seller updated successfully");
+             
+             // Sync immediately after save
+             try {
+               print("🔄 HomeScreen.onSave: Starting immediate sync...");
+               await SyncService.instance.syncNow();
+               print("✅ HomeScreen.onSave: Sync completed successfully");
+             } catch (e) {
+               print("⚠️ HomeScreen.onSave: Sync failed (non-critical): $e");
+             }
           }
            if (context.mounted) Navigator.pop(context); // Dialog handles pop? No, Dialog calls onSave and catches error. It does NOT pop. I must pop here on success.
            if (mounted) _refreshSellers(force: true);
@@ -638,16 +718,41 @@ class _DashboardViewState extends State<DashboardView> {
                     const SizedBox(height: 10),
                     Text(seller.storeName ?? 'No Name', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                     const SizedBox(height: 4),
-                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: seller.status == 'active' ? Colors.green.withValues(alpha: 0.1) : Colors.red.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(12)
-                      ),
-                      child: Text(
-                        seller.status == 'active' ? 'نشط' : 'معلق', 
-                        style: TextStyle(fontSize: 12, color: seller.status == 'active' ? Colors.green : Colors.red)
-                      ),
+                    Wrap(
+                      spacing: 4,
+                      runSpacing: 4,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: seller.status == 'active' ? Colors.green.withValues(alpha: 0.1) : Colors.red.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(12)
+                          ),
+                          child: Text(
+                            seller.status == 'active' ? 'نشط' : 'معلق', 
+                            style: TextStyle(fontSize: 12, color: seller.status == 'active' ? Colors.green : Colors.red)
+                          ),
+                        ),
+                        if (seller.requireCustomerRegistration)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.red.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(12)
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.lock, size: 12, color: Colors.red),
+                                SizedBox(width: 4),
+                                Text(
+                                  'مقفل', 
+                                  style: TextStyle(fontSize: 12, color: Colors.red)
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
                     ),
                   ],
                 ),
@@ -658,10 +763,25 @@ class _DashboardViewState extends State<DashboardView> {
                 child: PopupMenuButton<String>(
                   onSelected: (v) {
                     if (v == 'toggle') _toggleSellerStatus(seller);
+                    if (v == 'lock') _toggleStoreLock(seller);
                     if (v == 'edit') _showStoreDialog(seller: seller);
                     if (v == 'delete') _deleteSeller(seller);
                   },
                   itemBuilder: (c) => [
+                    PopupMenuItem(
+                      value: 'lock',
+                      child: Row(
+                        children: [
+                          Icon(
+                            seller.requireCustomerRegistration ? Icons.lock_open : Icons.lock,
+                            color: seller.requireCustomerRegistration ? Colors.green : Colors.red,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(seller.requireCustomerRegistration ? 'فتح المتجر' : 'قفل المتجر'),
+                        ],
+                      ),
+                    ),
                     PopupMenuItem(value: 'toggle', child: Text(seller.status == 'active' ? 'تعليق' : 'تنشيط')),
                     const PopupMenuItem(value: 'edit', child: Text('تعديل')),
                     const PopupMenuItem(value: 'delete', child: Text('حذف نهائي', style: TextStyle(color: Colors.red))),
@@ -671,6 +791,34 @@ class _DashboardViewState extends State<DashboardView> {
             ]
        ),
     );
+  }
+
+  Future<void> _toggleStoreLock(Seller seller) async {
+    final newValue = !seller.requireCustomerRegistration;
+    try {
+      await DatabaseHelper.instance.updateSeller(
+        seller.copyWith(requireCustomerRegistration: newValue),
+      );
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(newValue ? 'تم قفل المتجر' : 'تم فتح المتجر'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        _refreshSellers(force: true);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('خطأ في تحديث حالة المتجر: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _deleteSeller(Seller seller) async {

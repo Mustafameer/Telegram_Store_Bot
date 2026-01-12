@@ -90,7 +90,8 @@ class DatabaseHelper {
 
       final db = await openDatabase(
         path, 
-        version: 1, 
+        version: 3, // Updated to add CartImages table
+        onUpgrade: _onUpgrade, 
         onCreate: _createLocalDB,
       );
       
@@ -264,6 +265,79 @@ class DatabaseHelper {
     }
   }
 
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    print("Upgrading database from version $oldVersion to $newVersion");
+    
+    if (oldVersion < 2) {
+      // Add RequireCustomerRegistration column to Sellers
+      try {
+        await db.execute('ALTER TABLE Sellers ADD COLUMN RequireCustomerRegistration INTEGER DEFAULT 0');
+        print("✅ Added RequireCustomerRegistration column to Sellers");
+      } catch (e) {
+        print("⚠️ RequireCustomerRegistration column might already exist: $e");
+      }
+      
+      // Add TelegramID column to CreditCustomers if it doesn't exist
+      try {
+        await db.execute('ALTER TABLE CreditCustomers ADD COLUMN TelegramID INTEGER');
+        print("✅ Added TelegramID column to CreditCustomers");
+      } catch (e) {
+        print("⚠️ TelegramID column might already exist: $e");
+      }
+      
+      // Create ProductImages table
+      try {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS ProductImages (
+            ImageID INTEGER PRIMARY KEY AUTOINCREMENT,
+            ProductID INTEGER,
+            ImagePath TEXT NOT NULL,
+            ImageOrder INTEGER DEFAULT 0,
+            CreatedAt TEXT,
+            FOREIGN KEY (ProductID) REFERENCES Products(ProductID) ON DELETE CASCADE
+          )
+        ''');
+        print("✅ Created ProductImages table");
+      } catch (e) {
+        print("⚠️ ProductImages table might already exist: $e");
+      }
+    }
+    
+    if (oldVersion < 3) {
+      // Create CartImages table for storing selected images in cart
+      try {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS CartImages (
+            CartImageID INTEGER PRIMARY KEY AUTOINCREMENT,
+            CartID INTEGER,
+            ImageID INTEGER,
+            FOREIGN KEY (CartID) REFERENCES Carts(CartID) ON DELETE CASCADE,
+            FOREIGN KEY (ImageID) REFERENCES ProductImages(ImageID) ON DELETE CASCADE
+          )
+        ''');
+        print("✅ Created CartImages table");
+      } catch (e) {
+        print("⚠️ CartImages table might already exist: $e");
+      }
+      
+      // Create OrderItemImages table for storing selected images in orders
+      try {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS OrderItemImages (
+            OrderItemImageID INTEGER PRIMARY KEY AUTOINCREMENT,
+            OrderItemID INTEGER,
+            ImageID INTEGER,
+            FOREIGN KEY (OrderItemID) REFERENCES OrderItems(OrderItemID) ON DELETE CASCADE,
+            FOREIGN KEY (ImageID) REFERENCES ProductImages(ImageID) ON DELETE CASCADE
+          )
+        ''');
+        print("✅ Created OrderItemImages table");
+      } catch (e) {
+        print("⚠️ OrderItemImages table might already exist: $e");
+      }
+    }
+  }
+
   Future<void> _createLocalDB(Database db, int version) async {
     print("Creating Local DB Tables...");
     
@@ -276,7 +350,8 @@ class DatabaseHelper {
         StoreName TEXT,
         CreatedAt TEXT,
         Status TEXT DEFAULT 'active',
-        ImagePath TEXT
+        ImagePath TEXT,
+        RequireCustomerRegistration INTEGER DEFAULT 0
       )
     ''');
 
@@ -304,6 +379,18 @@ class DatabaseHelper {
         Quantity INTEGER,
         ImagePath TEXT,
         Status TEXT DEFAULT 'active'
+      )
+    ''');
+    
+    // ProductImages - صور متعددة لكل منتج
+    await db.execute('''
+      CREATE TABLE ProductImages (
+        ImageID INTEGER PRIMARY KEY AUTOINCREMENT,
+        ProductID INTEGER,
+        ImagePath TEXT NOT NULL,
+        ImageOrder INTEGER DEFAULT 0,
+        CreatedAt TEXT,
+        FOREIGN KEY (ProductID) REFERENCES Products(ProductID) ON DELETE CASCADE
       )
     ''');
 
@@ -346,6 +433,17 @@ class DatabaseHelper {
         UNIQUE(UserID, ProductID)
       )
     ''');
+    
+    // CartImages - الصور المختارة في السلة للمتاجر المقفولة
+    await db.execute('''
+      CREATE TABLE CartImages (
+        CartImageID INTEGER PRIMARY KEY AUTOINCREMENT,
+        CartID INTEGER,
+        ImageID INTEGER,
+        FOREIGN KEY (CartID) REFERENCES Carts(CartID) ON DELETE CASCADE,
+        FOREIGN KEY (ImageID) REFERENCES ProductImages(ImageID) ON DELETE CASCADE
+      )
+    ''');
 
     // DeletedSync Queue
     await db.execute('''
@@ -364,6 +462,7 @@ class DatabaseHelper {
         SellerID INTEGER,
         FullName TEXT,
         PhoneNumber TEXT,
+        TelegramID INTEGER,
         CreatedAt TEXT
       )
     ''');
@@ -402,13 +501,34 @@ class DatabaseHelper {
   Future<List<Seller>> getAllSellers({bool forceRefresh = false}) async {
     final db = await database;
     final result = await db.query('Sellers');
-    return result.map((e) => Seller.fromMap(e)).toList();
+    final sellers = result.map((e) => Seller.fromMap(e)).toList();
+    
+    // Debug: Print requireCustomerRegistration for each seller
+    for (var seller in sellers) {
+      print("📖 getAllSellers: Seller #${seller.sellerId} (${seller.storeName}): requireCustomerRegistration = ${seller.requireCustomerRegistration}");
+    }
+    
+    return sellers;
   }
   
   Future<Seller?> getSellerByTelegramId(int telegramId) async {
     final db = await database;
     final result = await db.query('Sellers', where: 'TelegramID = ?', whereArgs: [telegramId]);
     if (result.isNotEmpty) return Seller.fromMap(result.first);
+    return null;
+  }
+
+  Future<Seller?> getSellerById(int sellerId) async {
+    final db = await database;
+    final result = await db.query('Sellers', where: 'SellerID = ?', whereArgs: [sellerId]);
+    if (result.isNotEmpty) return Seller.fromMap(result.first);
+    return null;
+  }
+
+  Future<User?> getUserByTelegramId(int telegramId) async {
+    final db = await database;
+    final result = await db.query('Users', where: 'TelegramID = ?', whereArgs: [telegramId]);
+    if (result.isNotEmpty) return User.fromMap(result.first);
     return null;
   }
   
@@ -441,25 +561,48 @@ class DatabaseHelper {
   }
   
   Future<void> updateSeller(Seller seller) async {
-     final db = await database;
-     
-     // Check if image path changed? Or just always try to save?
-     // If path is already in 'data/Images', _saveImageLocally will create a copy?
-     // We should check if it's already local.
-     // Optimization: If path starts with our data dir, skip.
-     String? newPath = seller.imagePath;
-     // Check if path is already in our Images folder
-     // Mobile paths might be /data/user/0/.../app_flutter/Images/filename
-     // Desktop paths might be C:\...\data\Images\filename
-     if (seller.imagePath != null && !seller.imagePath!.contains('Images')) {
-        newPath = await _saveImageLocally(seller.imagePath);
-     }
-     
-     await db.update('Sellers', {
-       'StoreName': seller.storeName,
-       'UserName': seller.userName,
-       'ImagePath': newPath,
-     }, where: 'SellerID = ?', whereArgs: [seller.sellerId]);
+    final db = await database;
+    String? newPath = seller.imagePath;
+    if (seller.imagePath != null && !seller.imagePath!.contains('Images')) {
+       newPath = await _saveImageLocally(seller.imagePath);
+    }
+    
+    final requireCustomerRegistrationValue = seller.requireCustomerRegistration ? 1 : 0;
+    
+    print("💾 updateSeller: Updating Seller #${seller.sellerId}");
+    print("💾 updateSeller: requireCustomerRegistration = ${seller.requireCustomerRegistration} -> saving as $requireCustomerRegistrationValue");
+    
+    final updateResult = await db.update('Sellers', {
+      'StoreName': seller.storeName,
+      'UserName': seller.userName,
+      'ImagePath': newPath,
+      'RequireCustomerRegistration': requireCustomerRegistrationValue,
+    }, where: 'SellerID = ?', whereArgs: [seller.sellerId]);
+    
+    print("💾 updateSeller: Update result = $updateResult rows affected");
+    
+    if (updateResult == 0) {
+      print("⚠️ updateSeller: WARNING - No rows were updated! SellerID may not exist.");
+    }
+    
+    // Force a commit by reading immediately after update
+    // SQLite auto-commits, but this ensures data is persisted
+    await db.execute('SELECT 1');
+    
+    // Verify immediately after update
+    final verifyResult = await db.query('Sellers', where: 'SellerID = ?', whereArgs: [seller.sellerId]);
+    if (verifyResult.isNotEmpty) {
+      final savedValue = verifyResult.first['RequireCustomerRegistration'];
+      final savedSeller = Seller.fromMap(verifyResult.first);
+      print("✅ updateSeller: Verified - Saved RequireCustomerRegistration = $savedValue");
+      print("✅ updateSeller: Verified - Seller.requireCustomerRegistration = ${savedSeller.requireCustomerRegistration}");
+      
+      if (savedSeller.requireCustomerRegistration != seller.requireCustomerRegistration) {
+        print("❌ updateSeller: ERROR - Value mismatch! Expected ${seller.requireCustomerRegistration}, got ${savedSeller.requireCustomerRegistration}");
+      }
+    } else {
+      print("❌ updateSeller: ERROR - Seller not found after update!");
+    }
   }
 
   Future<void> updateSellerStatus(int sellerId, String status) async {
@@ -568,6 +711,8 @@ class DatabaseHelper {
         'Status': product.status,
      }, where: 'ProductID = ?', whereArgs: [product.productId]);
      
+     print("✅ تم تحديث المنتج #${product.productId}: الكمية = ${product.quantity}");
+     
      // 2. Delete Old Image if changed and valid
      if (oldImagePath != null && oldImagePath != newPath && oldImagePath.isNotEmpty) {
         try {
@@ -618,10 +763,53 @@ class DatabaseHelper {
     }
   }
 
+  Future<void> addToCartWithImages(int userId, int productId, int quantity, double price, List<int> imageIds) async {
+    final db = await database;
+    
+    // Check if exists first to increment
+    final existing = await db.query('Carts', 
+      columns: ['CartID', 'Quantity'], 
+      where: 'UserID = ? AND ProductID = ?', 
+      whereArgs: [userId, productId]
+    );
+
+    int cartId;
+    if (existing.isNotEmpty) {
+      final currentQty = existing.first['Quantity'] as int;
+      cartId = existing.first['CartID'] as int;
+      await db.update('Carts', {
+        'Quantity': currentQty + quantity,
+        'AddedAt': DateTime.now().toIso8601String()
+      }, where: 'CartID = ?', whereArgs: [cartId]);
+      print("🛒 Cart: Incremented Item $productId by $quantity (Total: ${currentQty + quantity})");
+    } else {
+      final result = await db.insert('Carts', {
+        'UserID': userId,
+        'ProductID': productId,
+        'Quantity': quantity,
+        'Price': price,
+        'AddedAt': DateTime.now().toIso8601String()
+      });
+      cartId = result;
+      print("🛒 Cart: Added Item $productId (Qty: $quantity)");
+    }
+    
+    // Add selected images to CartImages
+    for (var imageId in imageIds) {
+      await db.insert('CartImages', {
+        'CartID': cartId,
+        'ImageID': imageId,
+      });
+    }
+    
+    print("🛒 Cart: Added ${imageIds.length} images to cart item $cartId");
+  }
+
   Future<List<Map<String, dynamic>>> getCartItems(int userId) async {
     final db = await database;
     final result = await db.rawQuery('''
-      SELECT c.*, p.Name, p.ImagePath, p.SellerID, s.StoreName
+      SELECT c.CartID, c.UserID, c.ProductID, c.Quantity, c.Price, c.AddedAt,
+             p.Name, p.ImagePath, p.SellerID, s.StoreName
       FROM Carts c
       LEFT JOIN Products p ON c.ProductID = p.ProductID
       LEFT JOIN Sellers s ON p.SellerID = s.SellerID
@@ -630,9 +818,22 @@ class DatabaseHelper {
     
     print("🛒 Cart: Fetched ${result.length} items for User $userId");
     for (var r in result) {
-       print("   - Item: ${r['Name']} (Store: ${r['StoreName']})");
+       print("   - Item: ${r['Name']} (Store: ${r['StoreName']}, CartID: ${r['CartID']})");
     }
     return result;
+  }
+
+  Future<List<ProductImage>> getCartImages(int cartId) async {
+    final db = await database;
+    final result = await db.rawQuery('''
+      SELECT pi.ImageID, pi.ProductID, pi.ImagePath, pi.ImageOrder, pi.CreatedAt
+      FROM CartImages ci
+      INNER JOIN ProductImages pi ON ci.ImageID = pi.ImageID
+      WHERE ci.CartID = ?
+      ORDER BY pi.ImageOrder
+    ''', [cartId]);
+    
+    return result.map((e) => ProductImage.fromMap(e)).toList();
   }
 
   Future<void> updateCartQuantity(int cartId, int quantity) async {
@@ -646,6 +847,8 @@ class DatabaseHelper {
 
   Future<void> removeFromCart(int cartId) async {
     final db = await database;
+    // Delete cart images first (CASCADE should handle this, but explicit is safer)
+    await db.delete('CartImages', where: 'CartID = ?', whereArgs: [cartId]);
     await db.delete('Carts', where: 'CartID = ?', whereArgs: [cartId]);
   }
 
@@ -690,14 +893,27 @@ class DatabaseHelper {
        // 2. Insert Items (Directly)
        for (var item in items) {
           final productId = item['ProductID'] ?? item['productID'] ?? item['productId'];
+          final cartId = item['CartID'];
           print('DEBUG: Inserting Item $productId');
           
-          await db.insert('OrderItems', {
+          final orderItemId = await db.insert('OrderItems', {
             'OrderID': orderId,
             'ProductID': productId,
             'Quantity': item['Quantity'],
             'Price': item['Price']
           });
+          
+          // إذا كان هناك CartID، نسحب الصور المختارة من السلة
+          if (cartId != null) {
+            final cartImages = await getCartImages(cartId);
+            for (var cartImage in cartImages) {
+              await db.insert('OrderItemImages', {
+                'OrderItemID': orderItemId,
+                'ImageID': cartImage.imageId,
+              });
+            }
+            print('DEBUG: Added ${cartImages.length} images to OrderItem $orderItemId');
+          }
        }
        
        // 3. VERIFY INSERTION IMMEDIATELY
@@ -727,6 +943,19 @@ class DatabaseHelper {
     ''', [orderId]);
     print("DEBUG: getItemsForOrder($orderId) returned ${res.length} rows");
     return res;
+  }
+
+  Future<List<ProductImage>> getOrderItemImages(int orderItemId) async {
+    final db = await database;
+    final result = await db.rawQuery('''
+      SELECT pi.ImageID, pi.ProductID, pi.ImagePath, pi.ImageOrder, pi.CreatedAt
+      FROM OrderItemImages oii
+      INNER JOIN ProductImages pi ON oii.ImageID = pi.ImageID
+      WHERE oii.OrderItemID = ?
+      ORDER BY pi.ImageOrder
+    ''', [orderItemId]);
+    
+    return result.map((e) => ProductImage.fromMap(e)).toList();
   }
 
   Future<void> deleteOrder(int orderId) async {
@@ -848,14 +1077,62 @@ class DatabaseHelper {
     return result.map((e) => CreditCustomer.fromMap(e)).toList();
   }
 
-  Future<int?> addCreditCustomer(int sellerId, String fullName, String phoneNumber) async {
+  Future<int?> addCreditCustomer(int sellerId, String fullName, String phoneNumber, {int? telegramId}) async {
     final db = await database;
     return await db.insert('CreditCustomers', {
       'SellerID': sellerId,
       'FullName': fullName,
       'PhoneNumber': phoneNumber,
+      'TelegramID': telegramId,
       'CreatedAt': DateTime.now().toIso8601String(),
     });
+  }
+
+  Future<bool> updateCreditCustomer(int customerId, int sellerId, String fullName, String? phoneNumber) async {
+    final db = await database;
+    try {
+      final result = await db.update(
+        'CreditCustomers',
+        {
+          'FullName': fullName,
+          'PhoneNumber': phoneNumber,
+        },
+        where: 'CustomerID = ? AND SellerID = ?',
+        whereArgs: [customerId, sellerId],
+      );
+      return result > 0;
+    } catch (e) {
+      print("Error updating credit customer: $e");
+      return false;
+    }
+  }
+
+  Future<bool> deleteCreditCustomer(int customerId, int sellerId) async {
+    final db = await database;
+    try {
+      // التحقق من وجود معاملات قبل الحذف
+      final transactions = await db.query(
+        'CustomerCredit',
+        where: 'CustomerID = ?',
+        whereArgs: [customerId],
+      );
+      
+      if (transactions.isNotEmpty) {
+        // إذا كان هناك معاملات، يمكن إما حذفها أو منع الحذف
+        // سنمنع الحذف إذا كان هناك معاملات
+        throw Exception('لا يمكن حذف الزبون لأنه يحتوي على معاملات مالية');
+      }
+      
+      final result = await db.delete(
+        'CreditCustomers',
+        where: 'CustomerID = ? AND SellerID = ?',
+        whereArgs: [customerId, sellerId],
+      );
+      return result > 0;
+    } catch (e) {
+      print("Error deleting credit customer: $e");
+      rethrow;
+    }
   }
 
   Future<List<CustomerCreditTransaction>> getCustomerTransactions(int customerId) async {
@@ -952,6 +1229,93 @@ class DatabaseHelper {
       'IsRead': 0,
       'CreatedAt': DateTime.now().toIso8601String()
     });
+  }
+
+  // ====== ProductImages Management ======
+  
+  Future<List<ProductImage>> getProductImages(int productId) async {
+    final db = await database;
+    final result = await db.query(
+      'ProductImages',
+      where: 'ProductID = ?',
+      whereArgs: [productId],
+      orderBy: 'ImageOrder, ImageID',
+    );
+    return result.map((e) => ProductImage.fromMap(e)).toList();
+  }
+
+  Future<int> addProductImage(int productId, String imagePath, {int imageOrder = 0}) async {
+    final db = await database;
+    final localPath = await _saveImageLocally(imagePath);
+    
+    final imageId = await db.insert('ProductImages', {
+      'ProductID': productId,
+      'ImagePath': localPath,
+      'ImageOrder': imageOrder,
+      'CreatedAt': DateTime.now().toIso8601String(),
+    });
+    
+    print("✅ تم إضافة صورة #$imageId للمنتج #$productId: $localPath");
+    return imageId;
+  }
+
+  Future<void> deleteProductImage(int imageId) async {
+    final db = await database;
+    
+    // Get image path before deletion
+    final result = await db.query('ProductImages', where: 'ImageID = ?', whereArgs: [imageId]);
+    if (result.isNotEmpty) {
+      final imagePath = result.first['ImagePath'] as String?;
+      
+      // Delete from database
+      await db.delete('ProductImages', where: 'ImageID = ?', whereArgs: [imageId]);
+      
+      // Delete file if exists
+      if (imagePath != null) {
+        try {
+          final file = File(imagePath);
+          if (await file.exists()) {
+            await file.delete();
+          }
+        } catch (e) {
+          print("⚠️ Failed to delete image file: $e");
+        }
+      }
+    }
+  }
+
+  // ====== Credit Customer Verification ======
+  
+  Future<CreditCustomer?> getCreditCustomerByPhone(int sellerId, String phoneNumber) async {
+    final db = await database;
+    // Clean phone number
+    final cleanPhone = phoneNumber.replaceAll(' ', '').replaceAll('-', '').replaceAll('+', '');
+    
+    final result = await db.query(
+      'CreditCustomers',
+      where: 'SellerID = ? AND PhoneNumber = ?',
+      whereArgs: [sellerId, cleanPhone],
+    );
+    
+    if (result.isNotEmpty) {
+      return CreditCustomer.fromMap(result.first);
+    }
+    return null;
+  }
+
+  Future<bool> isCustomerRegisteredForStore(int sellerId, String phoneNumber) async {
+    final customer = await getCreditCustomerByPhone(sellerId, phoneNumber);
+    return customer != null;
+  }
+
+  Future<bool> isCustomerRegisteredForStoreByTelegramId(int sellerId, int telegramId) async {
+    final db = await database;
+    final result = await db.query(
+      'CreditCustomers',
+      where: 'SellerID = ? AND TelegramID = ?',
+      whereArgs: [sellerId, telegramId],
+    );
+    return result.isNotEmpty;
   }
 
   Future<void> close() async {

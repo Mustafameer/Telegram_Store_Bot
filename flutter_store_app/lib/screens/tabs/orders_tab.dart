@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:intl/intl.dart';
 import '../../database/database_helper.dart';
 import '../../models/database_models.dart';
+import '../../services/telegram_service.dart';
 
 // دالة لتنسيق المبالغ مع فاصلة الآلاف وإزالة الكسور
 String formatPrice(dynamic price) {
@@ -448,6 +449,10 @@ class _OrdersTabState extends State<OrdersTab> {
     // 2. Business Logic
     String messageToBuyer = '';
     
+    // التحقق من أن المتجر مقفول
+    final seller = await DatabaseHelper.instance.getSellerById(order.sellerId);
+    final isRestrictedStore = seller?.requireCustomerRegistration ?? false;
+    
     if (status == 'Shipped') {
        // Deduct Stock
        await DatabaseHelper.instance.deductStockForOrder(order.orderId);
@@ -455,8 +460,48 @@ class _OrdersTabState extends State<OrdersTab> {
        await DatabaseHelper.instance.deleteMessageByOrderId(order.orderId);
        
        messageToBuyer = '📦 طلبك قيد الشحن رقم #${order.orderId}. شكراً لتسوقك معنا!';
+       
+       // إذا كان المتجر مقفول، إرسال الصور المختارة للزبون
+       if (isRestrictedStore && order.buyerId != null) {
+         try {
+           final orderItems = await DatabaseHelper.instance.getItemsForOrder(order.orderId);
+           for (var item in orderItems) {
+             final orderItemId = item['OrderItemID'] as int;
+             final images = await DatabaseHelper.instance.getOrderItemImages(orderItemId);
+             
+             if (images.isNotEmpty) {
+               final imagePaths = images.map((img) => img.imagePath).whereType<String>().toList();
+               if (imagePaths.isNotEmpty) {
+                 final productName = item['Name'] as String? ?? 'منتج';
+                 final caption = '📦 **${productName}**\n✅ تم تأكيد طلبك رقم #${order.orderId}';
+                 
+                 // إرسال الصور كمجموعة
+                 await TelegramService.sendMediaGroup(order.buyerId!, imagePaths, caption: caption);
+                 print("📸 Sent ${imagePaths.length} images to buyer ${order.buyerId} for order ${order.orderId}");
+               }
+             }
+           }
+         } catch (e) {
+           print("❌ Error sending images to buyer: $e");
+         }
+       }
     } else if (status == 'Confirmed') {
        messageToBuyer = '✅ تم تأكيد طلبك رقم #${order.orderId} وهو قيد التجهيز.';
+       
+       // إرسال رسالة لصاحب المتجر بأن المشتري قد أكد الطلب
+       try {
+         final buyer = await DatabaseHelper.instance.getUserByTelegramId(order.buyerId ?? 0);
+         final buyerName = buyer?.fullName ?? 'مشتري';
+         await DatabaseHelper.instance.addMessage(
+           order.orderId, 
+           order.sellerId, 
+           'order_confirmed', 
+           '✅ المشتري "$buyerName" قد أكد الطلب رقم #${order.orderId}'
+         );
+         print("📨 Sent confirmation message to seller ${order.sellerId} for order ${order.orderId}");
+       } catch (e) {
+         print("❌ Error sending confirmation message to seller: $e");
+       }
     }
 
     // 3. Send System Message to Buyer

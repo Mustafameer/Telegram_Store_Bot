@@ -105,6 +105,35 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
     }
   }
 
+  Future<void> _toggleStoreLock() async {
+    final newValue = !widget.seller.requireCustomerRegistration;
+    try {
+      await DatabaseHelper.instance.updateSeller(
+        widget.seller.copyWith(requireCustomerRegistration: newValue),
+      );
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(newValue ? 'تم قفل المتجر' : 'تم فتح المتجر'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        // تحديث الواجهة
+        setState(() {});
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('خطأ في تحديث حالة المتجر: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _showEditStoreDialog(BuildContext context) async {
     await showDialog(
       context: context,
@@ -113,17 +142,33 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
         initialTelegramId: widget.seller.telegramId.toString(),
         initialUserName: widget.seller.userName,
         initialImagePath: widget.seller.imagePath,
+        initialRequireCustomerRegistration: widget.seller.requireCustomerRegistration,
         isEdit: true,
-        onSave: (name, telegramId, userName, imagePath) async {
+        onSave: (name, telegramId, userName, imagePath, requireCustomerRegistration) async {
+           print("💾 StoreDetailScreen.onSave: requireCustomerRegistration = $requireCustomerRegistration");
+           print("💾 StoreDetailScreen.onSave: Current seller.requireCustomerRegistration = ${widget.seller.requireCustomerRegistration}");
            // Update
-           await DatabaseHelper.instance.updateSeller(Seller(
+           final updatedSeller = Seller(
              sellerId: widget.seller.sellerId,
              telegramId: telegramId,
              storeName: name,
              userName: userName,
              status: widget.seller.status, 
-             imagePath: imagePath
-           ));
+             imagePath: imagePath,
+             requireCustomerRegistration: requireCustomerRegistration,
+           );
+           print("💾 StoreDetailScreen.onSave: Updated seller.requireCustomerRegistration = ${updatedSeller.requireCustomerRegistration}");
+           await DatabaseHelper.instance.updateSeller(updatedSeller);
+           print("✅ StoreDetailScreen.onSave: Seller updated successfully");
+           
+           // Sync immediately after save
+           try {
+             print("🔄 StoreDetailScreen.onSave: Starting immediate sync...");
+             await SyncService.instance.syncNow();
+             print("✅ StoreDetailScreen.onSave: Sync completed successfully");
+           } catch (e) {
+             print("⚠️ StoreDetailScreen.onSave: Sync failed (non-critical): $e");
+           }
            
            if (mounted) {
               Navigator.pop(context);
@@ -197,6 +242,15 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
                      ))
                   );
                 },
+              ),
+            if (widget.isSellerMode)
+              IconButton(
+                icon: Icon(
+                  widget.seller.requireCustomerRegistration ? Icons.lock : Icons.lock_open,
+                  color: widget.seller.requireCustomerRegistration ? Colors.red : Colors.green,
+                ),
+                tooltip: widget.seller.requireCustomerRegistration ? 'فتح المتجر' : 'قفل المتجر',
+                onPressed: () => _toggleStoreLock(),
               ),
             if (widget.isSellerMode)
               IconButton(
@@ -315,6 +369,15 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
                        ),
                      if (widget.isSellerMode)
                        IconButton(
+                         icon: Icon(
+                           widget.seller.requireCustomerRegistration ? Icons.lock : Icons.lock_open,
+                           color: widget.seller.requireCustomerRegistration ? Colors.red : Colors.green,
+                         ),
+                         tooltip: widget.seller.requireCustomerRegistration ? 'فتح المتجر' : 'قفل المتجر',
+                         onPressed: () => _toggleStoreLock(),
+                       ),
+                     if (widget.isSellerMode)
+                       IconButton(
                          icon: const Icon(Icons.edit),
                          tooltip: 'تعديل المتجر',
                          onPressed: () => _showEditStoreDialog(context),
@@ -349,6 +412,7 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
           isEditable: widget.isSellerMode,
           onCartChanged: _refreshCounts,
           currentUserId: widget.currentUserId,
+          requireCustomerRegistration: widget.seller.requireCustomerRegistration,
         );
     } 
     else if (_selectedIndex == 1) {

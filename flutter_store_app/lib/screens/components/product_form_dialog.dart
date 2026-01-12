@@ -8,8 +8,14 @@ import '../../database/database_helper.dart';
 class ProductFormDialog extends StatefulWidget {
   final int sellerId;
   final Product? product;
+  final bool requireCustomerRegistration;
 
-  const ProductFormDialog({super.key, required this.sellerId, this.product});
+  const ProductFormDialog({
+    super.key, 
+    required this.sellerId, 
+    this.product,
+    this.requireCustomerRegistration = false,
+  });
 
   @override
   State<ProductFormDialog> createState() => _ProductFormDialogState();
@@ -43,7 +49,7 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
           ? widget.product!.wholesalePrice!.round().toString() 
           : ''
     );
-    _qtyController = TextEditingController(text: widget.product?.quantity.toString() ?? '');
+    _qtyController = TextEditingController(text: widget.product?.quantity.toString() ?? '1');
     _imagePath = widget.product?.imagePath;
     _selectedCategoryId = widget.product?.categoryId;
     
@@ -73,6 +79,23 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
   Future<void> _save() async {
     if (_formKey.currentState!.validate()) {
       try {
+        // تحديد الكمية
+        int quantity;
+        if (widget.requireCustomerRegistration) {
+          // للمتاجر المقفولة: الكمية = عدد الصور في ProductImages
+          if (widget.product != null) {
+            // عند التعديل: حساب الكمية من الصور الموجودة
+            final images = await DatabaseHelper.instance.getProductImages(widget.product!.productId);
+            quantity = images.length;
+          } else {
+            // عند الإضافة: الكمية = 1 افتراضياً (ستتم تحديثها بعد إضافة الصور)
+            quantity = 1;
+          }
+        } else {
+          // للمتاجر المفتوحة: الكمية يدوية
+          quantity = int.tryParse(_qtyController.text) ?? 1;
+        }
+        
         final product = Product(
           productId: widget.product?.productId ?? 0, 
           sellerId: widget.sellerId,
@@ -81,15 +104,42 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
           description: _descController.text,
           price: double.tryParse(_priceController.text) ?? 0.0,
           wholesalePrice: double.tryParse(_wholesalePriceController.text),
-          quantity: int.tryParse(_qtyController.text) ?? 0,
+          quantity: quantity,
           imagePath: _imagePath,
           status: 'active',
         );
 
         if (widget.product == null) {
           await DatabaseHelper.instance.addProduct(product);
+          
+          // إذا كان المتجر مقفول، تحديث الكمية بعد إضافة الصور
+          if (widget.requireCustomerRegistration) {
+            final addedProducts = await DatabaseHelper.instance.getProducts(widget.sellerId);
+            if (addedProducts.isNotEmpty) {
+              final newProduct = addedProducts.lastWhere(
+                (p) => p.name == product.name && p.categoryId == product.categoryId,
+                orElse: () => product,
+              );
+              final images = await DatabaseHelper.instance.getProductImages(newProduct.productId);
+              final imageCount = images.length;
+              
+              // تحديث الكمية
+              final updatedProduct = product.copyWith(quantity: imageCount);
+              await DatabaseHelper.instance.updateProduct(updatedProduct);
+            }
+          }
         } else {
           await DatabaseHelper.instance.updateProduct(product);
+          
+          // إذا كان المتجر مقفول، تحديث الكمية من عدد الصور
+          if (widget.requireCustomerRegistration) {
+            final images = await DatabaseHelper.instance.getProductImages(widget.product!.productId);
+            final imageCount = images.length;
+            
+            // تحديث الكمية
+            final updatedProduct = product.copyWith(quantity: imageCount);
+            await DatabaseHelper.instance.updateProduct(updatedProduct);
+          }
         }
 
         if (mounted) Navigator.pop(context, true);
@@ -181,13 +231,37 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
                           style: const TextStyle(fontSize: 16),
                         ),
                         const SizedBox(height: 12),
-                        TextFormField(
-                          controller: _qtyController,
-                          decoration: const InputDecoration(labelText: 'الكمية', border: OutlineInputBorder()),
-                          keyboardType: TextInputType.number,
-                          validator: (v) => v!.isEmpty ? 'مطلوب' : null,
-                          style: const TextStyle(fontSize: 16),
-                        ),
+                        // إخفاء حقل الكمية للمتاجر المقفولة (الكمية تلقائية من عدد الصور)
+                        if (!widget.requireCustomerRegistration)
+                          TextFormField(
+                            controller: _qtyController,
+                            decoration: const InputDecoration(labelText: 'الكمية', border: OutlineInputBorder()),
+                            keyboardType: TextInputType.number,
+                            validator: (v) => v!.isEmpty ? 'مطلوب' : null,
+                            style: const TextStyle(fontSize: 16),
+                          ),
+                        if (widget.requireCustomerRegistration)
+                          Card(
+                            color: Colors.blue.shade50,
+                            child: Padding(
+                              padding: const EdgeInsets.all(12.0),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.info_outline, color: Colors.blue),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      '⚠️ الكمية ستكون تلقائياً بعدد الصور التي ستضيفها',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        color: Colors.blue.shade900,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
                       ],
                     )
                   : Row(
@@ -219,15 +293,41 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        Expanded(
-                          child: TextFormField(
-                            controller: _qtyController,
-                            decoration: const InputDecoration(labelText: 'الكمية', border: OutlineInputBorder()),
-                            keyboardType: TextInputType.number,
-                            validator: (v) => v!.isEmpty ? 'مطلوب' : null,
-                            style: const TextStyle(fontSize: 16),
+                        // إخفاء حقل الكمية للمتاجر المقفولة (الكمية تلقائية من عدد الصور)
+                        if (!widget.requireCustomerRegistration)
+                          Expanded(
+                            child: TextFormField(
+                              controller: _qtyController,
+                              decoration: const InputDecoration(labelText: 'الكمية', border: OutlineInputBorder()),
+                              keyboardType: TextInputType.number,
+                              validator: (v) => v!.isEmpty ? 'مطلوب' : null,
+                              style: const TextStyle(fontSize: 16),
+                            ),
                           ),
-                        ),
+                        if (widget.requireCustomerRegistration)
+                          Expanded(
+                            child: Card(
+                              color: Colors.blue.shade50,
+                              child: Padding(
+                                padding: const EdgeInsets.all(12.0),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.info_outline, color: Colors.blue),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        '⚠️ الكمية ستكون تلقائياً بعدد الصور التي ستضيفها',
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          color: Colors.blue.shade900,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                 const SizedBox(height: 12),

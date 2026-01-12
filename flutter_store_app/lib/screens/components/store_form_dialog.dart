@@ -7,8 +7,9 @@ class StoreFormDialog extends StatefulWidget {
   final String? initialTelegramId;
   final String? initialUserName;
   final String? initialImagePath;
+  final bool? initialRequireCustomerRegistration;
   final bool isEdit;
-  final Future<void> Function(String name, int telegramId, String userName, String? imagePath) onSave;
+  final Future<void> Function(String name, int telegramId, String userName, String? imagePath, bool requireCustomerRegistration) onSave;
 
   const StoreFormDialog({
     super.key, 
@@ -16,6 +17,7 @@ class StoreFormDialog extends StatefulWidget {
     this.initialTelegramId,
     this.initialUserName,
     this.initialImagePath,
+    this.initialRequireCustomerRegistration,
     this.isEdit = false,
     required this.onSave
   });
@@ -29,6 +31,7 @@ class _StoreFormDialogState extends State<StoreFormDialog> {
   late TextEditingController _idController;
   late TextEditingController _userController;
   String? _imagePath;
+  bool _requireCustomerRegistration = false;
 
   @override
   void initState() {
@@ -37,6 +40,7 @@ class _StoreFormDialogState extends State<StoreFormDialog> {
     _idController = TextEditingController(text: widget.initialTelegramId);
     _userController = TextEditingController(text: widget.initialUserName);
     _imagePath = widget.initialImagePath;
+    _requireCustomerRegistration = widget.initialRequireCustomerRegistration ?? false;
   }
 
   Future<void> _pickImage() async {
@@ -98,6 +102,26 @@ class _StoreFormDialogState extends State<StoreFormDialog> {
               controller: _userController,
               decoration: const InputDecoration(labelText: 'اسم المستخدم (User)', border: OutlineInputBorder()),
             ),
+            if (widget.isEdit) ...[
+              const SizedBox(height: 16),
+              Card(
+                color: Colors.blue.shade50,
+                child: SwitchListTile(
+                  title: const Text('قفل المتجر'),
+                  subtitle: const Text('يتطلب تسجيل الزبائن للدخول'),
+                  value: _requireCustomerRegistration,
+                  onChanged: (value) {
+                    setState(() {
+                      _requireCustomerRegistration = value;
+                    });
+                  },
+                  secondary: Icon(
+                    _requireCustomerRegistration ? Icons.lock : Icons.lock_open,
+                    color: _requireCustomerRegistration ? Colors.red : Colors.green,
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -109,21 +133,11 @@ class _StoreFormDialogState extends State<StoreFormDialog> {
               final tid = int.tryParse(_idController.text);
               if (tid != null) {
                 try {
-                   await widget.onSave(_nameController.text, tid, _userController.text, _imagePath);
-                   // onSave implementation handles Navigator.pop? 
-                   // No, usually parent handles it? 
-                   // In HomeScreen, it does Navigator.pop. 
-                   // But if I want to catch error here, I should probably NOT let parent pop blindly.
-                   // Wait. CategoriesTab pops. HomeScreen pops.
-                   // If I await here, I catch error here.
-                   // But parent 'onSave' calls 'await DatabaseHelper...'.
-                   // So if it throws, I catch it here.
-                   // So I should NOT pop in parent? Or parent pop is fine?
-                   // In HomeScreen: `onSave: (...) async { await DB...; Navigator.pop; }`
-                   // If DB throws, subsequent lines in parent won't run.
-                   // So it throws to here.
-                   // So I catch it here. And I do NOT pop here (parent handles pop on success).
+                   print("💾 StoreFormDialog: Saving with requireCustomerRegistration = $_requireCustomerRegistration");
+                   await widget.onSave(_nameController.text, tid, _userController.text, _imagePath, _requireCustomerRegistration);
+                   print("✅ StoreFormDialog: Save completed successfully");
                 } catch (e) {
+                  print("❌ StoreFormDialog: Error saving: $e");
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red));
                   }

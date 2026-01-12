@@ -60,6 +60,88 @@ class _CreditCustomersScreenState extends State<CreditCustomersScreen> {
     );
   }
 
+  Future<void> _editCustomer(CreditCustomer customer) async {
+    final nameController = TextEditingController(text: customer.fullName);
+    final phoneController = TextEditingController(text: customer.phoneNumber ?? '');
+    
+    await showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('تعديل زبون آجل'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(controller: nameController, decoration: const InputDecoration(labelText: 'الاسم الكامل')),
+            const SizedBox(height: 8),
+            TextField(controller: phoneController, decoration: const InputDecoration(labelText: 'رقم الهاتف')),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+          FilledButton(
+            onPressed: () async {
+              if (nameController.text.isNotEmpty) {
+                await DatabaseHelper.instance.updateCreditCustomer(
+                  customer.customerId,
+                  widget.sellerId,
+                  nameController.text,
+                  phoneController.text.isEmpty ? null : phoneController.text,
+                );
+                if (mounted) {
+                  Navigator.pop(context);
+                  _refresh();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('تم التعديل بنجاح')),
+                  );
+                }
+              }
+            },
+            child: const Text('حفظ'),
+          )
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteCustomer(CreditCustomer customer) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('تأكيد الحذف'),
+        content: Text('هل أنت متأكد من حذف الزبون "${customer.fullName}"؟'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('حذف'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        await DatabaseHelper.instance.deleteCreditCustomer(customer.customerId, widget.sellerId);
+        if (mounted) {
+          _refresh();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('تم الحذف بنجاح')),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('خطأ في الحذف: $e')),
+          );
+        }
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -83,7 +165,32 @@ class _CreditCustomersScreenState extends State<CreditCustomersScreen> {
                 leading: CircleAvatar(child: Text(c.fullName[0])),
                 title: Text(c.fullName),
                 subtitle: Text(c.phoneNumber ?? 'لا يوجد رقم'),
-                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.edit, color: Colors.blue),
+                      onPressed: () => _editCustomer(c),
+                      tooltip: 'تعديل',
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete, color: Colors.red),
+                      onPressed: () => _deleteCustomer(c),
+                      tooltip: 'حذف',
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.arrow_forward_ios, size: 16),
+                      onPressed: () {
+                        Navigator.push(context, MaterialPageRoute(builder: (_) => CustomerStatementScreen(
+                          customerId: c.customerId, 
+                          customerName: c.fullName,
+                          sellerId: widget.sellerId
+                        )));
+                      },
+                      tooltip: 'كشف الحساب',
+                    ),
+                  ],
+                ),
                 onTap: () {
                   Navigator.push(context, MaterialPageRoute(builder: (_) => CustomerStatementScreen(
                     customerId: c.customerId, 

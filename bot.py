@@ -21,9 +21,11 @@ import os
 try:
     import psycopg2
     from psycopg2.extras import RealDictCursor
+    from psycopg2 import IntegrityError
 except ImportError:
     psycopg2 = None
     RealDictCursor = None
+    IntegrityError = None
 
 
 
@@ -70,6 +72,88 @@ def sys_info(message):
         bot.reply_to(message, info, parse_mode='Markdown')
     except Exception as e:
         bot.reply_to(message, f"Error: {e}")
+
+@bot.message_handler(commands=['force_migration'])
+def force_migration_command(message):
+    """أمر لتطبيق Migration بشكل إجباري - للمشرفين فقط"""
+    if not is_bot_admin(message.from_user.id):
+        bot.reply_to(message, "❌ هذا الأمر متاح للمشرفين فقط")
+        return
+    
+    if not IS_POSTGRES:
+        bot.reply_to(message, "⚠️ هذا الأمر يعمل فقط مع PostgreSQL (Cloud)")
+        return
+    
+    try:
+        bot.reply_to(message, "🔄 بدء تطبيق Migration...")
+        
+        # Use direct psycopg2 connection
+        database_url = os.environ.get('DATABASE_URL')
+        if not database_url:
+            bot.reply_to(message, "❌ DATABASE_URL not found")
+            return
+        
+        result = urllib.parse.urlparse(database_url)
+        username = result.username
+        password = result.password
+        database = result.path[1:]
+        hostname = result.hostname
+        port = result.port
+        
+        conn = psycopg2.connect(
+            database=database,
+            user=username,
+            password=password,
+            host=hostname,
+            port=port
+        )
+        cursor = conn.cursor()
+        
+        migrations = [
+            ("Users", "TelegramID"),
+            ("Sellers", "TelegramID"),
+            ("CreditCustomers", "TelegramID"),
+            ("Orders", "BuyerID"),
+            ("Carts", "UserID"),
+        ]
+        
+        results = []
+        for table_name, column_name in migrations:
+            try:
+                cursor.execute("""
+                    SELECT data_type 
+                    FROM information_schema.columns 
+                    WHERE table_name=%s AND column_name=%s
+                """, (table_name.lower(), column_name.lower()))
+                result = cursor.fetchone()
+                
+                if result:
+                    current_type = result[0].upper()
+                    if current_type not in ('BIGINT', 'INT8'):
+                        cursor.execute(f"ALTER TABLE {table_name} ALTER COLUMN {column_name} TYPE BIGINT")
+                        conn.commit()
+                        results.append(f"✅ {table_name}.{column_name}: {current_type} → BIGINT")
+                    else:
+                        results.append(f"✅ {table_name}.{column_name}: Already BIGINT")
+                else:
+                    results.append(f"⚠️ {table_name}.{column_name}: Column not found")
+            except Exception as e:
+                results.append(f"❌ {table_name}.{column_name}: {str(e)}")
+                try:
+                    conn.rollback()
+                except:
+                    pass
+        
+        cursor.close()
+        conn.close()
+        
+        result_text = "🔄 **نتائج Migration:**\n\n" + "\n".join(results)
+        bot.reply_to(message, result_text, parse_mode='Markdown')
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ خطأ في تطبيق Migration: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
 # Use absolute path to ensure consistency
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -209,65 +293,163 @@ if not os.path.exists(DB_FILE) and os.path.exists(os.path.join(SEED_DIR, "store.
 # ===================== قاعدة البيانات =====================
 # ===================== قاعدة البيانات =====================
 def init_db():
+    print("=" * 60)
+    print("🛠️ INITIALIZING DATABASE...")
+    print("=" * 60)
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor_wrapper = conn.cursor()  # This returns CursorWrapper
+    cursor = cursor_wrapper.cursor  # Get the underlying cursor for direct access if needed
 
     # 1. Users (Main table, no dependencies)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS Users(
-            UserID INTEGER PRIMARY KEY AUTOINCREMENT,
-            TelegramID INTEGER UNIQUE,
-            UserName TEXT,
-            UserType TEXT,
-            PhoneNumber TEXT,
-            FullName TEXT,
-            CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
+    if IS_POSTGRES:
+        cursor_wrapper.execute("""
+            CREATE TABLE IF NOT EXISTS Users(
+                UserID SERIAL PRIMARY KEY,
+                TelegramID BIGINT UNIQUE,
+                UserName TEXT,
+                UserType TEXT,
+                PhoneNumber TEXT,
+                FullName TEXT,
+                CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+    else:
+        cursor_wrapper.execute("""
+            CREATE TABLE IF NOT EXISTS Users(
+                UserID INTEGER PRIMARY KEY AUTOINCREMENT,
+                TelegramID INTEGER UNIQUE,
+                UserName TEXT,
+                UserType TEXT,
+                PhoneNumber TEXT,
+                FullName TEXT,
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+    
+    # Migration: Change TelegramID from INTEGER to BIGINT in PostgreSQL if needed
+    if IS_POSTGRES:
+        try:
+            print("🔍 Checking Users.TelegramID column type...")
+            cursor_wrapper.execute("""
+                SELECT data_type 
+                FROM information_schema.columns 
+                WHERE table_name='users' AND column_name='telegramid'
+            """)
+            result = cursor_wrapper.fetchone()
+            if result:
+                current_type = result[0].upper()
+                print(f"📊 Users.TelegramID current type: {current_type}")
+                # Force migration if not already BIGINT
+                if current_type not in ('BIGINT', 'INT8'):
+                    print(f"🔄 FORCE Migrating Users.TelegramID from {current_type} to BIGINT...")
+                    cursor_wrapper.execute("ALTER TABLE Users ALTER COLUMN TelegramID TYPE BIGINT")
+                    conn.commit()
+                    print("✅ Users.TelegramID migrated to BIGINT successfully")
+                else:
+                    print(f"✅ Users.TelegramID is already BIGINT")
+            else:
+                print("⚠️ Users.TelegramID column not found!")
+        except Exception as e:
+            print(f"❌ Migration ERROR for Users.TelegramID: {e}")
+            import traceback
+            traceback.print_exc()
+            try:
+                conn.rollback()
+            except:
+                pass
 
     # 2. Sellers (Depends on Users for SuspendedBy)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS Sellers(
-            SellerID INTEGER PRIMARY KEY AUTOINCREMENT,
-            TelegramID INTEGER UNIQUE,
-            UserName TEXT,
-            StoreName TEXT,
-            CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-            Status TEXT DEFAULT 'active',
-            SuspensionReason TEXT,
-            SuspendedBy INTEGER,
-            SuspendedAt DATETIME,
-            RequireCustomerRegistration INTEGER DEFAULT 0,
-            FOREIGN KEY (SuspendedBy) REFERENCES Users(TelegramID)
-        )
-    """)
+    if IS_POSTGRES:
+        cursor_wrapper.execute("""
+            CREATE TABLE IF NOT EXISTS Sellers(
+                SellerID SERIAL PRIMARY KEY,
+                TelegramID BIGINT UNIQUE,
+                UserName TEXT,
+                StoreName TEXT,
+                CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                Status TEXT DEFAULT 'active',
+                SuspensionReason TEXT,
+                SuspendedBy BIGINT,
+                SuspendedAt TIMESTAMP,
+                RequireCustomerRegistration INTEGER DEFAULT 0,
+                FOREIGN KEY (SuspendedBy) REFERENCES Users(TelegramID)
+            )
+        """)
+    else:
+        cursor_wrapper.execute("""
+            CREATE TABLE IF NOT EXISTS Sellers(
+                SellerID INTEGER PRIMARY KEY AUTOINCREMENT,
+                TelegramID INTEGER UNIQUE,
+                UserName TEXT,
+                StoreName TEXT,
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                Status TEXT DEFAULT 'active',
+                SuspensionReason TEXT,
+                SuspendedBy INTEGER,
+                SuspendedAt DATETIME,
+                RequireCustomerRegistration INTEGER DEFAULT 0,
+                FOREIGN KEY (SuspendedBy) REFERENCES Users(TelegramID)
+            )
+        """)
+    
+    # Migration: Change TelegramID from INTEGER to BIGINT in PostgreSQL if needed
+    if IS_POSTGRES:
+        try:
+            print("🔍 Checking Sellers.TelegramID column type...")
+            cursor_wrapper.execute("""
+                SELECT data_type 
+                FROM information_schema.columns 
+                WHERE table_name='sellers' AND column_name='telegramid'
+            """)
+            result = cursor_wrapper.fetchone()
+            if result:
+                current_type = result[0].upper()
+                print(f"📊 Sellers.TelegramID current type: {current_type}")
+                # Force migration if not already BIGINT
+                if current_type not in ('BIGINT', 'INT8'):
+                    print(f"🔄 FORCE Migrating Sellers.TelegramID from {current_type} to BIGINT...")
+                    cursor_wrapper.execute("ALTER TABLE Sellers ALTER COLUMN TelegramID TYPE BIGINT")
+                    conn.commit()
+                    print("✅ Sellers.TelegramID migrated to BIGINT successfully")
+                else:
+                    print(f"✅ Sellers.TelegramID is already BIGINT")
+            else:
+                print("⚠️ Sellers.TelegramID column not found!")
+        except Exception as e:
+            print(f"❌ Migration ERROR for Sellers.TelegramID: {e}")
+            import traceback
+            traceback.print_exc()
+            try:
+                conn.rollback()
+            except:
+                pass
     
     # Migration: Add RequireCustomerRegistration column if it doesn't exist
     try:
         if IS_POSTGRES:
-            cursor.execute("""
+            cursor_wrapper.execute("""
                 SELECT column_name 
                 FROM information_schema.columns 
                 WHERE table_name='sellers' AND column_name='requirecustomerregistration'
             """)
-            if not cursor.fetchone():
+            if not cursor_wrapper.fetchone():
                 print("🔄 Adding RequireCustomerRegistration column to Sellers table...")
-                cursor.execute("ALTER TABLE Sellers ADD COLUMN RequireCustomerRegistration INTEGER DEFAULT 0")
+                cursor_wrapper.execute("ALTER TABLE Sellers ADD COLUMN RequireCustomerRegistration INTEGER DEFAULT 0")
                 conn.commit()
                 print("✅ RequireCustomerRegistration column added successfully")
             # تأكد من أن جميع المتاجر لديها القيمة 0 (مفتوحة) افتراضياً
-            cursor.execute("UPDATE Sellers SET RequireCustomerRegistration = 0 WHERE RequireCustomerRegistration IS NULL")
+            cursor_wrapper.execute("UPDATE Sellers SET RequireCustomerRegistration = 0 WHERE RequireCustomerRegistration IS NULL")
             conn.commit()
         else:
             try:
-                cursor.execute("SELECT RequireCustomerRegistration FROM Sellers LIMIT 1")
+                cursor_wrapper.execute("SELECT RequireCustomerRegistration FROM Sellers LIMIT 1")
                 # تأكد من أن جميع المتاجر لديها القيمة 0 (مفتوحة) افتراضياً
-                cursor.execute("UPDATE Sellers SET RequireCustomerRegistration = 0 WHERE RequireCustomerRegistration IS NULL")
+                cursor_wrapper.execute("UPDATE Sellers SET RequireCustomerRegistration = 0 WHERE RequireCustomerRegistration IS NULL")
                 conn.commit()
             except:
                 print("🔄 Adding RequireCustomerRegistration column to Sellers table (SQLite)...")
-                cursor.execute("ALTER TABLE Sellers ADD COLUMN RequireCustomerRegistration INTEGER DEFAULT 0")
-                cursor.execute("UPDATE Sellers SET RequireCustomerRegistration = 0 WHERE RequireCustomerRegistration IS NULL")
+                cursor_wrapper.execute("ALTER TABLE Sellers ADD COLUMN RequireCustomerRegistration INTEGER DEFAULT 0")
+                cursor_wrapper.execute("UPDATE Sellers SET RequireCustomerRegistration = 0 WHERE RequireCustomerRegistration IS NULL")
                 conn.commit()
                 print("✅ RequireCustomerRegistration column added successfully (SQLite)")
     except Exception as e:
@@ -279,49 +461,96 @@ def init_db():
 
     # 3. CreditCustomers (Depends on Sellers)
     # Create table with nullable PhoneNumber first (for compatibility with existing data)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS CreditCustomers(
-            CustomerID INTEGER PRIMARY KEY AUTOINCREMENT,
-            SellerID INTEGER,
-            FullName TEXT NOT NULL,
-            PhoneNumber TEXT,
-            CustomerType TEXT DEFAULT 'CreditCustomer',
-            CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(SellerID, PhoneNumber),
-            FOREIGN KEY (SellerID) REFERENCES Sellers(SellerID)
-        )
-    """)
+    if IS_POSTGRES:
+        cursor_wrapper.execute("""
+            CREATE TABLE IF NOT EXISTS CreditCustomers(
+                CustomerID SERIAL PRIMARY KEY,
+                SellerID INTEGER,
+                FullName TEXT NOT NULL,
+                PhoneNumber TEXT,
+                TelegramID BIGINT,
+                CustomerType TEXT DEFAULT 'CreditCustomer',
+                CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(SellerID, PhoneNumber),
+                FOREIGN KEY (SellerID) REFERENCES Sellers(SellerID)
+            )
+        """)
+    else:
+        cursor_wrapper.execute("""
+            CREATE TABLE IF NOT EXISTS CreditCustomers(
+                CustomerID INTEGER PRIMARY KEY AUTOINCREMENT,
+                SellerID INTEGER,
+                FullName TEXT NOT NULL,
+                PhoneNumber TEXT,
+                TelegramID INTEGER,
+                CustomerType TEXT DEFAULT 'CreditCustomer',
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(SellerID, PhoneNumber),
+                FOREIGN KEY (SellerID) REFERENCES Sellers(SellerID)
+            )
+        """)
     
-    # Migration: Add CustomerType column if it doesn't exist
+    # Migration: Ensure both CustomerType and TelegramID exist and have correct types
     try:
         if IS_POSTGRES:
-            # Check if CustomerType column exists in PostgreSQL
-            cursor.execute("""
+            # 1) Ensure CustomerType exists
+            cursor_wrapper.execute("""
                 SELECT column_name 
                 FROM information_schema.columns 
                 WHERE table_name='creditcustomers' AND column_name='customertype'
             """)
-            result = cursor.fetchone()
+            result = cursor_wrapper.fetchone()
             if not result:
-                # Column doesn't exist, add it
                 print("🔄 Adding CustomerType column to CreditCustomers table...")
-                cursor.execute("ALTER TABLE CreditCustomers ADD COLUMN CustomerType TEXT DEFAULT 'CreditCustomer'")
-                # Update existing records
-                cursor.execute("UPDATE CreditCustomers SET CustomerType = 'CreditCustomer' WHERE CustomerType IS NULL")
+                cursor_wrapper.execute("ALTER TABLE CreditCustomers ADD COLUMN CustomerType TEXT DEFAULT 'CreditCustomer'")
+                cursor_wrapper.execute("UPDATE CreditCustomers SET CustomerType = 'CreditCustomer' WHERE CustomerType IS NULL")
                 conn.commit()
                 print("✅ CustomerType column added successfully")
+
+            # 2) Ensure TelegramID exists and is BIGINT
+            cursor_wrapper.execute("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name='creditcustomers' AND column_name='telegramid'
+            """)
+            result = cursor_wrapper.fetchone()
+            if not result:
+                print("🔄 Adding TelegramID column to CreditCustomers table...")
+                cursor_wrapper.execute("ALTER TABLE CreditCustomers ADD COLUMN TelegramID BIGINT")
+                conn.commit()
+                print("✅ TelegramID column added successfully")
             else:
-                print("✅ CustomerType column already exists")
+                cursor_wrapper.execute("""
+                    SELECT data_type 
+                    FROM information_schema.columns 
+                    WHERE table_name='creditcustomers' AND column_name='telegramid'
+                """)
+                type_result = cursor_wrapper.fetchone()
+                if type_result:
+                    current_type = type_result[0].upper()
+                    print(f"📊 CreditCustomers.TelegramID current type: {current_type}")
+                    if current_type not in ('BIGINT', 'INT8'):
+                        print(f"🔄 FORCE Migrating CreditCustomers.TelegramID from {current_type} to BIGINT...")
+                        cursor_wrapper.execute("ALTER TABLE CreditCustomers ALTER COLUMN TelegramID TYPE BIGINT")
+                        conn.commit()
+                        print("✅ CreditCustomers.TelegramID migrated to BIGINT successfully")
+                    else:
+                        print("✅ CreditCustomers.TelegramID is already BIGINT")
         else:
-            # SQLite - Check if column exists by trying to select it
-            try:
-                cursor.execute("SELECT CustomerType FROM CreditCustomers LIMIT 1")
-                print("✅ CustomerType column already exists (SQLite)")
-            except:
-                # Column doesn't exist, add it
+            # SQLite: check table columns and add missing ones
+            cursor_wrapper.execute("PRAGMA table_info(CreditCustomers)")
+            columns = [row[1] for row in cursor_wrapper.fetchall()]
+
+            if 'TelegramID' not in columns:
+                print("🔄 Adding TelegramID column to CreditCustomers table...")
+                cursor_wrapper.execute("ALTER TABLE CreditCustomers ADD COLUMN TelegramID INTEGER")
+                conn.commit()
+                print("✅ TelegramID column added successfully")
+
+            if 'CustomerType' not in columns:
                 print("🔄 Adding CustomerType column to CreditCustomers table (SQLite)...")
-                cursor.execute("ALTER TABLE CreditCustomers ADD COLUMN CustomerType TEXT DEFAULT 'CreditCustomer'")
-                cursor.execute("UPDATE CreditCustomers SET CustomerType = 'CreditCustomer' WHERE CustomerType IS NULL")
+                cursor_wrapper.execute("ALTER TABLE CreditCustomers ADD COLUMN CustomerType TEXT DEFAULT 'CreditCustomer'")
+                cursor_wrapper.execute("UPDATE CreditCustomers SET CustomerType = 'CreditCustomer' WHERE CustomerType IS NULL")
                 conn.commit()
                 print("✅ CustomerType column added successfully (SQLite)")
     except Exception as e:
@@ -334,7 +563,7 @@ def init_db():
 
     # 4. CreditLimits (Depends on CreditCustomers, Sellers)
     # Using DEFAULT TRUE for Postgres compatibility
-    cursor.execute("""
+    cursor_wrapper.execute("""
         CREATE TABLE IF NOT EXISTS CreditLimits (
             LimitID INTEGER PRIMARY KEY AUTOINCREMENT,
             CustomerID INTEGER,
@@ -352,7 +581,7 @@ def init_db():
     """)
 
     # 5. Categories (Depends on Sellers)
-    cursor.execute("""
+    cursor_wrapper.execute("""
         CREATE TABLE IF NOT EXISTS Categories(
             CategoryID INTEGER PRIMARY KEY AUTOINCREMENT,
             SellerID INTEGER,
@@ -363,7 +592,7 @@ def init_db():
     """)
 
     # 6. Products (Depends on Sellers, Categories)
-    cursor.execute("""
+    cursor_wrapper.execute("""
         CREATE TABLE IF NOT EXISTS Products(
             ProductID INTEGER PRIMARY KEY AUTOINCREMENT,
             SellerID INTEGER,
@@ -382,7 +611,7 @@ def init_db():
     """)
     
     # 6.1. ProductImages (Depends on Products) - صور متعددة لكل منتج
-    cursor.execute("""
+    cursor_wrapper.execute("""
         CREATE TABLE IF NOT EXISTS ProductImages(
             ImageID INTEGER PRIMARY KEY AUTOINCREMENT,
             ProductID INTEGER,
@@ -394,41 +623,139 @@ def init_db():
     """)
 
     # 7. Carts (Depends on Users, Products)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS Carts(
-            CartID INTEGER PRIMARY KEY AUTOINCREMENT,
-            UserID INTEGER,
-            ProductID INTEGER,
-            Quantity INTEGER,
-            Price REAL,
-            AddedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(UserID, ProductID),
-            FOREIGN KEY (UserID) REFERENCES Users(TelegramID),
-            FOREIGN KEY (ProductID) REFERENCES Products(ProductID)
-        )
-    """)
+    if IS_POSTGRES:
+        # PostgreSQL: Use BIGINT for UserID to support large Telegram IDs
+        cursor_wrapper.execute("""
+            CREATE TABLE IF NOT EXISTS Carts(
+                CartID SERIAL PRIMARY KEY,
+                UserID BIGINT,
+                ProductID INTEGER,
+                Quantity INTEGER,
+                Price REAL,
+                AddedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(UserID, ProductID),
+                FOREIGN KEY (UserID) REFERENCES Users(TelegramID),
+                FOREIGN KEY (ProductID) REFERENCES Products(ProductID)
+            )
+        """)
+    else:
+        # SQLite: INTEGER supports 64-bit values
+        cursor_wrapper.execute("""
+            CREATE TABLE IF NOT EXISTS Carts(
+                CartID INTEGER PRIMARY KEY AUTOINCREMENT,
+                UserID INTEGER,
+                ProductID INTEGER,
+                Quantity INTEGER,
+                Price REAL,
+                AddedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(UserID, ProductID),
+                FOREIGN KEY (UserID) REFERENCES Users(TelegramID),
+                FOREIGN KEY (ProductID) REFERENCES Products(ProductID)
+            )
+        """)
+    
+    # Migration: Change UserID from INTEGER to BIGINT in PostgreSQL if needed
+    if IS_POSTGRES:
+        try:
+            print("🔍 Checking Carts.UserID column type...")
+            cursor_wrapper.execute("""
+                SELECT data_type 
+                FROM information_schema.columns 
+                WHERE table_name='carts' AND column_name='userid'
+            """)
+            result = cursor_wrapper.fetchone()
+            if result:
+                current_type = result[0].upper()
+                print(f"📊 Carts.UserID current type: {current_type}")
+                # Force migration if not already BIGINT
+                if current_type not in ('BIGINT', 'INT8'):
+                    print(f"🔄 FORCE Migrating Carts.UserID from {current_type} to BIGINT...")
+                    cursor_wrapper.execute("ALTER TABLE Carts ALTER COLUMN UserID TYPE BIGINT")
+                    conn.commit()
+                    print("✅ Carts.UserID migrated to BIGINT successfully")
+                else:
+                    print(f"✅ Carts.UserID is already BIGINT")
+            else:
+                print("⚠️ Carts.UserID column not found!")
+        except Exception as e:
+            print(f"❌ Migration ERROR for Carts.UserID: {e}")
+            import traceback
+            traceback.print_exc()
+            try:
+                conn.rollback()
+            except:
+                pass
 
     # 8. Orders (Depends on Users, Sellers)
-    # Using DEFAULT FALSE for Postgres compatibility
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS Orders(
-            OrderID INTEGER PRIMARY KEY AUTOINCREMENT,
-            BuyerID INTEGER,
-            SellerID INTEGER,
-            Total REAL,
-            Status TEXT DEFAULT 'Pending',
-            CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-            DeliveryAddress TEXT,
-            Notes TEXT,
-            PaymentMethod TEXT DEFAULT 'cash',
-            FullyPaid BOOLEAN DEFAULT FALSE,
-            FOREIGN KEY (BuyerID) REFERENCES Users(TelegramID),
-            FOREIGN KEY (SellerID) REFERENCES Sellers(SellerID)
-        )
-    """)
+    if IS_POSTGRES:
+        cursor_wrapper.execute("""
+            CREATE TABLE IF NOT EXISTS Orders(
+                OrderID SERIAL PRIMARY KEY,
+                BuyerID BIGINT,
+                SellerID INTEGER,
+                Total REAL,
+                Status TEXT DEFAULT 'Pending',
+                CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                DeliveryAddress TEXT,
+                Notes TEXT,
+                PaymentMethod TEXT DEFAULT 'cash',
+                FullyPaid BOOLEAN DEFAULT FALSE,
+                FOREIGN KEY (BuyerID) REFERENCES Users(TelegramID),
+                FOREIGN KEY (SellerID) REFERENCES Sellers(SellerID)
+            )
+        """)
+    else:
+        cursor_wrapper.execute("""
+            CREATE TABLE IF NOT EXISTS Orders(
+                OrderID INTEGER PRIMARY KEY AUTOINCREMENT,
+                BuyerID INTEGER,
+                SellerID INTEGER,
+                Total REAL,
+                Status TEXT DEFAULT 'Pending',
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                DeliveryAddress TEXT,
+                Notes TEXT,
+                PaymentMethod TEXT DEFAULT 'cash',
+                FullyPaid BOOLEAN DEFAULT FALSE,
+                FOREIGN KEY (BuyerID) REFERENCES Users(TelegramID),
+                FOREIGN KEY (SellerID) REFERENCES Sellers(SellerID)
+            )
+        """)
+    
+    # Migration: Change BuyerID from INTEGER to BIGINT in PostgreSQL if needed
+    if IS_POSTGRES:
+        try:
+            print("🔍 Checking Orders.BuyerID column type...")
+            cursor_wrapper.execute("""
+                SELECT data_type 
+                FROM information_schema.columns 
+                WHERE table_name='orders' AND column_name='buyerid'
+            """)
+            result = cursor_wrapper.fetchone()
+            if result:
+                current_type = result[0].upper()
+                print(f"📊 Orders.BuyerID current type: {current_type}")
+                # Force migration if not already BIGINT
+                if current_type not in ('BIGINT', 'INT8'):
+                    print(f"🔄 FORCE Migrating Orders.BuyerID from {current_type} to BIGINT...")
+                    cursor_wrapper.execute("ALTER TABLE Orders ALTER COLUMN BuyerID TYPE BIGINT")
+                    conn.commit()
+                    print("✅ Orders.BuyerID migrated to BIGINT successfully")
+                else:
+                    print(f"✅ Orders.BuyerID is already BIGINT")
+            else:
+                print("⚠️ Orders.BuyerID column not found!")
+        except Exception as e:
+            print(f"❌ Migration ERROR for Orders.BuyerID: {e}")
+            import traceback
+            traceback.print_exc()
+            try:
+                conn.rollback()
+            except:
+                pass
 
     # 9. OrderItems (Depends on Orders, Products)
-    cursor.execute("""
+    cursor_wrapper.execute("""
         CREATE TABLE IF NOT EXISTS OrderItems(
             OrderItemID INTEGER PRIMARY KEY AUTOINCREMENT,
             OrderID INTEGER,
@@ -444,7 +771,7 @@ def init_db():
     """)
 
     # 10. Returns (Depends on Orders, Products, Users)
-    cursor.execute("""
+    cursor_wrapper.execute("""
         CREATE TABLE IF NOT EXISTS Returns(
             ReturnID INTEGER PRIMARY KEY AUTOINCREMENT,
             OrderID INTEGER,
@@ -463,7 +790,7 @@ def init_db():
 
     # 11. Messages (Depends on Orders, Sellers)
     # Using DEFAULT FALSE for Postgres compatibility
-    cursor.execute("""
+    cursor_wrapper.execute("""
         CREATE TABLE IF NOT EXISTS Messages(
             MessageID INTEGER PRIMARY KEY AUTOINCREMENT,
             OrderID INTEGER,
@@ -478,7 +805,7 @@ def init_db():
     """)
 
     # 12. CustomerCredit (Transaction History) - Depends on CreditCustomers, Sellers
-    cursor.execute("""
+    cursor_wrapper.execute("""
         CREATE TABLE IF NOT EXISTS CustomerCredit(
             CreditID INTEGER PRIMARY KEY AUTOINCREMENT,
             CustomerID INTEGER,
@@ -496,7 +823,7 @@ def init_db():
 
     # 13. CustomerCredit (Depends on CreditCustomers, Sellers)
     # Using DEFAULT FALSE for Postgres compatibility (though boolean not used here heavily)
-    cursor.execute("""
+    cursor_wrapper.execute("""
         CREATE TABLE IF NOT EXISTS CustomerCredit (
             CreditID INTEGER PRIMARY KEY AUTOINCREMENT,
             CustomerID INTEGER,
@@ -514,7 +841,7 @@ def init_db():
 
     # 14. Image Storage (For Syncing Images from Desktop App)
     if IS_POSTGRES:
-        cursor.execute("""
+        cursor_wrapper.execute("""
             CREATE TABLE IF NOT EXISTS ImageStorage(
                 FileName TEXT PRIMARY KEY,
                 FileData BYTEA,
@@ -522,7 +849,7 @@ def init_db():
             )
         """)
     else:
-        cursor.execute("""
+        cursor_wrapper.execute("""
             CREATE TABLE IF NOT EXISTS ImageStorage(
                 FileName TEXT PRIMARY KEY,
                 FileData BLOB,
@@ -533,7 +860,7 @@ def init_db():
     # ----------------- MIGRATIONS -----------------
     def ensure_column(table, column, definition):
         try:
-            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            cursor_wrapper.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
             conn.commit()
             print(f"[OK] Migrated: Added {column} to {table}")
         except Exception as e:
@@ -551,9 +878,105 @@ def init_db():
     ensure_column('Sellers', 'SuspendedAt', 'DATETIME')
     
     conn.commit()
+    cursor_wrapper.close()
     conn.close()
+    
+    # Force apply BIGINT migrations after all tables are created
+    if IS_POSTGRES:
+        print("\n" + "=" * 60)
+        print("🔄 APPLYING BIGINT MIGRATIONS (FORCE)...")
+        print("=" * 60)
+        try:
+            force_apply_bigint_migrations()
+        except Exception as e:
+            print(f"❌ Error in force_apply_bigint_migrations: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    print("=" * 60)
+    print("✅ DATABASE INITIALIZATION COMPLETE")
+    print("=" * 60)
 
 # Note: init_db() is called in if __name__ == "__main__" block, not here
+
+def force_apply_bigint_migrations():
+    """تطبيق Migration بشكل إجباري لجميع الأعمدة"""
+    if not IS_POSTGRES:
+        print("⚠️ Not PostgreSQL, skipping BIGINT migration")
+        return
+    
+    # Get the actual connection (not DBWrapper) for direct SQL execution
+    database_url = os.environ.get('DATABASE_URL')
+    if not database_url:
+        print("❌ DATABASE_URL not found")
+        return
+    
+    try:
+        result = urllib.parse.urlparse(database_url)
+        username = result.username
+        password = result.password
+        database = result.path[1:]
+        hostname = result.hostname
+        port = result.port
+        
+        # Connect directly using psycopg2
+        conn = psycopg2.connect(
+            database=database,
+            user=username,
+            password=password,
+            host=hostname,
+            port=port
+        )
+        cursor = conn.cursor()
+        
+        migrations = [
+            ("Users", "TelegramID"),
+            ("Sellers", "TelegramID"),
+            ("CreditCustomers", "TelegramID"),
+            ("Orders", "BuyerID"),
+            ("Carts", "UserID"),
+        ]
+        
+        for table_name, column_name in migrations:
+            try:
+                # Check current type
+                cursor.execute("""
+                    SELECT data_type 
+                    FROM information_schema.columns 
+                    WHERE table_name=%s AND column_name=%s
+                """, (table_name.lower(), column_name.lower()))
+                result = cursor.fetchone()
+                
+                if result:
+                    current_type = result[0].upper()
+                    print(f"📊 {table_name}.{column_name}: {current_type}")
+                    
+                    if current_type not in ('BIGINT', 'INT8'):
+                        print(f"   🔄 FORCE Migrating {table_name}.{column_name} from {current_type} to BIGINT...")
+                        # Use direct SQL execution for ALTER TABLE
+                        cursor.execute(f"ALTER TABLE {table_name} ALTER COLUMN {column_name} TYPE BIGINT")
+                        conn.commit()
+                        print(f"   ✅ Successfully migrated to BIGINT")
+                    else:
+                        print(f"   ✅ Already BIGINT")
+                else:
+                    print(f"⚠️ {table_name}.{column_name}: Column not found!")
+            except Exception as e:
+                print(f"❌ Error migrating {table_name}.{column_name}: {e}")
+                import traceback
+                traceback.print_exc()
+                try:
+                    conn.rollback()
+                except:
+                    pass
+        
+        cursor.close()
+        conn.close()
+        print("✅ Migration completed successfully")
+    except Exception as e:
+        print(f"❌ Error connecting to database for migration: {e}")
+        import traceback
+        traceback.print_exc()
 
 def check_and_fix_db():
     # ... logic skipped ...
@@ -929,10 +1352,11 @@ def download_image_from_cloud(filename):
         traceback.print_exc()
         return False
 
-def add_credit_customer(seller_id, full_name, phone_number, customer_type='CreditCustomer'):
+def add_credit_customer(seller_id, full_name, phone_number, customer_type='CreditCustomer', telegram_id=None):
     """إضافة زبون آجل أو نقطة بيع"""
     conn = get_db_connection()
     cursor = conn.cursor()
+    cursor_wrapper = CursorWrapper(cursor, is_postgres=IS_POSTGRES)
     
     try:
         if not phone_number or phone_number.strip() == '':
@@ -940,22 +1364,34 @@ def add_credit_customer(seller_id, full_name, phone_number, customer_type='Credi
             return None
         
         if IS_POSTGRES:
-            cursor.execute("""
-                INSERT INTO CreditCustomers (SellerID, FullName, PhoneNumber, CustomerType)
-                VALUES (%s, %s, %s, %s)
+            cursor_wrapper.execute("""
+                INSERT INTO CreditCustomers (SellerID, FullName, PhoneNumber, CustomerType, TelegramID)
+                VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT DO NOTHING
-            """, (seller_id, full_name, phone_number, customer_type))
+                RETURNING CustomerID
+            """, (seller_id, full_name, phone_number, customer_type, telegram_id))
+            result = cursor_wrapper.fetchone()
+            customer_id = result[0] if result else None
         else:
-            cursor.execute("""
-                INSERT OR IGNORE INTO CreditCustomers (SellerID, FullName, PhoneNumber, CustomerType)
-                VALUES (?, ?, ?, ?)
-            """, (seller_id, full_name, phone_number, customer_type))
+            cursor_wrapper.execute("""
+                INSERT OR IGNORE INTO CreditCustomers (SellerID, FullName, PhoneNumber, CustomerType, TelegramID)
+                VALUES (?, ?, ?, ?, ?)
+            """, (seller_id, full_name, phone_number, customer_type, telegram_id))
+            customer_id = cursor_wrapper.lastrowid
+        
         conn.commit()
-        customer_id = cursor.lastrowid
+        cursor.close()
         conn.close()
         return customer_id
     except Exception as e:
         print(f"Error adding credit customer: {e}")
+        import traceback
+        traceback.print_exc()
+        try:
+            conn.rollback()
+        except:
+            pass
+        cursor.close()
         conn.close()
         return None
 
@@ -1033,8 +1469,34 @@ def get_credit_customer(seller_id, phone_number=None, full_name=None):
     conn.close()
     return customer
 
+def is_customer_registered_for_store_by_telegram_id(telegram_id, seller_id):
+    """التحقق من أن Telegram ID مسجل في CreditCustomers لهذا المتجر"""
+    try:
+        if not telegram_id:
+            return False
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor_wrapper = CursorWrapper(cursor, is_postgres=IS_POSTGRES)
+        
+        cursor_wrapper.execute("""
+            SELECT CustomerID FROM CreditCustomers 
+            WHERE SellerID=? AND TelegramID=?
+        """, (seller_id, telegram_id))
+        
+        result = cursor_wrapper.fetchone()
+        cursor.close()
+        conn.close()
+        
+        return result is not None
+    except Exception as e:
+        print(f"⚠️ خطأ في التحقق من تسجيل الزبون بـ Telegram ID: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
 def is_customer_registered_for_store_by_phone(phone_number, seller_id):
-    """التحقق من أن رقم الهاتف مسجل في CreditCustomers لهذا المتجر"""
+    """التحقق من أن رقم الهاتف مسجل في CreditCustomers لهذا المتجر (deprecated - use Telegram ID)"""
     try:
         if not phone_number or not phone_number.strip():
             return False
@@ -1069,17 +1531,30 @@ def get_all_credit_customers(seller_id):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
-        SELECT cc.CustomerID, cc.SellerID, cc.FullName, cc.PhoneNumber, 
-               COALESCE(cc.CustomerType, 'CreditCustomer') as CustomerType, cc.CreatedAt,
-               COALESCE(cl.MaxCreditAmount, 1000000) as MaxCredit,
-               COALESCE(cl.CurrentUsedAmount, 0) as CurrentUsed,
-               COALESCE(cl.IsActive, TRUE) as LimitActive
-        FROM CreditCustomers cc
-        LEFT JOIN CreditLimits cl ON cc.CustomerID = cl.CustomerID AND cc.SellerID = cl.SellerID
-        WHERE cc.SellerID=? 
-        ORDER BY cc.FullName
-    """, (seller_id,))
+    if IS_POSTGRES:
+        cursor.execute("""
+            SELECT cc.CustomerID, cc.SellerID, cc.FullName, cc.PhoneNumber, cc.TelegramID,
+                   COALESCE(cc.CustomerType, 'CreditCustomer') as CustomerType, cc.CreatedAt,
+                   COALESCE(cl.MaxCreditAmount, 1000000) as MaxCredit,
+                   COALESCE(cl.CurrentUsedAmount, 0) as CurrentUsed,
+                   COALESCE(cl.IsActive, TRUE) as LimitActive
+            FROM CreditCustomers cc
+            LEFT JOIN CreditLimits cl ON cc.CustomerID = cl.CustomerID AND cc.SellerID = cl.SellerID
+            WHERE cc.SellerID=%s 
+            ORDER BY cc.FullName
+        """, (seller_id,))
+    else:
+        cursor.execute("""
+            SELECT cc.CustomerID, cc.SellerID, cc.FullName, cc.PhoneNumber, cc.TelegramID,
+                   COALESCE(cc.CustomerType, 'CreditCustomer') as CustomerType, cc.CreatedAt,
+                   COALESCE(cl.MaxCreditAmount, 1000000) as MaxCredit,
+                   COALESCE(cl.CurrentUsedAmount, 0) as CurrentUsed,
+                   COALESCE(cl.IsActive, 1) as LimitActive
+            FROM CreditCustomers cc
+            LEFT JOIN CreditLimits cl ON cc.CustomerID = cl.CustomerID AND cc.SellerID = cl.SellerID
+            WHERE cc.SellerID=? 
+            ORDER BY cc.FullName
+        """, (seller_id,))
     
     customers = cursor.fetchall()
     conn.close()
@@ -1210,39 +1685,64 @@ def get_all_customers_with_balance(seller_id):
 
 # ===================== دوال النظام =====================
 def add_user(telegram_id, username, usertype, phone_number=None, full_name=None):
+    """إضافة مستخدم جديد أو تحديث المستخدم الموجود"""
     conn = get_db_connection()
     cursor = conn.cursor()
-    if IS_POSTGRES:
-        # PostgreSQL syntax
-        cursor.execute("""
-            INSERT INTO Users (TelegramID, UserName, UserType, PhoneNumber, FullName) 
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (TelegramID) 
-            DO UPDATE SET 
-                UserName = EXCLUDED.UserName, 
-                UserType = EXCLUDED.UserType, 
-                PhoneNumber = COALESCE(EXCLUDED.PhoneNumber, Users.PhoneNumber), 
-                FullName = COALESCE(EXCLUDED.FullName, Users.FullName)
-        """, (telegram_id, username, usertype, phone_number, full_name))
-    else:
-        # SQLite syntax
-        cursor.execute("""
-            INSERT OR REPLACE INTO Users (TelegramID, UserName, UserType, PhoneNumber, FullName) 
-            VALUES (?, ?, ?, ?, ?)
-        """, (telegram_id, username, usertype, phone_number, full_name))
-    conn.commit()
-    conn.close()
+    cursor_wrapper = CursorWrapper(cursor, is_postgres=IS_POSTGRES)
+    
+    try:
+        if IS_POSTGRES:
+            # PostgreSQL syntax
+            cursor_wrapper.execute("""
+                INSERT INTO Users (TelegramID, UserName, UserType, PhoneNumber, FullName) 
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT (TelegramID) 
+                DO UPDATE SET 
+                    UserName = EXCLUDED.UserName, 
+                    UserType = EXCLUDED.UserType, 
+                    PhoneNumber = COALESCE(EXCLUDED.PhoneNumber, Users.PhoneNumber), 
+                    FullName = COALESCE(EXCLUDED.FullName, Users.FullName)
+            """, (telegram_id, username, usertype, phone_number, full_name))
+        else:
+            # SQLite syntax
+            cursor_wrapper.execute("""
+                INSERT OR REPLACE INTO Users (TelegramID, UserName, UserType, PhoneNumber, FullName) 
+                VALUES (?, ?, ?, ?, ?)
+            """, (telegram_id, username, usertype, phone_number, full_name))
+        conn.commit()
+        print(f"[SUCCESS] User {telegram_id} added/updated successfully")
+        return True
+    except Exception as e:
+        print(f"[ERROR] Error in add_user for {telegram_id}: {e}")
+        import traceback
+        traceback.print_exc()
+        try:
+            conn.rollback()
+        except:
+            pass
+        return False
+    finally:
+        cursor.close()
+        conn.close()
 
 def get_user(telegram_id):
+    """الحصول على معلومات المستخدم من TelegramID"""
     conn = get_db_connection()
     cursor = conn.cursor()
-    if IS_POSTGRES:
-        cursor.execute("SELECT * FROM Users WHERE TelegramID=%s", (telegram_id,))
-    else:
-        cursor.execute("SELECT * FROM Users WHERE TelegramID=?", (telegram_id,))
-    user = cursor.fetchone()
-    conn.close()
-    return user
+    cursor_wrapper = CursorWrapper(cursor, is_postgres=IS_POSTGRES)
+    
+    try:
+        cursor_wrapper.execute("SELECT * FROM Users WHERE TelegramID=?", (telegram_id,))
+        user = cursor_wrapper.fetchone()
+        return user
+    except Exception as e:
+        print(f"[ERROR] Error in get_user for {telegram_id}: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+    finally:
+        cursor.close()
+        conn.close()
 
 def update_user_info(telegram_id, phone_number=None, full_name=None):
     conn = get_db_connection()
@@ -1273,65 +1773,88 @@ def is_bot_admin(telegram_id):
 def add_seller(telegram_id, username, store_name):
     conn = get_db_connection()
     cursor = conn.cursor()
-    if IS_POSTGRES:
-        cursor.execute("""
-            INSERT INTO Sellers (TelegramID, UserName, StoreName)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (TelegramID) DO NOTHING
-        """, (telegram_id, username, store_name))
-    else:
-        cursor.execute("""
-            INSERT OR IGNORE INTO Sellers (TelegramID, UserName, StoreName)
-            VALUES (?, ?, ?)
-        """, (telegram_id, username, store_name))
+    cursor_wrapper = CursorWrapper(cursor, is_postgres=IS_POSTGRES)
     
-    cursor.execute("""
-        UPDATE Sellers SET StoreName=?, UserName=?
-        WHERE TelegramID=?
-    """, (store_name, username, telegram_id))
-    conn.commit()
-    conn.close()
+    try:
+        if IS_POSTGRES:
+            cursor_wrapper.execute("""
+                INSERT INTO Sellers (TelegramID, UserName, StoreName)
+                VALUES (?, ?, ?)
+                ON CONFLICT (TelegramID) DO NOTHING
+            """, (telegram_id, username, store_name))
+        else:
+            cursor_wrapper.execute("""
+                INSERT OR IGNORE INTO Sellers (TelegramID, UserName, StoreName)
+                VALUES (?, ?, ?)
+            """, (telegram_id, username, store_name))
+        
+        cursor_wrapper.execute("""
+            UPDATE Sellers SET StoreName=?, UserName=?
+            WHERE TelegramID=?
+        """, (store_name, username, telegram_id))
+        conn.commit()
+    except Exception as e:
+        print(f"Error in add_seller: {e}")
+        import traceback
+        traceback.print_exc()
+        try:
+            conn.rollback()
+        except:
+            pass
+    finally:
+        cursor.close()
+        conn.close()
 
 def get_seller_by_telegram(telegram_id):
     conn = get_db_connection()
-    cursor = conn.cursor()
-    if IS_POSTGRES:
-        cursor.execute("SELECT * FROM Sellers WHERE TelegramID=%s", (telegram_id,))
-    else:
-        cursor.execute("SELECT * FROM Sellers WHERE TelegramID=?", (telegram_id,))
-    seller = cursor.fetchone()
-    conn.close()
+    cursor_wrapper = conn.cursor()  # This returns CursorWrapper
     
-    # إذا لم يتم العثور على البائع، حاول البحث في جدول Users
-    if not seller:
-        user = get_user(telegram_id)
-        if user and user[3] == 'seller':
-            # إذا كان المستخدم مسجلاً كبائع ولكن ليس في جدول البائعين
-            # أضفه إلى جدول البائعين باسم افتراضي
-            username = user[2] or user[5] or "بائع"
-            store_name = f"متجر {username}"
-            add_seller(telegram_id, username, store_name)
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            if IS_POSTGRES:
-                cursor.execute("SELECT * FROM Sellers WHERE TelegramID=%s", (telegram_id,))
-            else:
-                cursor.execute("SELECT * FROM Sellers WHERE TelegramID=?", (telegram_id,))
-            seller = cursor.fetchone()
-            conn.close()
-    
-    return seller
+    try:
+        cursor_wrapper.execute("SELECT * FROM Sellers WHERE TelegramID=?", (telegram_id,))
+        seller = cursor_wrapper.fetchone()
+        
+        # إذا لم يتم العثور على البائع، حاول البحث في جدول Users
+        if not seller:
+            user = get_user(telegram_id)
+            if user and user[3] == 'seller':
+                # إذا كان المستخدم مسجلاً كبائع ولكن ليس في جدول البائعين
+                # أضفه إلى جدول البائعين باسم افتراضي
+                username = user[2] or user[5] or "بائع"
+                store_name = f"متجر {username}"
+                add_seller(telegram_id, username, store_name)
+                conn2 = get_db_connection()
+                cursor_wrapper2 = conn2.cursor()  # This returns CursorWrapper
+                cursor_wrapper2.execute("SELECT * FROM Sellers WHERE TelegramID=?", (telegram_id,))
+                seller = cursor_wrapper2.fetchone()
+                cursor_wrapper2.close()
+                conn2.close()
+        
+        return seller
+    except Exception as e:
+        print(f"Error in get_seller_by_telegram: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+    finally:
+        cursor_wrapper.close()
+        conn.close()
 
 def get_seller_by_id(seller_id):
     conn = get_db_connection()
-    cursor = conn.cursor()
-    if IS_POSTGRES:
-        cursor.execute("SELECT * FROM Sellers WHERE SellerID=%s", (seller_id,))
-    else:
-        cursor.execute("SELECT * FROM Sellers WHERE SellerID=?", (seller_id,))
-    seller = cursor.fetchone()
-    conn.close()
-    return seller
+    cursor_wrapper = conn.cursor()  # This returns CursorWrapper
+    
+    try:
+        cursor_wrapper.execute("SELECT * FROM Sellers WHERE SellerID=?", (seller_id,))
+        seller = cursor_wrapper.fetchone()
+        return seller
+    except Exception as e:
+        print(f"Error in get_seller_by_id: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+    finally:
+        cursor_wrapper.close()
+        conn.close()
 
 def is_main_store(telegram_id):
     seller = get_seller_by_telegram(telegram_id)
@@ -1366,11 +1889,20 @@ def update_category(category_id, name):
 
 def get_categories(seller_id):
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT CategoryID, Name FROM Categories WHERE SellerID=? ORDER BY OrderIndex", (seller_id,))
-    categories = cursor.fetchall()
-    conn.close()
-    return categories
+    cursor_wrapper = conn.cursor()  # This returns CursorWrapper
+    
+    try:
+        cursor_wrapper.execute("SELECT CategoryID, Name FROM Categories WHERE SellerID=? ORDER BY OrderIndex", (seller_id,))
+        categories = cursor_wrapper.fetchall()
+        return categories
+    except Exception as e:
+        print(f"Error in get_categories: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+    finally:
+        cursor_wrapper.close()
+        conn.close()
 
 def get_category_by_id(category_id):
     conn = get_db_connection()
@@ -1435,19 +1967,41 @@ def update_product(product_id, name=None, description=None, price=None, wholesal
 
 def get_products(seller_id=None, category_id=None):
     conn = get_db_connection()
-    cursor = conn.cursor()
-    if seller_id and category_id:
-        cursor.execute("SELECT ProductID, Name, Description, Price, WholesalePrice, Quantity, ImagePath FROM Products WHERE Quantity > 0 AND SellerID=? AND CategoryID=? AND Status='active'", 
-                      (seller_id, category_id))
-    elif seller_id:
-        cursor.execute("SELECT ProductID, Name, Description, Price, WholesalePrice, Quantity, ImagePath FROM Products WHERE Quantity > 0 AND SellerID=? AND Status='active'", (seller_id,))
-    elif category_id:
-        cursor.execute("SELECT ProductID, Name, Description, Price, WholesalePrice, Quantity, ImagePath FROM Products WHERE Quantity > 0 AND CategoryID=? AND Status='active'", (category_id,))
-    else:
-        cursor.execute("SELECT ProductID, Name, Description, Price, WholesalePrice, Quantity, ImagePath FROM Products WHERE Quantity > 0 AND Status='active'")
-    products = cursor.fetchall()
-    conn.close()
-    return products
+    cursor_wrapper = conn.cursor()  # This returns CursorWrapper
+    
+    try:
+        # Debug: Check database type
+        is_postgres = conn.is_postgres if hasattr(conn, 'is_postgres') else IS_POSTGRES
+        print(f"🔍 get_products: IS_POSTGRES={is_postgres}, seller_id={seller_id}, category_id={category_id}")
+        
+        if seller_id and category_id:
+            cursor_wrapper.execute("SELECT ProductID, Name, Description, Price, WholesalePrice, Quantity, ImagePath FROM Products WHERE Quantity > 0 AND SellerID=? AND CategoryID=? AND Status='active'", 
+                          (seller_id, category_id))
+        elif seller_id:
+            cursor_wrapper.execute("SELECT ProductID, Name, Description, Price, WholesalePrice, Quantity, ImagePath FROM Products WHERE Quantity > 0 AND SellerID=? AND Status='active'", (seller_id,))
+        elif category_id:
+            cursor_wrapper.execute("SELECT ProductID, Name, Description, Price, WholesalePrice, Quantity, ImagePath FROM Products WHERE Quantity > 0 AND CategoryID=? AND Status='active'", (category_id,))
+        else:
+            cursor_wrapper.execute("SELECT ProductID, Name, Description, Price, WholesalePrice, Quantity, ImagePath FROM Products WHERE Quantity > 0 AND Status='active'")
+        products = cursor_wrapper.fetchall()
+        
+        print(f"📊 get_products: Found {len(products)} products")
+        if len(products) == 0:
+            # Debug: Check if there are any products at all (even with Quantity = 0)
+            cursor_wrapper.execute("SELECT COUNT(*) FROM Products WHERE Status='active'")
+            count_result = cursor_wrapper.fetchone()
+            total_count = count_result[0] if count_result else 0
+            print(f"⚠️ No products found with Quantity > 0. Total active products: {total_count}")
+        
+        return products
+    except Exception as e:
+        print(f"Error in get_products: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+    finally:
+        cursor_wrapper.close()
+        conn.close()
 
 def get_product_images(product_id):
     """الحصول على جميع صور المنتج"""
@@ -1528,11 +2082,20 @@ def add_credit_transaction(customer_id, seller_id, amount, description):
 
 def get_product_by_id(pid):
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT ProductID, SellerID, CategoryID, Name, Description, Price, WholesalePrice, Quantity, ImagePath FROM Products WHERE ProductID=?", (pid,))
-    product = cursor.fetchone()
-    conn.close()
-    return product
+    cursor_wrapper = conn.cursor()  # This returns CursorWrapper
+    
+    try:
+        cursor_wrapper.execute("SELECT ProductID, SellerID, CategoryID, Name, Description, Price, WholesalePrice, Quantity, ImagePath FROM Products WHERE ProductID=?", (pid,))
+        product = cursor_wrapper.fetchone()
+        return product
+    except Exception as e:
+        print(f"Error in get_product_by_id: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+    finally:
+        cursor_wrapper.close()
+        conn.close()
 
 def get_product_price_for_customer(product_id, seller_id, phone_number=None, full_name=None):
     """الحصول على سعر المنتج للزبون
@@ -1566,109 +2129,351 @@ def get_customer_type(seller_id, phone_number=None, full_name=None):
     return None
 
 def add_to_cart_db(user_id, product_id, quantity=1, price=None):
+    """إضافة منتج إلى السلة مع التحقق من وجود المستخدم والمنتج"""
+    print(f"[DEBUG] add_to_cart_db called: user_id={user_id}, product_id={product_id}, quantity={quantity}, price={price}")
+    
+    # Validate inputs
+    if not user_id or user_id == 0:
+        print(f"[ERROR] Invalid user_id: {user_id}")
+        return False
+    
+    if not product_id or product_id == 0:
+        print(f"[ERROR] Invalid product_id: {product_id}")
+        return False
+    
     conn = get_db_connection()
     cursor = conn.cursor()
+    cursor_wrapper = CursorWrapper(cursor, is_postgres=IS_POSTGRES)
     
-    if price is None:
-        product = get_product_by_id(product_id)
-        if not product:
+    try:
+        # Ensure user exists in Users table before adding to cart (Foreign Key constraint)
+        print(f"[DEBUG] Checking if user {user_id} exists...")
+        user = get_user(user_id)
+        if not user:
+            # User doesn't exist, create a basic user entry
+            print(f"[INFO] User {user_id} not found in Users table. Creating user entry...")
+            user_created = add_user(user_id, None, 'buyer', None, None)
+            if not user_created:
+                print(f"[ERROR] Failed to create user {user_id}. Cannot add to cart.")
+                cursor.close()
+                conn.close()
+                return False
+            
+            # Close current connection and reopen to ensure fresh state
+            cursor.close()
             conn.close()
+            
+            # Small delay to ensure database commit is complete
+            import time
+            time.sleep(0.2)  # Increased delay
+            
+            # Reopen connection
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor_wrapper = CursorWrapper(cursor, is_postgres=IS_POSTGRES)
+            
+            # Verify user was created
+            user = get_user(user_id)
+            if not user:
+                print(f"[ERROR] User {user_id} still not found after creation attempt.")
+                cursor.close()
+                conn.close()
+                return False
+            print(f"[SUCCESS] User {user_id} created and verified")
+        else:
+            print(f"[OK] User {user_id} exists: TelegramID={user[1]}, UserType={user[3]}")
+        
+        # Verify product exists
+        print(f"[DEBUG] Checking if product {product_id} exists...")
+        if price is None:
+            product = get_product_by_id(product_id)
+            if not product:
+                print(f"[ERROR] Product {product_id} not found")
+                cursor.close()
+                conn.close()
+                return False
+            price = product[5]
+            print(f"[OK] Product {product_id} exists: Name={product[3]}, Price={price}")
+        else:
+            # Still verify product exists even if price is provided
+            product = get_product_by_id(product_id)
+            if not product:
+                print(f"[ERROR] Product {product_id} not found")
+                cursor.close()
+                conn.close()
+                return False
+            print(f"[OK] Product {product_id} exists: Name={product[3]}")
+        
+        # Ensure referenced user exists (upsert) — prevents FK violations
+        print(f"[DEBUG] Ensuring user row exists for TelegramID={user_id}...")
+        try:
+            if IS_POSTGRES:
+                cursor_wrapper.execute(
+                    """
+                    INSERT INTO Users (TelegramID, UserName, UserType, PhoneNumber, FullName)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT (TelegramID) DO NOTHING
+                    """,
+                    (user_id, None, 'buyer', None, None)
+                )
+            else:
+                cursor_wrapper.execute(
+                    "INSERT OR IGNORE INTO Users (TelegramID, UserName, UserType, PhoneNumber, FullName) VALUES (?, ?, ?, ?, ?)",
+                    (user_id, None, 'buyer', None, None)
+                )
+        except Exception as e:
+            print(f"[WARN] Failed to ensure user existence before cart insert: {e}")
+
+        # Use CursorWrapper to handle PostgreSQL parameter conversion
+        print(f"[DEBUG] Checking existing cart entry...")
+        cursor_wrapper.execute("SELECT Quantity FROM Carts WHERE UserID=? AND ProductID=?", (user_id, product_id))
+        existing = cursor_wrapper.fetchone()
+        
+        if existing:
+            new_quantity = existing[0] + quantity
+            print(f"[DEBUG] Updating cart: UserID={user_id}, ProductID={product_id}, OldQuantity={existing[0]}, NewQuantity={new_quantity}")
+            cursor_wrapper.execute("UPDATE Carts SET Quantity=?, Price=? WHERE UserID=? AND ProductID=?", 
+                          (new_quantity, price, user_id, product_id))
+            print(f"[SUCCESS] Updated cart: UserID={user_id}, ProductID={product_id}, Quantity={new_quantity}")
+        else:
+            print(f"[DEBUG] Inserting new cart entry: UserID={user_id}, ProductID={product_id}, Quantity={quantity}, Price={price}")
+            cursor_wrapper.execute("INSERT INTO Carts (UserID, ProductID, Quantity, Price) VALUES (?, ?, ?, ?)",
+                          (user_id, product_id, quantity, price))
+            print(f"[SUCCESS] Added to cart: UserID={user_id}, ProductID={product_id}, Quantity={quantity}")
+        
+        conn.commit()
+        print(f"[SUCCESS] Cart operation completed successfully for UserID={user_id}, ProductID={product_id}")
+        return True
+    except Exception as e:
+        # Check if it's an IntegrityError (Foreign Key constraint violation)
+        error_str = str(e).lower()
+        if 'foreign key' in error_str or 'violates' in error_str or (psycopg2 and isinstance(e, psycopg2.IntegrityError)):
+            print(f"[ERROR] Foreign Key Constraint Violation in add_to_cart_db:")
+            print(f"  UserID: {user_id}")
+            print(f"  ProductID: {product_id}")
+            print(f"  Error: {e}")
+            # Additional debugging
+            try:
+                # Check if user exists
+                user_check = get_user(user_id)
+                print(f"  User exists: {user_check is not None}")
+                if user_check:
+                    print(f"  User TelegramID: {user_check[1]}")
+                # Check if product exists
+                product_check = get_product_by_id(product_id)
+                print(f"  Product exists: {product_check is not None}")
+                if product_check:
+                    print(f"  Product ProductID: {product_check[0]}")
+            except Exception as debug_error:
+                print(f"  Debug error: {debug_error}")
+                import traceback
+                traceback.print_exc()
+            # Try to collect more DB state and attempt a safe repair: ensure Users row exists and retry once
+            try:
+                repair_conn = get_db_connection()
+                repair_cur = repair_conn.cursor()
+                repair_w = CursorWrapper(repair_cur, is_postgres=IS_POSTGRES)
+
+                try:
+                    # Show matching Users row(s)
+                    repair_w.execute("SELECT UserID, TelegramID, UserName, UserType, CreatedAt FROM Users WHERE TelegramID=?", (user_id,))
+                    rows = repair_w.fetchall()
+                    print(f"  Users rows for TelegramID={user_id}: {rows}")
+
+                    # If no user row, create one
+                    if not rows:
+                        print(f"  Attempting to insert missing Users row for TelegramID={user_id}")
+                        if IS_POSTGRES:
+                            repair_w.execute(
+                                """
+                                INSERT INTO Users (TelegramID, UserName, UserType, PhoneNumber, FullName)
+                                VALUES (?, ?, ?, ?, ?)
+                                ON CONFLICT (TelegramID) DO NOTHING
+                                """,
+                                (user_id, None, 'buyer', None, None)
+                            )
+                        else:
+                            repair_w.execute(
+                                "INSERT OR IGNORE INTO Users (TelegramID, UserName, UserType, PhoneNumber, FullName) VALUES (?, ?, ?, ?, ?)",
+                                (user_id, None, 'buyer', None, None)
+                            )
+                        try:
+                            repair_conn.commit()
+                        except:
+                            pass
+
+                    # Show recent Carts rows for visibility
+                    repair_w.execute("SELECT CartID, UserID, ProductID, Quantity, AddedAt FROM Carts ORDER BY CartID DESC LIMIT 10")
+                    carts = repair_w.fetchall()
+                    print(f"  Recent Carts: {carts}")
+
+                    # For SQLite, show PRAGMA foreign_keys state
+                    if not IS_POSTGRES:
+                        try:
+                            repair_w.execute("PRAGMA foreign_keys")
+                            fk_state = repair_w.fetchall()
+                            print(f"  PRAGMA foreign_keys: {fk_state}")
+                        except Exception:
+                            pass
+
+                    # Attempt one safe retry of the insert into Carts
+                    try:
+                        print(f"  Retrying cart insert once for UserID={user_id}, ProductID={product_id}")
+                        # Use a fresh cursor wrapper for the insert
+                        repair_w.execute("SELECT Quantity FROM Carts WHERE UserID=? AND ProductID=?", (user_id, product_id))
+                        ex = repair_w.fetchone()
+                        if ex:
+                            new_q = ex[0] + quantity
+                            repair_w.execute("UPDATE Carts SET Quantity=?, Price=? WHERE UserID=? AND ProductID=?", (new_q, price, user_id, product_id))
+                        else:
+                            repair_w.execute("INSERT INTO Carts (UserID, ProductID, Quantity, Price) VALUES (?, ?, ?, ?)", (user_id, product_id, quantity, price))
+                        repair_conn.commit()
+                        print("  Retry succeeded: cart insert/update completed")
+                        try:
+                            repair_cur.close()
+                        except:
+                            pass
+                        try:
+                            repair_conn.close()
+                        except:
+                            pass
+                        return True
+                    except Exception as retry_e:
+                        print(f"  Retry failed: {retry_e}")
+
+                except Exception as rr:
+                    print(f"  Repair debug failed: {rr}")
+                finally:
+                    try:
+                        repair_cur.close()
+                    except:
+                        pass
+                    try:
+                        repair_conn.close()
+                    except:
+                        pass
+            except Exception as outer_repair_err:
+                print(f"  Outer repair error: {outer_repair_err}")
+
+            try:
+                conn.rollback()
+            except:
+                pass
             return False
-        price = product[5]
-    
-    cursor.execute("SELECT Quantity FROM Carts WHERE UserID=? AND ProductID=?", (user_id, product_id))
-    existing = cursor.fetchone()
-    
-    if existing:
-        new_quantity = existing[0] + quantity
-        cursor.execute("UPDATE Carts SET Quantity=?, Price=? WHERE UserID=? AND ProductID=?", 
-                      (new_quantity, price, user_id, product_id))
-    else:
-        cursor.execute("INSERT INTO Carts (UserID, ProductID, Quantity, Price) VALUES (?, ?, ?, ?)",
-                      (user_id, product_id, quantity, price))
-    
-    conn.commit()
-    conn.close()
-    return True
+
+        # Other exceptions
+        print(f"[ERROR] Error in add_to_cart_db: {e}")
+        import traceback
+        traceback.print_exc()
+        try:
+            conn.rollback()
+        except:
+            pass
+        return False
+    finally:
+        cursor.close()
+        conn.close()
 
 def update_cart_quantity_db(user_id, product_id, new_quantity):
     """Update the quantity of a product in the cart (Set, not Add)"""
     conn = get_db_connection()
     cursor = conn.cursor()
+    cursor_wrapper = CursorWrapper(cursor, is_postgres=IS_POSTGRES)
     
-    cursor.execute("UPDATE Carts SET Quantity=? WHERE UserID=? AND ProductID=?", 
-                  (new_quantity, user_id, product_id))
-    
-    conn.commit()
-    conn.close()
-    return True
+    try:
+        cursor_wrapper.execute("UPDATE Carts SET Quantity=? WHERE UserID=? AND ProductID=?", 
+                      (new_quantity, user_id, product_id))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"Error in update_cart_quantity_db: {e}")
+        import traceback
+        traceback.print_exc()
+        try:
+            conn.rollback()
+        except:
+            pass
+        return False
+    finally:
+        cursor.close()
+        conn.close()
 
 def get_cart_items_db(user_id):
     conn = get_db_connection()
     cursor = conn.cursor()
+    cursor_wrapper = CursorWrapper(cursor, is_postgres=IS_POSTGRES)
     
-    cursor.execute("""
-        SELECT C.ProductID, C.Quantity, C.Price, P.Name, P.Description, P.ImagePath, 
-               P.Quantity as AvailableQty, P.SellerID, S.StoreName
-        FROM Carts C
-        JOIN Products P ON C.ProductID = P.ProductID
-        JOIN Sellers S ON P.SellerID = S.SellerID
-        WHERE C.UserID = ?
-        ORDER BY C.AddedAt DESC
-    """, (user_id,))
-    
-    items = cursor.fetchall()
-    conn.close()
-    return items
+    try:
+        cursor_wrapper.execute("""
+            SELECT C.ProductID, C.Quantity, C.Price, P.Name, P.Description, P.ImagePath, 
+                   P.Quantity as AvailableQty, P.SellerID, S.StoreName
+            FROM Carts C
+            JOIN Products P ON C.ProductID = P.ProductID
+            JOIN Sellers S ON P.SellerID = S.SellerID
+            WHERE C.UserID = ?
+            ORDER BY C.AddedAt DESC
+        """, (user_id,))
+        
+        items = cursor_wrapper.fetchall()
+        return items
+    except Exception as e:
+        print(f"Error in get_cart_items_db: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+    finally:
+        cursor.close()
+        conn.close()
 
 def create_order(buyer_id, seller_id, cart_items, delivery_address=None, notes=None, payment_method='cash', fully_paid=False):
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor_wrapper = conn.cursor()  # This returns CursorWrapper
     total = 0
     
-    for pid, qty, price in cart_items:
-        total += price * qty
+    try:
+        for pid, qty, price in cart_items:
+            total += price * qty
 
-    query = """
-        INSERT INTO Orders (BuyerID, SellerID, Total, DeliveryAddress, Notes, PaymentMethod, FullyPaid) 
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """
-    if IS_POSTGRES:
-        query += " RETURNING OrderID"
-    
-    cursor.execute(query, (buyer_id, seller_id, total, delivery_address, notes, payment_method, fully_paid))
-    order_id = cursor.lastrowid
-    
-    # 🛡️ Safe Fallback for Postgres: If CursorWrapper didn't capture ID, try manually
-    if IS_POSTGRES and not order_id:
-        try:
-            res = cursor.fetchone()
-            if res:
-                order_id = res[0]
-                print(f"DEBUG: Retrieved OrderID via fallback fetchone for User {buyer_id}")
-        except Exception as e:
-            print(f"DEBUG: Error in fallback fetchone: {e}")
-
-    # Optimize: Fetch product data using valid transaction cursor to avoid locking/visibility issues
-    # Pre-fetch check or inline check
-    for pid, qty, price in cart_items:
-        # Inline lookup using SAME cursor
-        cursor.execute("SELECT Quantity FROM Products WHERE ProductID = ?", (pid,))
-        res = cursor.fetchone()
+        query = """
+            INSERT INTO Orders (BuyerID, SellerID, Total, DeliveryAddress, Notes, PaymentMethod, FullyPaid) 
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """
+        if IS_POSTGRES:
+            query += " RETURNING OrderID"
         
-        if not res:
-            print(f"⚠️ Warning: Product {pid} not found during Order {order_id} creation. Skipping Item.")
-            continue
+        cursor_wrapper.execute(query, (buyer_id, seller_id, total, delivery_address, notes, payment_method, fully_paid))
+        order_id = cursor_wrapper.lastrowid
+        
+        # 🛡️ Safe Fallback for Postgres: If CursorWrapper didn't capture ID, try manually
+        if IS_POSTGRES and not order_id:
+            try:
+                res = cursor_wrapper.fetchone()
+                if res:
+                    order_id = res[0]
+                    print(f"DEBUG: Retrieved OrderID via fallback fetchone for User {buyer_id}")
+            except Exception as e:
+                print(f"DEBUG: Error in fallback fetchone: {e}")
+
+        # Optimize: Fetch product data using valid transaction cursor to avoid locking/visibility issues
+        # Pre-fetch check or inline check
+        for pid, qty, price in cart_items:
+            # Inline lookup using SAME cursor_wrapper
+            cursor_wrapper.execute("SELECT Quantity FROM Products WHERE ProductID = ?", (pid,))
+            res = cursor_wrapper.fetchone()
             
-        current_qty_in_db = res[0]
-        
-        cursor.execute("INSERT INTO OrderItems (OrderID, ProductID, Quantity, Price) VALUES (?, ?, ?, ?)",
-                       (order_id, pid, qty, price))
-                       
-        new_qty = current_qty_in_db - qty
-        if new_qty < 0:
-            new_qty = 0
-        cursor.execute("UPDATE Products SET Quantity=? WHERE ProductID=?", (new_qty, pid))
+            if not res:
+                print(f"⚠️ Warning: Product {pid} not found during Order {order_id} creation. Skipping Item.")
+                continue
+                
+            current_qty_in_db = res[0]
+            
+            cursor_wrapper.execute("INSERT INTO OrderItems (OrderID, ProductID, Quantity, Price) VALUES (?, ?, ?, ?)",
+                           (order_id, pid, qty, price))
+                           
+            new_qty = current_qty_in_db - qty
+            if new_qty < 0:
+                new_qty = 0
+            cursor_wrapper.execute("UPDATE Products SET Quantity=? WHERE ProductID=?", (new_qty, pid))
     
     # تسجيل المعاملة في كشف الحساب حسب نوع الزبون وطريقة الدفع
     buyer_info = get_user(buyer_id)
@@ -1696,50 +2501,63 @@ def create_order(buyer_id, seller_id, cart_items, delivery_address=None, notes=N
                 if not can_purchase:
                     # إرجاع الطلب
                     conn.rollback()
+                    cursor_wrapper.close()
                     conn.close()
                     return None, message
                 
                 add_credit_transaction(customer[0], seller_id, 'purchase', total, f"شراء طلب #{order_id}")
 
-    conn.commit()
-    conn.close()
-    
-    notify_seller_of_order(order_id, buyer_id, seller_id)
-    return order_id, total
+        conn.commit()
+        notify_seller_of_order(order_id, buyer_id, seller_id)
+        return order_id, total
+    except Exception as e:
+        print(f"Error in create_order: {e}")
+        import traceback
+        traceback.print_exc()
+        try:
+            conn.rollback()
+        except:
+            pass
+        return None, f"حدث خطأ أثناء إنشاء الطلب: {str(e)}"
+    finally:
+        cursor_wrapper.close()
+        conn.close()
 
-def get_seller_by_telegram(telegram_id):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM Sellers WHERE TelegramID = ?", (telegram_id,))
-    row = cursor.fetchone()
-    conn.close()
-    return row
+# This function is a duplicate - removed, using the one above
 
 def get_orders_by_seller(seller_id, status=None):
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor_wrapper = conn.cursor()  # This returns CursorWrapper
     
-    query = """
-        SELECT O.OrderID, O.BuyerID, O.Total, O.Status, O.CreatedAt, 
-               O.DeliveryAddress, O.Notes, O.PaymentMethod, O.FullyPaid, 
-               U.FullName, U.PhoneNumber
-        FROM Orders O
-        LEFT JOIN Users U ON O.BuyerID = U.TelegramID
-        WHERE O.SellerID = ?
-    """
-    
-    params = [seller_id]
-    
-    if status:
-        query += " AND O.Status = ?"
-        params.append(status)
-    
-    query += " ORDER BY O.CreatedAt DESC"
-    
-    cursor.execute(query, params)
-    orders = cursor.fetchall()
-    conn.close()
-    return orders
+    try:
+        query = """
+            SELECT O.OrderID, O.BuyerID, O.Total, O.Status, O.CreatedAt, 
+                   O.DeliveryAddress, O.Notes, O.PaymentMethod, O.FullyPaid, 
+                   U.FullName, U.PhoneNumber
+            FROM Orders O
+            LEFT JOIN Users U ON O.BuyerID = U.TelegramID
+            WHERE O.SellerID = ?
+        """
+        
+        params = [seller_id]
+        
+        if status:
+            query += " AND O.Status = ?"
+            params.append(status)
+        
+        query += " ORDER BY O.CreatedAt DESC"
+        
+        cursor_wrapper.execute(query, params)
+        orders = cursor_wrapper.fetchall()
+        return orders
+    except Exception as e:
+        print(f"Error in get_orders_by_seller: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+    finally:
+        cursor_wrapper.close()
+        conn.close()
 
 def update_order_status(order_id, new_status):
     conn = get_db_connection()
@@ -1774,11 +2592,24 @@ def get_order_details(order_id):
 
 def clear_cart_db(user_id):
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM Carts WHERE UserID=?", (user_id,))
-    conn.commit()
-    conn.close()
-    return True
+    cursor_wrapper = conn.cursor()  # This returns CursorWrapper
+    
+    try:
+        cursor_wrapper.execute("DELETE FROM Carts WHERE UserID=?", (user_id,))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"Error in clear_cart_db: {e}")
+        import traceback
+        traceback.print_exc()
+        try:
+            conn.rollback()
+        except:
+            pass
+        return False
+    finally:
+        cursor_wrapper.close()
+        conn.close()
 
 def delete_product(product_id):
     conn = get_db_connection()
@@ -2906,8 +3737,16 @@ def handle_seller_orders_menu(message):
         traceback.print_exc()
         bot.send_message(message.chat.id, f"⚠️ حدث خطأ أثناء عرض الطلبات:\n{str(e)}")
 
-def show_buyer_main_menu(message):
-    telegram_id = message.from_user.id
+def show_buyer_main_menu(message=None, chat_id=None, user_id=None):
+    """عرض قائمة المشتري - يمكن استدعاؤها مع message أو chat_id و user_id"""
+    if message:
+        telegram_id = message.from_user.id
+        chat_id = message.chat.id
+    elif chat_id and user_id:
+        telegram_id = user_id
+    else:
+        return
+    
     user = get_user(telegram_id)
     
     # التحقق إذا كان المستخدم زائراً (غير مسجل)
@@ -2916,7 +3755,7 @@ def show_buyer_main_menu(message):
         markup.row("تصفح المتاجر 🛍️", "سلة المشتريات 🛒")
         markup.row("👤 تسجيل حساب جديد", "🏠 الرئيسية")
         
-        bot.send_message(message.chat.id,
+        bot.send_message(chat_id,
                         "👀 **مرحباً بك كزائر!**\n\n"
                         "يمكنك تصفح المتاجر وإضافة المنتجات للسلة.\n"
                         "عند إنهاء الطلب، سيُطلب منك إدخال معلوماتك.\n\n"
@@ -2939,7 +3778,7 @@ def show_buyer_main_menu(message):
         welcome_msg += f"\n\n👤 الاسم: {user[5] if user[5] else 'غير محدد'}"
         welcome_msg += f"\n📞 الهاتف: {user[4] if user[4] else 'غير محدد'}"
     
-    bot.send_message(message.chat.id, welcome_msg, reply_markup=markup)
+    bot.send_message(chat_id, welcome_msg, reply_markup=markup)
 
 # ====== معالجة اختيارات أدمن البوت ======
 @bot.callback_query_handler(func=lambda call: call.data == "create_admin_store")
@@ -3289,10 +4128,17 @@ def show_seller_menu_for_new_seller(telegram_id, store_name):
         
         # تحديث الشارة لتظهر عدد الطلبات المعلقة
         conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM Orders WHERE SellerID = ? AND Status IN ('Pending', 'Confirmed')", (seller[0],))
-        pending_count = cursor.fetchone()[0]
-        conn.close()
+        cursor_wrapper = conn.cursor()  # This returns CursorWrapper
+        try:
+            cursor_wrapper.execute("SELECT COUNT(*) FROM Orders WHERE SellerID = ? AND Status IN ('Pending', 'Confirmed')", (seller[0],))
+            result = cursor_wrapper.fetchone()
+            pending_count = result[0] if result else 0
+        except Exception as e:
+            print(f"Error getting pending orders count: {e}")
+            pending_count = 0
+        finally:
+            cursor_wrapper.close()
+            conn.close()
         
         messages_badge = f" 📩({pending_count})" if pending_count > 0 else ""
         
@@ -4214,28 +5060,52 @@ def add_product_step4b(message):
 def add_product_step5(message):
     telegram_id = message.from_user.id
     state = user_states[telegram_id]
+    seller_id = state["seller_id"]
     
-    try:
-        quantity = int(message.text)
-        if quantity < 0:
-            bot.send_message(message.chat.id, "الرجاء إدخال كمية صحيحة (صفر أو أكبر).")
+    # التحقق من حالة المتجر
+    seller = get_seller_by_id(seller_id)
+    require_registration = False
+    if seller and len(seller) > 9:
+        require_registration = seller[9] == 1 if not IS_POSTGRES else (seller[9] if seller[9] is not None else False)
+    
+    # إذا كان المتجر مقفول، تخطي طلب الكمية (ستكون تلقائية من عدد الصور)
+    if require_registration:
+        user_states[telegram_id]["quantity"] = 1  # افتراضياً 1، سيتم تحديثها تلقائياً من عدد الصور
+        user_states[telegram_id]["step"] = "add_product_image"
+        
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+        markup.row("📸 إرسال صور متعددة", "⏭️ تخطي بدون صور")
+        
+        bot.send_message(message.chat.id, 
+                        "📸 **صور المنتج**\n\n"
+                        "⚠️ **ملاحظة:** الكمية ستكون تلقائياً بعدد الصور التي ستضيفها.\n\n"
+                        "الآن، يمكنك إرسال صور متعددة للمنتج:\n\n"
+                        "• اضغط '📸 إرسال صور متعددة' لإرسال صور (يمكن إرسال عدة صور)\n"
+                        "• أو اضغط '⏭️ تخطي بدون صور' للمتابعة بدون صور",
+                        reply_markup=markup)
+    else:
+        # المتجر مفتوح - طلب الكمية يدوياً
+        try:
+            quantity = int(message.text)
+            if quantity < 0:
+                bot.send_message(message.chat.id, "الرجاء إدخال كمية صحيحة (صفر أو أكبر).")
+                return
+        except:
+            bot.send_message(message.chat.id, "الرجاء إدخال رقم صحيح للكمية.")
             return
-    except:
-        bot.send_message(message.chat.id, "الرجاء إدخال رقم صحيح للكمية.")
-        return
-    
-    user_states[telegram_id]["quantity"] = quantity
-    user_states[telegram_id]["step"] = "add_product_image"
-    
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    markup.row("📸 إرسال صورة", "⏭️ تخطي بدون صورة")
-    
-    bot.send_message(message.chat.id, 
-                    "📸 **صورة المنتج**\n\n"
-                    "الآن، يمكنك إرسال صورة للمنتج (اختياري):\n\n"
-                    "• اضغط '📸 إرسال صورة' لإرسال صورة\n"
-                    "• أو اضغط '⏭️ تخطي بدون صورة' للمتابعة بدون صورة",
-                    reply_markup=markup)
+        
+        user_states[telegram_id]["quantity"] = quantity
+        user_states[telegram_id]["step"] = "add_product_image"
+        
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+        markup.row("📸 إرسال صورة", "⏭️ تخطي بدون صورة")
+        
+        bot.send_message(message.chat.id, 
+                        "📸 **صورة المنتج**\n\n"
+                        "الآن، يمكنك إرسال صورة للمنتج (اختياري):\n\n"
+                        "• اضغط '📸 إرسال صورة' لإرسال صورة\n"
+                        "• أو اضغط '⏭️ تخطي بدون صورة' للمتابعة بدون صورة",
+                        reply_markup=markup)
 
 @bot.message_handler(func=lambda message: message.from_user.id in user_states and 
                      user_states[message.from_user.id]["step"] == "add_product_image")
@@ -4251,6 +5121,20 @@ def add_product_step6(message):
     if message.text == "📸 إرسال صورة":
         user_states[telegram_id]["step"] = "waiting_for_product_image"
         bot.send_message(message.chat.id, "📤 الرجاء إرسال صورة المنتج الآن:")
+        return
+    elif message.text == "📸 إرسال صور متعددة":
+        user_states[telegram_id]["step"] = "waiting_for_product_images"
+        user_states[telegram_id]["product_images"] = []
+        
+        # إضافة زر "تم" في لوحة المفاتيح
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+        markup.row("✅ تم - حفظ المنتج")
+        
+        bot.send_message(message.chat.id, 
+                        "📤 **إرسال صور متعددة**\n\n"
+                        "الآن، يمكنك إرسال عدة صور للمنتج.\n"
+                        "بعد الانتهاء من إرسال جميع الصور، اضغط '✅ تم - حفظ المنتج' لحفظ المنتج.",
+                        reply_markup=markup)
         return
     elif message.text == "⏭️ تخطي بدون صورة":
         image_path = ""
@@ -4272,22 +5156,38 @@ def add_product_step6(message):
         return
 
 @bot.message_handler(content_types=['photo'], func=lambda message: message.from_user.id in user_states and 
-                     user_states[message.from_user.id]["step"] == "waiting_for_product_image")
+                     user_states[message.from_user.id].get("step") in ["waiting_for_product_image", "waiting_for_product_images"])
 def handle_product_image_photo(message):
     telegram_id = message.from_user.id
     state = user_states[telegram_id]
+    step = state.get("step")
     
     try:
         image_path = save_photo_from_message(message)
         if not image_path:
-            bot.send_message(message.chat.id, "⚠️ حدث خطأ في حفظ الصورة، سيتم المتابعة بدون صورة.")
-            image_path = ""
+            bot.send_message(message.chat.id, "⚠️ حدث خطأ في حفظ الصورة.")
+            return
         
-        finish_adding_product(message, image_path)
+        if step == "waiting_for_product_images":
+            # للمتاجر المقفولة: حفظ الصور في قائمة مؤقتة
+            if "product_images" not in state:
+                state["product_images"] = []
+            state["product_images"].append(image_path)
+            
+            # إضافة زر "تم" في لوحة المفاتيح
+            markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+            markup.row("✅ تم - حفظ المنتج", "➕ إضافة المزيد من الصور")
+            
+            bot.send_message(message.chat.id, 
+                           f"✅ تم حفظ الصورة ({len(state['product_images'])} صورة حتى الآن)\n\n"
+                           "📤 أرسل المزيد من الصور أو اضغط '✅ تم - حفظ المنتج' لحفظ المنتج.",
+                           reply_markup=markup)
+        else:
+            # للمتاجر المفتوحة: صورة واحدة فقط
+            finish_adding_product(message, image_path)
     except Exception as e:
         print(f"⚠️ خطأ في معالجة الصورة: {e}")
-        bot.send_message(message.chat.id, "⚠️ حدث خطأ في معالجة الصورة، سيتم المتابعة بدون صورة.")
-        finish_adding_product(message, "")
+        bot.send_message(message.chat.id, "⚠️ حدث خطأ في معالجة الصورة.")
 
 @bot.message_handler(func=lambda message: message.from_user.id in user_states and 
                      user_states[message.from_user.id]["step"] == "waiting_for_product_image" and 
@@ -4299,6 +5199,31 @@ def handle_product_image_text(message):
     else:
         bot.send_message(message.chat.id, "⚠️ الرجاء إرسال صورة أو كتابة 'تخطي' للمتابعة بدون صورة.")
 
+@bot.message_handler(func=lambda message: message.from_user.id in user_states and 
+                     user_states[message.from_user.id].get("step") == "waiting_for_product_images" and 
+                     message.content_type == 'text')
+def handle_product_images_text(message):
+    """معالج النص عند إضافة صور متعددة"""
+    telegram_id = message.from_user.id
+    state = user_states[telegram_id]
+    
+    if message.text in ['✅ تم - حفظ المنتج', 'تم', 'انتهيت', 'انتهى', 'done', 'finish']:
+        # حفظ المنتج مع الصور
+        finish_adding_product(message, "")
+    elif message.text == "➕ إضافة المزيد من الصور":
+        # الاستمرار في إضافة الصور
+        bot.send_message(message.chat.id, 
+                        "📤 الرجاء إرسال الصور التالية.\n"
+                        "بعد الانتهاء، اضغط '✅ تم - حفظ المنتج' لحفظ المنتج.")
+    else:
+        # إضافة زر "تم" في لوحة المفاتيح
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+        markup.row("✅ تم - حفظ المنتج", "➕ إضافة المزيد من الصور")
+        
+        bot.send_message(message.chat.id, 
+                        "⚠️ الرجاء إرسال صورة أو اضغط '✅ تم - حفظ المنتج' لحفظ المنتج.",
+                        reply_markup=markup)
+
 def finish_adding_product(message, image_path=""):
     telegram_id = message.from_user.id
     if telegram_id not in user_states:
@@ -4308,7 +5233,7 @@ def finish_adding_product(message, image_path=""):
     state = user_states[telegram_id]
     
     # التحقق من وجود جميع البيانات المطلوبة
-    required_fields = ["seller_id", "category_id", "product_name", "price", "quantity"]
+    required_fields = ["seller_id", "category_id", "product_name", "price"]
     for field in required_fields:
         if field not in state:
             bot.send_message(message.chat.id, f"⚠️ بيانات غير مكتملة: {field}")
@@ -4323,10 +5248,71 @@ def finish_adding_product(message, image_path=""):
     description = state.get("description", "")
     price = state["price"]
     wholesale_price = state.get("wholesale_price")
-    quantity = state["quantity"]
+    
+    # التحقق من حالة المتجر
+    seller = get_seller_by_id(seller_id)
+    require_registration = False
+    if seller and len(seller) > 9:
+        require_registration = seller[9] == 1 if not IS_POSTGRES else (seller[9] if seller[9] is not None else False)
+    
+    # تحديد الكمية
+    if require_registration:
+        # للمتاجر المقفولة: الكمية الافتراضية = 1، ثم سيتم تحديثها بعد إضافة الصور
+        quantity = 1  # افتراضياً، سيتم تحديثها بعد إضافة الصور
+    else:
+        # للمتاجر المفتوحة: الكمية يدوية
+        quantity = state.get("quantity", 1)  # افتراضياً 1
     
     try:
+        # إضافة المنتج
         add_product_db(seller_id, category_id, product_name, description, price, wholesale_price, quantity, image_path)
+        
+        # الحصول على ProductID للمنتج المضاف حديثاً
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        if IS_POSTGRES:
+            cursor.execute("SELECT ProductID FROM Products WHERE SellerID=%s AND CategoryID=%s AND Name=%s ORDER BY ProductID DESC LIMIT 1", 
+                         (seller_id, category_id, product_name))
+        else:
+            cursor.execute("SELECT ProductID FROM Products WHERE SellerID=? AND CategoryID=? AND Name=? ORDER BY ProductID DESC LIMIT 1", 
+                         (seller_id, category_id, product_name))
+        result = cursor.fetchone()
+        product_id = None
+        if result:
+            product_id = result[0]
+        
+        # إذا كان المتجر مقفول، حفظ الصور المتعددة في ProductImages
+        if require_registration and product_id:
+            product_images = state.get("product_images", [])
+            
+            # حفظ الصور في ProductImages
+            for idx, img_path in enumerate(product_images):
+                try:
+                    add_product_image_db(product_id, img_path, idx)
+                    print(f"✅ تم حفظ الصورة {idx+1}: {img_path}")
+                except Exception as e:
+                    print(f"⚠️ خطأ في حفظ الصورة {idx+1}: {e}")
+            
+            # حساب عدد الصور وتحديث الكمية
+            if IS_POSTGRES:
+                cursor.execute("SELECT COUNT(*) FROM ProductImages WHERE ProductID=%s", (product_id,))
+            else:
+                cursor.execute("SELECT COUNT(*) FROM ProductImages WHERE ProductID=?", (product_id,))
+            result = cursor.fetchone()
+            image_count = result[0] if result else 0
+            
+            print(f"📊 عدد الصور المحفوظة: {image_count}")
+            
+            # تحديث الكمية
+            if IS_POSTGRES:
+                cursor.execute("UPDATE Products SET Quantity=%s WHERE ProductID=%s", (image_count, product_id))
+            else:
+                cursor.execute("UPDATE Products SET Quantity=? WHERE ProductID=?", (image_count, product_id))
+            conn.commit()
+            quantity = image_count
+            print(f"✅ تم تحديث الكمية إلى: {quantity}")
+        
+        conn.close()
     except Exception as e:
         print(f"⚠️ خطأ في حفظ المنتج: {e}")
         bot.send_message(message.chat.id, "⚠️ حدث خطأ في حفظ المنتج، يرجى المحاولة مرة أخرى.")
@@ -4343,12 +5329,22 @@ def finish_adding_product(message, image_path=""):
     success_msg += f"💰 **السعر:** {price} IQD\n"
     if wholesale_price:
         success_msg += f"💰 **سعر الجملة:** {wholesale_price} IQD\n"
-    success_msg += f"📦 **الكمية:** {quantity}\n"
+    if require_registration:
+        success_msg += f"📦 **الكمية:** {quantity} صورة (تلقائية)\n"
+    else:
+        success_msg += f"📦 **الكمية:** {quantity}\n"
     
     if description:
         success_msg += f"📝 **الوصف:** {description}\n"
     
-    if image_path and os.path.exists(image_path):
+    # عرض معلومات الصور
+    if require_registration:
+        product_images = state.get("product_images", [])
+        if product_images:
+            success_msg += f"📸 **تم رفع {len(product_images)} صورة للمنتج**"
+        else:
+            success_msg += "📷 **لم يتم رفع صور للمنتج**"
+    elif image_path and os.path.exists(image_path):
         success_msg += "📸 **تم رفع صورة المنتج**"
     else:
         success_msg += "📷 **بدون صورة**"
@@ -4425,13 +5421,24 @@ def handle_select_product_to_edit(call):
             "product_data": product
         }
         
+        # التحقق من حالة المتجر
+        seller_id = product[1]
+        seller = get_seller_by_id(seller_id)
+        require_registration = False
+        if seller and len(seller) > 9:
+            require_registration = seller[9] == 1 if not IS_POSTGRES else (seller[9] if seller[9] is not None else False)
+        
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
             types.InlineKeyboardButton("✏️ تعديل الاسم", callback_data="edit_prod_name"),
             types.InlineKeyboardButton("📝 تعديل الوصف", callback_data="edit_prod_desc"),
             types.InlineKeyboardButton("💰 تعديل السعر", callback_data="edit_prod_price"),
             types.InlineKeyboardButton("💰 تعديل سعر الجملة", callback_data="edit_prod_wholesale"),
-            types.InlineKeyboardButton("📦 تعديل الكمية", callback_data="edit_prod_qty"),
+        )
+        # إخفاء تعديل الكمية للمتاجر المقفولة (الكمية تلقائية من عدد الصور)
+        if not require_registration:
+            markup.add(types.InlineKeyboardButton("📦 تعديل الكمية", callback_data="edit_prod_qty"))
+        markup.add(
             types.InlineKeyboardButton("📁 تغيير القسم", callback_data="edit_prod_cat"),
             types.InlineKeyboardButton("📸 تغيير الصورة", callback_data="edit_prod_img"),
             types.InlineKeyboardButton("🖼️ إدارة الصور المتعددة", callback_data=f"manage_product_images_{product_id}"),
@@ -4712,6 +5719,25 @@ def process_edit_product_wholesale(message):
 def process_edit_product_quantity(message):
     telegram_id = message.from_user.id
     state = user_states[telegram_id]
+    product_id = state["product_id"]
+    product = state["product_data"]
+    
+    # التحقق من حالة المتجر
+    seller_id = product[1]
+    seller = get_seller_by_id(seller_id)
+    require_registration = False
+    if seller and len(seller) > 9:
+        require_registration = seller[9] == 1 if not IS_POSTGRES else (seller[9] if seller[9] is not None else False)
+    
+    # إذا كان المتجر مقفول، لا يمكن تعديل الكمية يدوياً
+    if require_registration:
+        bot.send_message(message.chat.id,
+            "⚠️ **لا يمكن تعديل الكمية يدوياً**\n\n"
+            "في المتاجر المقفولة، الكمية تحسب تلقائياً من عدد الصور.\n"
+            "لتعديل الكمية، أضف أو احذف الصور من قائمة '🖼️ إدارة الصور المتعددة'.")
+        del user_states[telegram_id]
+        show_seller_menu(message)
+        return
     
     if message.text == "🏠 الرئيسية":
         del user_states[telegram_id]
@@ -5170,7 +6196,12 @@ def manage_credit_customers(message):
     markup = types.InlineKeyboardMarkup(row_width=2)
     
     for customer in customers:
-        customer_id, seller_id, full_name, phone, customer_type, created_at, max_credit, current_used, limit_active = customer
+        if len(customer) >= 10:
+            customer_id, seller_id, full_name, phone, telegram_id, customer_type, created_at, max_credit, current_used, limit_active = customer[:10]
+        else:
+            # Fallback for old format (without TelegramID)
+            customer_id, seller_id, full_name, phone, customer_type, created_at, max_credit, current_used, limit_active = customer[:9]
+            telegram_id = None
         
         customer_type_arabic = "👤 زبون آجل" if customer_type == 'CreditCustomer' else "🏪 نقطة بيع"
         text += f"{customer_type_arabic} **{full_name}**\n"
@@ -5286,7 +6317,11 @@ def handle_customer_type(call):
     full_name = state["full_name"]
     phone = state["phone"]
     
-    customer_id = add_credit_customer(seller_id, full_name, phone, customer_type)
+    # الحصول على Telegram ID من المستخدم (إذا كان متاحاً)
+    # في حالة إضافة زبون من البوت، يمكن إضافة حقل Telegram ID اختياري
+    telegram_id = state.get("telegram_id")  # يمكن إضافته لاحقاً عند الحاجة
+    
+    customer_id = add_credit_customer(seller_id, full_name, phone, customer_type, telegram_id)
     
     if customer_id:
         customer_type_arabic = "زبون آجل" if customer_type == "CreditCustomer" else "نقطة بيع"
@@ -6685,7 +7720,45 @@ def activate_store_selected(call):
 # ====== معالجة المتاجر والعرض ======
 def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id, customer_telegram_id=None):
     """إرسال كتالوج المتجر - يتطلب تسجيل الزبون في CreditCustomers إذا كان الإعداد مفعلاً"""
-    seller = get_seller_by_telegram(seller_telegram_id)
+    try:
+        print(f"🔍 send_store_catalog_by_telegram_id: seller_telegram_id={seller_telegram_id}, customer_telegram_id={customer_telegram_id}")
+        
+        # Ensure customer exists in Users table (required for Foreign Key constraint in Carts)
+        if customer_telegram_id:
+            print(f"[DEBUG] send_store_catalog: Checking customer {customer_telegram_id}...")
+            user = get_user(customer_telegram_id)
+            if not user:
+                print(f"[INFO] Customer {customer_telegram_id} not found in Users table. Creating user entry...")
+                try:
+                    user_created = add_user(customer_telegram_id, None, 'buyer', None, None)
+                    if not user_created:
+                        print(f"[ERROR] Failed to create user entry for customer {customer_telegram_id}")
+                    else:
+                        # Small delay to ensure database commit is complete
+                        import time
+                        time.sleep(0.2)
+                        
+                        # Verify user was created
+                        user = get_user(customer_telegram_id)
+                        if user:
+                            print(f"[SUCCESS] Created and verified user entry for customer {customer_telegram_id}")
+                        else:
+                            print(f"[WARNING] User {customer_telegram_id} still not found after creation")
+                except Exception as user_error:
+                    print(f"[ERROR] Failed to create user entry: {user_error}")
+                    import traceback
+                    traceback.print_exc()
+            else:
+                print(f"[OK] Customer {customer_telegram_id} exists in Users table")
+        
+        seller = get_seller_by_telegram(seller_telegram_id)
+        print(f"✅ get_seller_by_telegram returned: {seller is not None}")
+    except Exception as e:
+        print(f"❌ Error in send_store_catalog_by_telegram_id: {e}")
+        import traceback
+        traceback.print_exc()
+        bot.send_message(chat_id, f"⚠️ حدث خطأ في فتح المتجر: {str(e)}")
+        return
     
     if not seller or seller[5] != 'active':
         bot.send_message(chat_id, "⚠️ المتجر غير موجود أو معطل حالياً.")
@@ -6705,51 +7778,15 @@ def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id, customer_tele
     # التحقق من أن المستخدم مسجل في CreditCustomers لهذا المتجر (فقط إذا كان الإعداد مفعلاً)
     # استثناء: صاحب المتجر نفسه يمكنه الدخول دائماً
     if require_registration and customer_telegram_id and customer_telegram_id != seller_telegram_id:
-        # التحقق من وجود رقم هاتف محفوظ في user_states
-        user_phone = None
-        if customer_telegram_id in user_states:
-            state = user_states[customer_telegram_id]
-            if 'verified_phone' in state and 'verified_seller_id' in state:
-                if state['verified_seller_id'] == seller_id:
-                    user_phone = state['verified_phone']
-        
-        # إذا لم يكن هناك رقم هاتف محفوظ، نطلب من المستخدم إرساله
-        if not user_phone:
-            markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-            # زر مشاركة جهة الاتصال
-            contact_button = types.KeyboardButton("📱 مشاركة رقم الهاتف", request_contact=True)
-            markup.add(contact_button)
-            markup.add(types.KeyboardButton("❌ إلغاء"))
-            
-            # حفظ حالة المستخدم
-            user_states[customer_telegram_id] = {
-                'step': 'verify_store_access',
-                'seller_id': seller_id,
-                'store_name': store_name,
-                'username': username
-            }
-            
-            bot.send_message(chat_id,
-                f"🔒 **الدخول مقيد**\n\n"
-                f"🏪 المتجر: {store_name}\n\n"
-                f"⚠️ للوصول إلى هذا المتجر، يجب أن تكون مسجلاً كزبون آجل من قبل البائع.\n\n"
-                f"📱 **يرجى إرسال رقم هاتفك المسجل:**\n"
-                f"• اضغط على زر '📱 مشاركة رقم الهاتف' أدناه\n"
-                f"• أو أرسل رقم هاتفك يدوياً (مثال: 07701234567)\n\n"
-                f"سيتم التحقق من أن رقم هاتفك مسجل في قائمة الزبائن الآجلين.",
-                reply_markup=markup,
-                parse_mode='Markdown')
-            return
-        
-        # التحقق من رقم الهاتف
-        if not is_customer_registered_for_store_by_phone(user_phone, seller_id):
+        # التحقق من Telegram ID مباشرة
+        if not is_customer_registered_for_store_by_telegram_id(customer_telegram_id, seller_id):
             markup = types.InlineKeyboardMarkup()
             markup.add(types.InlineKeyboardButton("📞 التواصل مع البائع", url=f"https://t.me/{username}" if username else None))
             
             bot.send_message(chat_id,
                 f"🔒 **الدخول مقيد**\n\n"
                 f"🏪 المتجر: {store_name}\n\n"
-                f"⚠️ رقم الهاتف {user_phone} غير مسجل في قائمة الزبائن الآجلين.\n\n"
+                f"⚠️ حسابك (Telegram ID: {customer_telegram_id}) غير مسجل في قائمة الزبائن الآجلين.\n\n"
                 f"📝 **للحصول على الوصول:**\n"
                 f"• تواصل مع البائع لإضافتك كزبون آجل\n"
                 f"• أو اطلب من البائع إضافتك من خلال قائمة '🏪 إدارة الزبائن الآجلين'\n\n"
@@ -6798,6 +7835,18 @@ def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id, customer_tele
             f"🏪 **{store_name}**\n👤 البائع: {seller_display}\n\n📁 اختر القسم:", 
             reply_markup=markup, 
             parse_mode='Markdown')
+    
+    # إضافة قائمة الأزرار للمشتري بعد عرض المتجر
+    if customer_telegram_id and customer_telegram_id != seller_telegram_id:
+        try:
+            print(f"🔍 Showing buyer menu for customer: {customer_telegram_id}, chat_id: {chat_id}")
+            # إرسال الأزرار مباشرة باستخدام chat_id و user_id
+            show_buyer_main_menu(chat_id=chat_id, user_id=customer_telegram_id)
+            print(f"✅ Buyer menu sent successfully")
+        except Exception as e:
+            print(f"❌ Error showing buyer menu: {e}")
+            import traceback
+            traceback.print_exc()
 
 @bot.message_handler(func=lambda message: message.text == "تصفح المتاجر 🛍️")
 def browse_stores(message):
@@ -7219,13 +8268,13 @@ def handle_buy_images(call):
         # إضافة المبلغ لحساب الزبون
         description = f"شراء {quantity} صورة من منتج: {product_name}"
         if add_credit_transaction(customer_id, seller_id, total_amount, description):
-            # تحديث كمية المنتج
+            # تحديث كمية المنتج (تأكد من عدم السالب)
             conn = get_db_connection()
             cursor = conn.cursor()
             if IS_POSTGRES:
-                cursor.execute("UPDATE Products SET Quantity = Quantity - %s WHERE ProductID = %s", (quantity, product_id))
+                cursor.execute("UPDATE Products SET Quantity = GREATEST(0, Quantity - %s) WHERE ProductID = %s", (quantity, product_id))
             else:
-                cursor.execute("UPDATE Products SET Quantity = Quantity - ? WHERE ProductID = ?", (quantity, product_id))
+                cursor.execute("UPDATE Products SET Quantity = MAX(0, Quantity - ?) WHERE ProductID = ?", (quantity, product_id))
             conn.commit()
             conn.close()
             
@@ -7283,19 +8332,24 @@ def add_product_image_db(product_id, image_path, image_order=0):
             cursor.execute("""
                 INSERT INTO ProductImages (ProductID, ImagePath, ImageOrder)
                 VALUES (%s, %s, %s)
+                RETURNING ImageID
             """, (product_id, image_path, image_order))
+            result = cursor.fetchone()
+            image_id = result[0] if result else None
         else:
             cursor.execute("""
                 INSERT INTO ProductImages (ProductID, ImagePath, ImageOrder)
                 VALUES (?, ?, ?)
             """, (product_id, image_path, image_order))
+            image_id = cursor.lastrowid
         
         conn.commit()
-        image_id = cursor.lastrowid
         conn.close()
         return image_id
     except Exception as e:
         print(f"Error adding product image: {e}")
+        import traceback
+        traceback.print_exc()
         if 'conn' in locals():
             conn.close()
         return None
@@ -7431,6 +8485,38 @@ def handle_save_product_image(message):
         image_id = add_product_image_db(product_id, image_path, image_order)
         
         if image_id:
+            # تحديث كمية المنتج تلقائياً إذا كان المتجر مقفول
+            product = get_product_by_id(product_id)
+            if product:
+                seller_id = product[1]
+                seller = get_seller_by_id(seller_id)
+                require_registration = False
+                if seller and len(seller) > 9:
+                    require_registration = seller[9] == 1 if not IS_POSTGRES else (seller[9] if seller[9] is not None else False)
+                
+                if require_registration:
+                    # حساب عدد الصور بعد إضافة الصورة الجديدة وتحديث الكمية
+                    conn = get_db_connection()
+                    cursor = conn.cursor()
+                    if IS_POSTGRES:
+                        cursor.execute("SELECT COUNT(*) FROM ProductImages WHERE ProductID=%s", (product_id,))
+                    else:
+                        cursor.execute("SELECT COUNT(*) FROM ProductImages WHERE ProductID=?", (product_id,))
+                    result = cursor.fetchone()
+                    image_count = result[0] if result else 0
+                    
+                    print(f"📊 تم إضافة صورة جديدة. عدد الصور الآن: {image_count}")
+                    
+                    # تحديث الكمية
+                    if IS_POSTGRES:
+                        cursor.execute("UPDATE Products SET Quantity=%s WHERE ProductID=%s", (image_count, product_id))
+                    else:
+                        cursor.execute("UPDATE Products SET Quantity=? WHERE ProductID=?", (image_count, product_id))
+                    conn.commit()
+                    conn.close()
+                    
+                    print(f"✅ تم تحديث الكمية إلى: {image_count}")
+            
             bot.send_message(message.chat.id,
                 f"✅ **تم إضافة الصورة بنجاح!**\n\n"
                 f"📸 تم حفظ الصورة: {os.path.basename(image_path)}\n\n"
@@ -7515,6 +8601,30 @@ def handle_delete_product_image(call):
         
         # حذف الصورة
         if delete_product_image_db(image_id):
+            # تحديث كمية المنتج تلقائياً إذا كان المتجر مقفول
+            seller = get_seller_by_id(seller_id)
+            require_registration = False
+            if seller and len(seller) > 9:
+                require_registration = seller[9] == 1 if not IS_POSTGRES else (seller[9] if seller[9] is not None else False)
+            
+            if require_registration:
+                # حساب عدد الصور المتبقية وتحديث الكمية
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                if IS_POSTGRES:
+                    cursor.execute("SELECT COUNT(*) FROM ProductImages WHERE ProductID=%s", (product_id,))
+                else:
+                    cursor.execute("SELECT COUNT(*) FROM ProductImages WHERE ProductID=?", (product_id,))
+                image_count = cursor.fetchone()[0] or 0
+                
+                # تحديث الكمية
+                if IS_POSTGRES:
+                    cursor.execute("UPDATE Products SET Quantity=%s WHERE ProductID=%s", (image_count, product_id))
+                else:
+                    cursor.execute("UPDATE Products SET Quantity=? WHERE ProductID=?", (image_count, product_id))
+                conn.commit()
+                conn.close()
+            
             bot.answer_callback_query(call.id, "✅ تم حذف الصورة")
             
             # إعادة عرض قائمة إدارة الصور
@@ -7552,6 +8662,37 @@ def handle_add_to_cart(call):
         # ====== التعديل: إزالة شرط التحقق من نوع المستخدم ======
         # يمكن لأي مستخدم (زائر، مشتري، بائع، أدمن) إضافة منتجات للسلة
         
+        # Ensure user exists in Users table (required for Foreign Key constraint)
+        print(f"[DEBUG] handle_add_to_cart: Checking user {user_id}...")
+        user = get_user(user_id)
+        if not user:
+            # Create user entry if doesn't exist
+            print(f"[INFO] User {user_id} not found. Creating user entry...")
+            username = call.from_user.username or None
+            full_name = None
+            if call.from_user.first_name or call.from_user.last_name:
+                full_name = f"{call.from_user.first_name or ''} {call.from_user.last_name or ''}".strip()
+            
+            user_created = add_user(user_id, username, 'buyer', None, full_name)
+            if not user_created:
+                print(f"[ERROR] Failed to create user {user_id}")
+                bot.answer_callback_query(call.id, "❌ حدث خطأ في إنشاء المستخدم")
+                return
+            
+            # Small delay to ensure database commit is complete
+            import time
+            time.sleep(0.2)
+            
+            # Verify user was created
+            user = get_user(user_id)
+            if not user:
+                print(f"[ERROR] User {user_id} still not found after creation")
+                bot.answer_callback_query(call.id, "❌ حدث خطأ في التحقق من المستخدم")
+                return
+            print(f"[SUCCESS] User {user_id} created and verified")
+        else:
+            print(f"[OK] User {user_id} exists")
+        
         product = get_product_by_id(product_id)
         if not product:
             bot.answer_callback_query(call.id, "المنتج غير موجود")
@@ -7572,20 +8713,24 @@ def handle_add_to_cart(call):
         full_name = None
         
         # فقط للمستخدمين المسجلين، نحاول الحصول على معلوماتهم
-        user = get_user(user_id)
         if user:
-            phone = user[4] if user else None
-            full_name = user[5] if user else None
+            phone = user[4] if len(user) > 4 else None
+            full_name = user[5] if len(user) > 5 else None
         
         price = get_product_price_for_customer(product_id, seller_id, phone, full_name)
         
-        add_to_cart_db(user_id, product_id, quantity, price)
+        success = add_to_cart_db(user_id, product_id, quantity, price)
         
-        product_name = product[3]
-        bot.answer_callback_query(call.id, f"✅ تم إضافة {quantity}x {product_name} إلى السلة")
+        if success:
+            product_name = product[3]
+            bot.answer_callback_query(call.id, f"✅ تم إضافة {quantity}x {product_name} إلى السلة")
+        else:
+            bot.answer_callback_query(call.id, "❌ حدث خطأ في إضافة المنتج للسلة")
         
     except Exception as e:
         print(f"Error in handle_add_to_cart: {e}")
+        import traceback
+        traceback.print_exc()
         bot.answer_callback_query(call.id, f"خطأ: {str(e)[:50]}")
 
 # ====== إدارة السلة ======
@@ -10012,6 +11157,21 @@ if __name__ == "__main__":
         print("🛠️ Initializing Database...")
         init_db()
         print("✅ Database Initialized Successfully")
+        
+        # Debug: Check products count after initialization
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM Products")
+        result = cursor.fetchone()
+        product_count = result[0] if result else 0
+        print(f"📊 Total products in database: {product_count}")
+        
+        cursor.execute("SELECT COUNT(*) FROM Products WHERE Quantity > 0 AND Status='active'")
+        result = cursor.fetchone()
+        active_product_count = result[0] if result else 0
+        print(f"📊 Active products with Quantity > 0: {active_product_count}")
+        
+        conn.close()
     except Exception as e:
         print(f"❌ CRITICAL DATABASE ERROR: {e}")
         traceback.print_exc()

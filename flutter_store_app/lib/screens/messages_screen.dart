@@ -53,15 +53,31 @@ class _MessagesScreenState extends State<MessagesScreen> {
           }
 
           final messages = snapshot.data!;
+          if (messages.isEmpty) {
+            return const Center(child: Text('لا توجد رسائل'));
+          }
           return ListView.builder(
             itemCount: messages.length,
             itemBuilder: (context, index) {
               final msg = messages[index];
+              // تحديد نوع الرسالة وعرضها بشكل مناسب
+              String displayText = msg.messageText ?? 'رسالة فارغة';
+              IconData iconData = Icons.message;
+              Color iconColor = Colors.blue;
+              
+              if (msg.messageType == 'new_order') {
+                iconData = Icons.shopping_cart;
+                iconColor = Colors.green;
+              } else if (msg.messageType == 'order_confirmed') {
+                iconData = Icons.check_circle;
+                iconColor = Colors.orange;
+              }
+              
               return Card(
                 margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 child: ListTile(
-                  leading: const Icon(Icons.message, color: Colors.blue),
-                  title: Text(msg.messageText ?? 'رسالة فارغة'),
+                  leading: Icon(iconData, color: iconColor),
+                  title: Text(displayText),
                   subtitle: Text(msg.createdAt ?? ''),
                   trailing: IconButton(
                     icon: const Icon(Icons.delete, color: Colors.red),

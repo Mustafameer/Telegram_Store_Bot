@@ -35,6 +35,7 @@ class Seller {
   final String? storeName;
   final String? status;
   final String? imagePath;
+  final bool requireCustomerRegistration;
 
   Seller({
     required this.sellerId,
@@ -43,9 +44,19 @@ class Seller {
     this.storeName,
     this.status,
     this.imagePath,
+    this.requireCustomerRegistration = false,
   });
 
   factory Seller.fromMap(Map<String, dynamic> map) {
+    final requireCustomerRegistrationValue = map['RequireCustomerRegistration'];
+    // Handle different possible values: 1, true, '1', or null/0/false
+    final isLocked = requireCustomerRegistrationValue == 1 || 
+                     requireCustomerRegistrationValue == true ||
+                     requireCustomerRegistrationValue == '1' ||
+                     requireCustomerRegistrationValue == 'true';
+    
+    print("📖 Seller.fromMap: SellerID=${map['SellerID']}, RequireCustomerRegistration=$requireCustomerRegistrationValue -> isLocked=$isLocked");
+    
     return Seller(
       sellerId: map['SellerID'],
       telegramId: map['TelegramID'],
@@ -53,6 +64,7 @@ class Seller {
       storeName: map['StoreName'],
       status: map['Status'],
       imagePath: map['ImagePath'],
+      requireCustomerRegistration: isLocked,
     );
   }
 
@@ -63,6 +75,7 @@ class Seller {
     String? storeName,
     String? status,
     String? imagePath,
+    bool? requireCustomerRegistration,
   }) {
     return Seller(
       sellerId: sellerId ?? this.sellerId,
@@ -71,6 +84,10 @@ class Seller {
       storeName: storeName ?? this.storeName,
       status: status ?? this.status,
       imagePath: imagePath ?? this.imagePath,
+      // Use explicit check to allow false values
+      requireCustomerRegistration: requireCustomerRegistration != null 
+          ? requireCustomerRegistration 
+          : this.requireCustomerRegistration,
     );
   }
 }
@@ -138,6 +155,32 @@ class Product {
       quantity: map['Quantity'],
       imagePath: map['ImagePath'],
       status: map['Status'] ?? 'active',
+    );
+  }
+
+  Product copyWith({
+    int? productId,
+    int? sellerId,
+    int? categoryId,
+    String? name,
+    String? description,
+    double? price,
+    double? wholesalePrice,
+    int? quantity,
+    String? imagePath,
+    String? status,
+  }) {
+    return Product(
+      productId: productId ?? this.productId,
+      sellerId: sellerId ?? this.sellerId,
+      categoryId: categoryId ?? this.categoryId,
+      name: name ?? this.name,
+      description: description ?? this.description,
+      price: price ?? this.price,
+      wholesalePrice: wholesalePrice ?? this.wholesalePrice,
+      quantity: quantity ?? this.quantity,
+      imagePath: imagePath ?? this.imagePath,
+      status: status ?? this.status,
     );
   }
 }
@@ -214,6 +257,7 @@ class CreditCustomer {
   final int sellerId;
   final String fullName;
   final String? phoneNumber;
+  final int? telegramId;
   final String? createdAt;
 
   CreditCustomer({
@@ -221,6 +265,7 @@ class CreditCustomer {
     required this.sellerId,
     required this.fullName,
     this.phoneNumber,
+    this.telegramId,
     this.createdAt,
   });
 
@@ -230,6 +275,7 @@ class CreditCustomer {
       sellerId: map['SellerID'],
       fullName: map['FullName'],
       phoneNumber: map['PhoneNumber'],
+      telegramId: map['TelegramID'],
       createdAt: map['CreatedAt'],
     );
   }
@@ -300,6 +346,32 @@ class Message {
       messageType: map['MessageType'],
       messageText: map['MessageText'],
       isRead: (map['IsRead'] == 1 || map['IsRead'] == true),
+      createdAt: map['CreatedAt'],
+    );
+  }
+}
+
+class ProductImage {
+  final int imageId;
+  final int productId;
+  final String imagePath;
+  final int imageOrder;
+  final String? createdAt;
+
+  ProductImage({
+    required this.imageId,
+    required this.productId,
+    required this.imagePath,
+    this.imageOrder = 0,
+    this.createdAt,
+  });
+
+  factory ProductImage.fromMap(Map<String, dynamic> map) {
+    return ProductImage(
+      imageId: map['ImageID'],
+      productId: map['ProductID'],
+      imagePath: map['ImagePath'],
+      imageOrder: map['ImageOrder'] ?? 0,
       createdAt: map['CreatedAt'],
     );
   }

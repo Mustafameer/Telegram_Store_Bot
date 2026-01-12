@@ -237,7 +237,8 @@ class SyncService {
         'StoreName': 'storename',
         'CreatedAt': 'createdat',
         'Status': 'status',
-        'ImagePath': 'imagepath'
+        'ImagePath': 'imagepath',
+        'RequireCustomerRegistration': 'requirecustomerregistration'
       });
       // Categories
       await _pushTable(conn, dbHelper, 'Categories', 'Categories', 'categoryid', {
@@ -260,6 +261,15 @@ class SyncService {
         'ImagePath': 'imagepath',
         'Status': 'status'
       });
+      // ProductImages
+      print("🖼️ Starting ProductImages sync...");
+      await _pushTable(conn, dbHelper, 'ProductImages', 'ProductImages', 'imageid', {
+        'ImageID': 'imageid',
+        'ProductID': 'productid',
+        'ImagePath': 'imagepath',
+        'ImageOrder': 'imageorder'
+      });
+      print("✅ ProductImages sync completed");
   }
 
   Future<void> _pushAllOrders(Connection conn, DatabaseHelper dbHelper) async {
@@ -348,7 +358,8 @@ class SyncService {
         'storename': 'StoreName',
         'createdat': 'CreatedAt',
         'status': 'Status',
-        'imagepath': 'ImagePath'
+        'imagepath': 'ImagePath',
+        'requirecustomerregistration': 'RequireCustomerRegistration'
       }, prune: prune);
        // Categories
       await _syncTable(conn, dbHelper, 'Categories', 'categoryid', {
@@ -370,6 +381,13 @@ class SyncService {
          'quantity': 'Quantity',
          'imagepath': 'ImagePath',
          'status': 'Status'
+      }, prune: prune);
+       // ProductImages
+      await _syncTable(conn, dbHelper, 'ProductImages', 'imageid', {
+         'imageid': 'ImageID',
+         'productid': 'ProductID',
+         'imagepath': 'ImagePath',
+         'imageorder': 'ImageOrder'
       }, prune: prune);
   }
 
@@ -494,8 +512,9 @@ class SyncService {
       final products = await db.query('Products', columns: ['ImagePath']);
       final sellers = await db.query('Sellers', columns: ['ImagePath']);
       final categories = await db.query('Categories', columns: ['ImagePath']);
+      final productImages = await db.query('ProductImages', columns: ['ImagePath']);
       
-      for (var row in [...products, ...sellers, ...categories]) {
+      for (var row in [...products, ...sellers, ...categories, ...productImages]) {
           final path = row['ImagePath'] as String?;
           if (path != null && path.isNotEmpty) {
               activeImages.add(p.basename(path));
@@ -617,7 +636,12 @@ class SyncService {
       final db = await dbHelper.database;
       final localData = await db.query(localTableName);
       
-      if (localData.isEmpty) return;
+      print("📊 Found ${localData.length} rows in $localTableName");
+      
+      if (localData.isEmpty) {
+        print("⚠️ No data to push for $localTableName");
+        return;
+      }
       
       for (var row in localData) {
         final pgMap = <String, dynamic>{};
@@ -651,12 +675,19 @@ class SyncService {
                     'ON CONFLICT ($quotedPK) DO UPDATE SET $updateSet';
         
         // DEBUG LOGGING
-        if (localTableName == 'OrderItems') {
+        if (localTableName == 'OrderItems' || localTableName == 'ProductImages') {
            print("🛠️ DEBUG SQL: $sql");
            print("🛠️ DEBUG KEYS: $keys");
+           print("🛠️ DEBUG VALUES: $pgMap");
         }
         
-        await conn.execute(Sql.named(sql), parameters: pgMap);
+        try {
+          await conn.execute(Sql.named(sql), parameters: pgMap);
+        } catch (e) {
+          print("  ❌ Error pushing row from $localTableName: $e");
+          print("  📋 Row data: $pgMap");
+          rethrow;
+        }
       }
       print("  ✅ Pushed ${localData.length} rows from $localTableName");
       
@@ -880,6 +911,16 @@ class SyncService {
 
       // 9. ImageStorage
       await conn.execute("CREATE TABLE IF NOT EXISTS ImageStorage (FileName TEXT PRIMARY KEY, FileData BYTEA, UpdatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
+
+      // 10. ProductImages
+      await conn.execute('''
+        CREATE TABLE IF NOT EXISTS ProductImages (
+          ImageID SERIAL PRIMARY KEY,
+          ProductID INTEGER,
+          ImagePath TEXT,
+          ImageOrder INTEGER DEFAULT 0
+        )
+      ''');
 
       print("✅ Remote Schema Verified");
     } catch (e) {
