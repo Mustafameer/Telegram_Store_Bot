@@ -1015,46 +1015,7 @@ def check_and_fix_db():
 
 # check_and_fix_db()
 
-def download_image_from_cloud(filename):
-    """
-    Attempts to download an image from the Postgres ImageStorage table
-    if it exists there. Returns True if successful, False otherwise.
-    """
-    if not IS_POSTGRES:
-        return False
-        
-    try:
-        # Prevent SQL injection or path traversal (basic check)
-        filename = os.path.basename(filename)
-        
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        # Check if exists
-        cursor.execute("SELECT FileData FROM ImageStorage WHERE FileName = %s", (filename,))
-        result = cursor.fetchone()
-        
-        if result and result[0]:
-            file_data = result[0]
-            # Ensure Images folder exists
-            if not os.path.exists(IMAGES_FOLDER):
-                os.makedirs(IMAGES_FOLDER)
-                
-            file_path = os.path.join(IMAGES_FOLDER, filename)
-            
-            # Write bytes
-            with open(file_path, 'wb') as f:
-                f.write(file_data)
-                
-            conn.close()
-            return True
-            
-        conn.close()
-        return False
-        
-    except Exception as e:
-        print(f"Error downloading image {filename}: {e}")
-        return False
+# Note: download_image_from_cloud is defined later in the file (after line 1342)
 
 # ===================== نظام حدود الائتمان =====================
 
@@ -1350,36 +1311,56 @@ def download_image_from_cloud(filename):
         return False
         
     try:
+        # Sanitize filename
+        filename = os.path.basename(filename)
+        
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Check if file exists in ImageStorage
-        # Note: cursor wrapper executes standard SQL. 
-        # We need raw fetch for BYTEA data.
-        
-        # We need to access the underlying cursor for raw byte handling if Wrapper acts up, 
-        # but let's try standard fetchone first.
+        # Try exact match first
         cursor.execute("SELECT FileData FROM ImageStorage WHERE FileName = %s", (filename,))
         result = cursor.fetchone()
         
+        # If exact match fails, try partial match (for cases where path differs)
+        if not result:
+            print(f"⚠️ Exact match failed for: {filename}, trying partial match...")
+            cursor.execute("SELECT FileName, FileData FROM ImageStorage WHERE FileName LIKE %s LIMIT 1", (f"%{filename}%",))
+            partial_result = cursor.fetchone()
+            
+            if partial_result:
+                print(f"✅ Found partial match: {partial_result[0]}")
+                result = (partial_result[1],)
+                # Update filename to matched one
+                filename = os.path.basename(partial_result[0])
+        
         if result and result[0]:
             file_data = result[0]
-            # If it's memoryview (psycopg2 binary), convert to bytes
+            
+            # Handle different data types (memoryview, bytes, etc.)
             if isinstance(file_data, memoryview):
                 file_data = file_data.tobytes()
+            elif isinstance(file_data, str):
+                # If somehow it's a string, encode it
+                file_data = file_data.encode('latin1')
                 
+            # Ensure IMAGES_FOLDER exists
+            os.makedirs(IMAGES_FOLDER, exist_ok=True)
+            
             local_path = os.path.join(IMAGES_FOLDER, filename)
             with open(local_path, 'wb') as f:
                 f.write(file_data)
             
+            print(f"✅ Downloaded {filename} ({len(file_data):,} bytes) to {local_path}")
             conn.close()
             return True
             
+        print(f"❌ Image not found in ImageStorage: {filename}")
         conn.close()
         return False
         
     except Exception as e:
         print(f"❌ Error downloading image {filename}: {e}")
+        import traceback
         traceback.print_exc()
         return False
 
@@ -11126,6 +11107,56 @@ def debug_db_status(message):
         bot.send_message(message.chat.id, info, parse_mode='Markdown')
     except:
         bot.send_message(message.chat.id, "Error checking status")
+
+
+@bot.message_handler(commands=['check_images'])
+def check_images_status(message):
+    """فحص حالة الصور في السحابة"""
+    if not is_bot_admin(message.from_user.id):
+        bot.reply_to(message, "❌ هذا الأمر متاح للمشرفين فقط")
+        return
+    
+    try:
+        if not IS_POSTGRES:
+            bot.reply_to(message, "⚠️ هذا الأمر يعمل فقط مع PostgreSQL (Cloud)")
+            return
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Count images in ImageStorage
+        cursor.execute("SELECT COUNT(*) FROM ImageStorage")
+        img_count = cursor.fetchone()[0]
+        
+        # Count products with images
+        cursor.execute("SELECT COUNT(*) FROM Products WHERE ImagePath IS NOT NULL AND ImagePath != ''")
+        prod_count = cursor.fetchone()[0]
+        
+        # Get sample images
+        cursor.execute("SELECT FileName FROM ImageStorage LIMIT 5")
+        samples = cursor.fetchall()
+        
+        # Get total size
+        cursor.execute("SELECT SUM(LENGTH(FileData))::bigint FROM ImageStorage")
+        total_size = cursor.fetchone()[0] or 0
+        
+        info = f"📸 **حالة الصور في السحابة**\n\n"
+        info += f"✅ الصور في ImageStorage: {img_count}\n"
+        info += f"✅ المنتجات بصور: {prod_count}\n"
+        info += f"✅ الحجم الإجمالي: {total_size/1024/1024:.2f} MB\n\n"
+        
+        if samples:
+            info += f"📋 **عينات:**\n"
+            for (fname,) in samples:
+                info += f"• {fname[:40]}...\n"
+        
+        conn.close()
+        bot.send_message(message.chat.id, info, parse_mode='Markdown')
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ خطأ: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
 
 # ====== Ping Command (No DB) ======
