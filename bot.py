@@ -3041,9 +3041,10 @@ def generate_store_link(telegram_id):
 
 # ====== دالة لعرض المنتجات مع صورها ======
 def send_product_with_image(chat_id, product, markup=None, seller_name=""):
-    """إرسال منتج مع صورته (Generate Card v1)"""
+    """إرسال منتج مع صورته"""
     try:
         pid, name, desc, price, wholesale_price, qty, img_path = product
+        print(f"DEBUG: send_product_with_image called for product {pid}, img_path={img_path}")
         
         # 1. Try to Generate Product Card
         try:
@@ -3052,14 +3053,15 @@ def send_product_with_image(chat_id, product, markup=None, seller_name=""):
             
             if card_img:
                 card_img.name = f"product_{pid}.png"
-                # Keep caption minimal as details are on the card
-                # We still show Quantity as it might not be on card, and maybe a brief text copy
                 caption = f"📦 **{name}**\n📦 المتوفر: {qty}"
                 
+                print(f"✅ Generated product card for {pid}")
                 bot.send_photo(chat_id, card_img, caption=caption, reply_markup=markup, parse_mode='Markdown')
                 return
+            else:
+                print(f"⚠️ Product Card generation returned None for {pid}")
         except Exception as e:
-            print(f"⚠️ Product Card Generation Failed: {e}")
+            print(f"⚠️ Product Card Generation Failed for {pid}: {e}")
             # Fallthrough to legacy raw image logic
             
         # 2. Legacy Logic (Raw Image/Text)
@@ -3075,9 +3077,11 @@ def send_product_with_image(chat_id, product, markup=None, seller_name=""):
             caption += f"\n📝 {desc[:100]}{'...' if len(desc) > 100 else ''}"
         
         if img_path:
+            print(f"DEBUG: Image path for {pid}: {img_path}")
             # 1. Check direct path
             if os.path.exists(img_path):
                 try:
+                    print(f"✅ Found image at direct path: {img_path}")
                     with open(img_path, 'rb') as photo:
                         bot.send_photo(chat_id, photo, caption=caption, reply_markup=markup, parse_mode='Markdown')
                     return
@@ -3087,6 +3091,7 @@ def send_product_with_image(chat_id, product, markup=None, seller_name=""):
             # 2. Check in IMAGES_FOLDER by basename
             base_name = os.path.basename(img_path)
             alt_path = os.path.join(IMAGES_FOLDER, base_name)
+            print(f"DEBUG: Checking alt path: {alt_path}, exists={os.path.exists(alt_path)}")
             
             # 3. Try download from Cloud if not exists locally
             if not os.path.exists(alt_path) and IS_POSTGRES:
@@ -3100,6 +3105,7 @@ def send_product_with_image(chat_id, product, markup=None, seller_name=""):
             # 4. Send image if available
             if os.path.exists(alt_path):
                 try:
+                    print(f"✅ Sending image from alt path: {alt_path}")
                     with open(alt_path, 'rb') as photo:
                         bot.send_photo(chat_id, photo, caption=caption, reply_markup=markup, parse_mode='Markdown')
                     return
@@ -3107,6 +3113,8 @@ def send_product_with_image(chat_id, product, markup=None, seller_name=""):
                     print(f"⚠️ Error sending image from alt path {alt_path}: {e}")
             else:
                 print(f"⚠️ الصورة غير موجودة محلياً ولم يتم تحميلها من السحابة: {base_name}")
+        else:
+            print(f"DEBUG: No image path for product {pid}")
 
         # Fallback: Send message without image
         if markup:
