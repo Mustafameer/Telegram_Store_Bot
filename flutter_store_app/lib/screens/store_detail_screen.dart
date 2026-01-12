@@ -293,6 +293,30 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
                 icon: const Icon(Icons.edit),
                 tooltip: 'تعديل المتجر',
                 onPressed: () => _showEditStoreDialog(context),
+              ),
+            if (widget.isSellerMode)
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                tooltip: 'مزامنة البيانات',
+                onPressed: () async {
+                  try {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('🔄 جاري المزامنة...'))
+                    );
+                    await SyncService.instance.syncNow();
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('✅ تمت المزامنة بنجاح'))
+                      );
+                    }
+                  } catch (e) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('❌ خطأ في المزامنة: $e'))
+                      );
+                    }
+                  }
+                },
               )
           ],
         ),
@@ -314,7 +338,7 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
                   itemBuilder: (context, index) {
                     final item = destinations[index];
                     final isExit = item['isExit'] == true && !canPop; 
-                  return ListTile(
+                    return ListTile(
                       leading: Badge(
                         isLabelVisible: (item['count'] as int? ?? 0) > 0,
                         label: Text('${item['count']}'),
@@ -331,7 +355,34 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
                     );
                   },
                 ),
-              )
+              ),
+              if (widget.isSellerMode)
+                Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('مزامنة'),
+                    onPressed: () async {
+                      try {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('🔄 جاري المزامنة...'))
+                        );
+                        await SyncService.instance.syncNow();
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('✅ تمت المزامنة بنجاح'))
+                          );
+                        }
+                      } catch (e) {
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('❌ خطأ في المزامنة: $e'))
+                          );
+                        }
+                      }
+                    },
+                  ),
+                ),
             ],
           ),
         ),
@@ -417,6 +468,30 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
                          icon: const Icon(Icons.edit),
                          tooltip: 'تعديل المتجر',
                          onPressed: () => _showEditStoreDialog(context),
+                       ),
+                     if (widget.isSellerMode)
+                       IconButton(
+                         icon: const Icon(Icons.refresh),
+                         tooltip: 'مزامنة البيانات',
+                         onPressed: () async {
+                           try {
+                             ScaffoldMessenger.of(context).showSnackBar(
+                               const SnackBar(content: Text('🔄 جاري المزامنة...'))
+                             );
+                             await SyncService.instance.syncNow();
+                             if (mounted) {
+                               ScaffoldMessenger.of(context).showSnackBar(
+                                 const SnackBar(content: Text('✅ تمت المزامنة بنجاح'))
+                               );
+                             }
+                           } catch (e) {
+                             if (mounted) {
+                               ScaffoldMessenger.of(context).showSnackBar(
+                                 SnackBar(content: Text('❌ خطأ في المزامنة: $e'))
+                               );
+                             }
+                           }
+                         },
                        )
                   ],
                 ),
