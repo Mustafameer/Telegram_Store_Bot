@@ -7649,9 +7649,13 @@ def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id, customer_tele
             return
     
     categories = get_categories(seller_id)
+    print(f"DEBUG: Categories found: {len(categories) if categories else 0}")
     
     if not categories:
+        print(f"DEBUG: No categories, fetching products directly for seller_id={seller_id}")
         products = get_products(seller_id=seller_id)
+        print(f"DEBUG: Products found: {len(products) if products else 0}")
+        
         if not products:
             bot.send_message(chat_id, f"🏪 **{store_name}**\n👤 البائع: {format_seller_mention(username, seller_id)}\n\nالمتجر فارغ حالياً.")
             return
@@ -7660,6 +7664,7 @@ def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id, customer_tele
         
         for product in products:
             pid, name, desc, price, wholesale_price, qty, img_path = product
+            print(f"DEBUG: Displaying product {pid}: {name}, qty={qty}")
             if qty > 0:
                 # للمتاجر المقفولة: عرض بدون صور مع زر خاص لاختيار الصور
                 if require_registration:
@@ -7692,26 +7697,16 @@ def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id, customer_tele
     # إضافة قائمة الأزرار للمشتري بعد عرض المتجر
     if customer_telegram_id and customer_telegram_id != seller_telegram_id:
         try:
-            print(f"🔍 Showing buyer menu for customer: {customer_telegram_id}, chat_id: {chat_id}")
-            # إرسال الأزرار مباشرة باستخدام chat_id و user_id
-            show_buyer_main_menu(chat_id=chat_id, user_id=customer_telegram_id)
-            print(f"✅ Buyer menu sent successfully")
-            # Send an Inline keyboard fallback so mobile clients always have access
-            # to Cart and Edit Profile even if the ReplyKeyboard is hidden/ignored.
-            try:
-                # Send cart button first (ensures visibility on all clients)
-                inline_cart = types.InlineKeyboardMarkup(row_width=1)
-                inline_cart.add(types.InlineKeyboardButton("سلة المشتريات 🛒", callback_data="inline_open_cart"))
-                bot.send_message(chat_id, "استخدم زر السلة السريعة:", reply_markup=inline_cart)
-
-                # Send edit-profile as a separate inline button to avoid client-side hiding
-                inline_profile = types.InlineKeyboardMarkup(row_width=1)
-                inline_profile.add(types.InlineKeyboardButton("👤 تعديل بياناتي", callback_data="inline_edit_profile"))
-                bot.send_message(chat_id, "أو اضغط لتعديل بياناتك:", reply_markup=inline_profile)
-            except Exception as e:
-                print(f"⚠️ Failed to send inline buyer menu: {e}")
+            print(f"🔍 DEBUG: Showing buyer buttons for customer: {customer_telegram_id}")
+            # لا نستدعي show_buyer_main_menu() لأنها ترسل رسالة ترحيب
+            # بدلاً من ذلك، نرسل الأزرار مباشرة
+            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            markup.row("سلة المشتريات 🛒", "👤 تعديل بياناتي")
+            
+            bot.send_message(chat_id, "👇 يمكنك استخدام الأزرار أدناه:", reply_markup=markup)
+            print(f"✅ DEBUG: Buyer buttons sent successfully")
         except Exception as e:
-            print(f"❌ Error showing buyer menu: {e}")
+            print(f"❌ Error showing buyer buttons: {e}")
             import traceback
             traceback.print_exc()
 
@@ -10926,7 +10921,9 @@ def send_welcome(message):
                                         "يرجى التواصل مع الإدارة.")
                 else:
                     # إذا كان زائراً للمتجر، نعرض له المنتجات
+                    print(f"🔍 DEBUG: Handling store link for customer {telegram_id} visiting store {seller_telegram_id}")
                     send_store_catalog_by_telegram_id(message.chat.id, seller_telegram_id, telegram_id)
+                    print(f"✅ DEBUG: Store catalog sent")
                 return
             except Exception as e:
                 print(f"⚠️ خطأ في فتح رابط المتجر: {e}")
