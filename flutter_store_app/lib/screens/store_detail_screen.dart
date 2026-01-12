@@ -262,6 +262,34 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
       return Scaffold(
         appBar: AppBar(
           title: Text('${widget.seller.storeName ?? 'تفاصيل المتجر'} ${widget.isSellerMode ? '(Admin)' : '(Buyer)'}'),
+          leading: IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: () async {
+              if (widget.isSellerMode) {
+                // للبائع: مزامنة قبل الخروج
+                try {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('🔄 جاري المزامنة قبل الخروج...'))
+                  );
+                  await SyncService.instance.syncNow();
+                  if (mounted) {
+                    Navigator.of(context).pop();
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('⚠️ المزامنة: $e'))
+                    );
+                    Navigator.of(context).pop();
+                  }
+                }
+              } else {
+                // للمشتري: خروج عادي
+                Navigator.of(context).pop();
+              }
+            },
+            tooltip: 'خروج',
+          ),
           actions: [
             if (widget.isSellerMode)
               IconButton(
@@ -438,6 +466,34 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
                   title: Text('${widget.seller.storeName ?? 'تفاصيل المتجر'} ${widget.isSellerMode ? '(Admin)' : '(Buyer)'}'),
                   centerTitle: false,
                   automaticallyImplyLeading: false,
+                  leading: IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () async {
+                      if (widget.isSellerMode) {
+                        // للبائع: مزامنة قبل الخروج
+                        try {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('🔄 جاري المزامنة قبل الخروج...'))
+                          );
+                          await SyncService.instance.syncNow();
+                          if (mounted) {
+                            Navigator.of(context).pop();
+                          }
+                        } catch (e) {
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('⚠️ المزامنة: $e'))
+                            );
+                            Navigator.of(context).pop();
+                          }
+                        }
+                      } else {
+                        // للمشتري: خروج عادي
+                        Navigator.of(context).pop();
+                      }
+                    },
+                    tooltip: 'خروج',
+                  ),
                   actions: [
                      if (widget.isSellerMode)
                        IconButton(
