@@ -3197,63 +3197,6 @@ def send_cart_item_with_image(chat_id, cart_item, markup=None):
         traceback.print_exc()
 
 # ====== /start ======
-@bot.message_handler(commands=['start'])
-def start(message):
-    telegram_id = message.from_user.id
-    username = message.from_user.username or message.from_user.first_name
-    
-    text = message.text or ""
-    
-    if "store_" in text:
-        try:
-            idx = text.index("store_")
-            token = text[idx+len("store_"):].strip()
-            token = token.split()[0]
-            seller_telegram_id = int(token)
-            send_store_catalog_by_telegram_id(message.chat.id, seller_telegram_id, telegram_id)
-            return
-        except Exception:
-            pass
-
-    if is_bot_admin(telegram_id):
-        add_user(telegram_id, username, "bot_admin")
-        show_bot_admin_menu(message)
-        return
-    
-    user = get_user(telegram_id)
-    
-    # ====== التعديل الجديد ======
-    # إذا لم يكن المستخدم مسجل، نعطيه خيار التسجيل أو التصفح بدون تسجيل
-    if not user:
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.row("تسجيل حساب جديد 📝", "تصفح بدون تسجيل 👀")
-        markup.row("🏠 الرئيسية")
-        
-        bot.send_message(message.chat.id,
-                        "👋 **مرحباً بك في متجرنا!**\n\n"
-                        "يمكنك:\n"
-                        "1. **تسجيل حساب جديد** للاستفادة من جميع المزايا\n"
-                        "2. **تصفح المتاجر بدون تسجيل** وإضافة المنتجات للسلة\n\n"
-                        "💡 **ملاحظة:** التسجيل مجاني ويوفر لك:\n"
-                        "• حفظ طلباتك السابقة\n"
-                        "• إمكانية الشراء على الحساب\n"
-                        "• كشف حسابك الآجل\n"
-                        "• متابعة مرتجعاتك",
-                        reply_markup=markup)
-        return
-    
-    user_type = user[3]
-    
-    if user_type == 'bot_admin':
-        show_bot_admin_menu(message)
-    elif user_type == 'seller':
-        show_seller_menu(message)
-    elif user_type == 'buyer':
-        show_buyer_main_menu(message)
-    else:
-        add_user(telegram_id, username, "buyer")
-        show_buyer_main_menu(message)
-
 @bot.message_handler(func=lambda message: message.text == "تسجيل حساب جديد 📝")
 def register_new_user(message):
     msg = bot.send_message(message.chat.id, 
@@ -4188,97 +4131,6 @@ def handle_copy_store_link(call):
         bot.answer_callback_query(call.id, f"حدث خطأ: {str(e)}")
 
 # ====== إصلاح مشكلة /start للمتاجر ======
-@bot.message_handler(commands=['start'])
-def start(message):
-    telegram_id = message.from_user.id
-    username = message.from_user.username or message.from_user.first_name
-    
-    text = message.text or ""
-    
-    if "store_" in text:
-        try:
-            idx = text.index("store_")
-            token = text[idx+len("store_"):].strip()
-            token = token.split()[0]
-            seller_telegram_id = int(token)
-            
-            # التحقق إذا كان المستخدم الحالي هو صاحب المتجر
-            if telegram_id == seller_telegram_id:
-                # إذا كان صاحب المتجر، نعرض له قائمة البائع
-                seller = get_seller_by_telegram(telegram_id)
-                if seller:
-                    if is_seller_active(telegram_id):
-                        show_seller_menu(message)
-                    else:
-                        bot.send_message(message.chat.id,
-                                        "⛔ **حسابك معطل**\n\n"
-                                        "لا يمكنك الوصول إلى هذه الصفحة لأن حسابك معطل.\n"
-                                        "يرجى التواصل مع الإدارة.")
-                else:
-                    # إذا لم يكن مسجلاً كبائع بعد
-                    bot.send_message(message.chat.id,
-                                    "⚠️ **لست مسجلاً كبائع**\n\n"
-                                    "يبدو أنك لست مسجلاً كصاحب متجر.\n"
-                                    "يرجى التواصل مع الإدارة.")
-            else:
-                # إذا كان زائراً للمتجر، نعرض له المنتجات (مع التحقق من التسجيل)
-                send_store_catalog_by_telegram_id(message.chat.id, seller_telegram_id, telegram_id)
-            return
-        except Exception as e:
-            print(f"⚠️ خطأ في فتح رابط المتجر: {e}")
-            pass
-
-    if is_bot_admin(telegram_id):
-        add_user(telegram_id, username, "bot_admin")
-        show_bot_admin_menu(message)
-        return
-    
-    user = get_user(telegram_id)
-    
-    # ====== التعديل الجديد ======
-    # إذا لم يكن المستخدم مسجل، نعطيه خيار التسجيل أو التصفح بدون تسجيل
-    if not user:
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.row("تسجيل حساب جديد 📝", "تصفح بدون تسجيل 👀")
-        markup.row("🏠 الرئيسية")
-        
-        bot.send_message(message.chat.id,
-                        "👋 **مرحباً بك في متجرنا!**\n\n"
-                        "يمكنك:\n"
-                        "1. **تسجيل حساب جديد** للاستفادة من جميع المزايا\n"
-                        "2. **تصفح المتاجر بدون تسجيل** وإضافة المنتجات للسلة\n\n"
-                        "💡 **ملاحظة:** التسجيل مجاني ويوفر لك:\n"
-                        "• حفظ طلباتك السابقة\n"
-                        "• إمكانية الشراء على الحساب\n"
-                        "• كشف حسابك الآجل\n"
-                        "• متابعة مرتجعاتك",
-                        reply_markup=markup)
-        return
-    
-    user_type = user[3]
-    
-    if user_type == 'bot_admin':
-        show_bot_admin_menu(message)
-    elif user_type == 'seller':
-        seller = get_seller_by_telegram(telegram_id)
-        if seller:
-            if is_seller_active(telegram_id):
-                show_seller_menu(message)
-            else:
-                bot.send_message(message.chat.id,
-                                "⛔ **حسابك معطل**\n\n"
-                                "لا يمكنك الوصول إلى هذه الصفحة لأن حسابك معطل.\n"
-                                "يرجى التواصل مع الإدارة.")
-        else:
-            # إذا كان مسجلاً كبائع ولكن ليس في جدول البائعين
-            add_user(telegram_id, username, "buyer")
-            show_buyer_main_menu(message)
-    elif user_type == 'buyer':
-        show_buyer_main_menu(message)
-    else:
-        add_user(telegram_id, username, "buyer")
-        show_buyer_main_menu(message)
-
 @bot.message_handler(func=lambda message: message.text == "📋 قائمة المتاجر" and is_bot_admin(message.from_user.id))
 def list_stores(message):
     try:
@@ -11039,43 +10891,94 @@ print("   • التفريق بين الزوار والمستخدمين المس
 # ====== Start Command ======
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
+    """معالج أمر /start - يدعم روابط المتاجر"""
     try:
-        user_id = message.from_user.id
-        username = message.from_user.username
+        telegram_id = message.from_user.id
+        username = message.from_user.username or message.from_user.first_name
         full_name = message.from_user.full_name
         
-        # Register user if not exists
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        text = message.text or ""
         
-        if IS_POSTGRES:
-            cursor.execute("SELECT * FROM Users WHERE TelegramID = %s", (user_id,))
-        else:
-            cursor.execute("SELECT * FROM Users WHERE TelegramID = ?", (user_id,))
-            
-        user = cursor.fetchone()
-        
-        if not user:
-            if IS_POSTGRES:
-                cursor.execute("INSERT INTO Users (TelegramID, UserName, FullName, UserType) VALUES (%s, %s, %s, 'customer')", (user_id, username, full_name))
-            else:
-                cursor.execute("INSERT INTO Users (TelegramID, UserName, FullName, UserType) VALUES (?, ?, ?, 'customer')", (user_id, username, full_name))
-            conn.commit()
-            print(f"✅ New user registered: {full_name}")
-            
-        conn.close()
+        # ===== معالجة رابط المتجر (store_SELLER_ID) =====
+        if "store_" in text:
+            try:
+                idx = text.index("store_")
+                token = text[idx+len("store_"):].strip()
+                token = token.split()[0]
+                seller_telegram_id = int(token)
+                
+                # التحقق إذا كان المستخدم الحالي هو صاحب المتجر
+                if telegram_id == seller_telegram_id:
+                    # إذا كان صاحب المتجر، نعرض له قائمة البائع
+                    seller = get_seller_by_telegram(telegram_id)
+                    if seller:
+                        if is_seller_active(telegram_id):
+                            show_seller_menu(message)
+                        else:
+                            bot.send_message(message.chat.id,
+                                            "⛔ **حسابك معطل**\n\n"
+                                            "لا يمكنك الوصول إلى هذه الصفحة لأن حسابك معطل.\n"
+                                            "يرجى التواصل مع الإدارة.")
+                    else:
+                        bot.send_message(message.chat.id,
+                                        "⚠️ **لست مسجلاً كبائع**\n\n"
+                                        "يبدو أنك لست مسجلاً كصاحب متجر.\n"
+                                        "يرجى التواصل مع الإدارة.")
+                else:
+                    # إذا كان زائراً للمتجر، نعرض له المنتجات
+                    send_store_catalog_by_telegram_id(message.chat.id, seller_telegram_id, telegram_id)
+                return
+            except Exception as e:
+                print(f"⚠️ خطأ في فتح رابط المتجر: {e}")
+                import traceback
+                traceback.print_exc()
+                pass
 
-        # Send Welcome Message
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        btn1 = types.InlineKeyboardButton("🛍️ تصفح المنتجات", callback_data='browse_products')
-        btn2 = types.InlineKeyboardButton("🛒 سلة التسوق", callback_data='view_cart')
-        btn4 = types.InlineKeyboardButton("📞 تواصل معنا", callback_data='contact_us')
-        markup.add(btn1, btn2, btn4)
+        # ===== معالجة المستخدمين الآخرين =====
+        if is_bot_admin(telegram_id):
+            add_user(telegram_id, username, "bot_admin")
+            show_bot_admin_menu(message)
+            return
         
-        bot.reply_to(message, f"👋 أهلاً بك {full_name} في متجرنا!\n\nيمكنك البدء بالتسوق الآن:", reply_markup=markup)
+        # تسجيل المستخدم إذا لم يكن مسجلاً
+        user = get_user(telegram_id)
+        if not user:
+            add_user(telegram_id, username, "customer", None, full_name)
+            print(f"✅ New user registered: {full_name}")
+        
+        user = get_user(telegram_id)
+        user_type = user[3] if user else "customer"
+        
+        if user_type == 'bot_admin':
+            show_bot_admin_menu(message)
+        elif user_type == 'seller':
+            show_seller_menu(message)
+        else:
+            # عرض قائمة المشتري (أو خيار التسجيل للمستخدم الجديد)
+            if not user:
+                # للمستخدمين الجدد - إعطاؤهم خيار التسجيل أو التصفح بدون تسجيل
+                markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+                markup.row("تسجيل حساب جديد 📝", "تصفح بدون تسجيل 👀")
+                markup.row("🏠 الرئيسية")
+                
+                bot.send_message(message.chat.id,
+                                "👋 **مرحباً بك في متجرنا!**\n\n"
+                                "يمكنك:\n"
+                                "1. **تسجيل حساب جديد** للاستفادة من جميع المزايا\n"
+                                "2. **تصفح المتاجر بدون تسجيل** وإضافة المنتجات للسلة\n\n"
+                                "💡 **ملاحظة:** التسجيل مجاني ويوفر لك:\n"
+                                "• حفظ طلباتك السابقة\n"
+                                "• إمكانية الشراء على الحساب\n"
+                                "• كشف حسابك الآجل\n"
+                                "• متابعة مرتجعاتك",
+                                reply_markup=markup)
+            else:
+                show_buyer_main_menu(message=message)
         
     except Exception as e:
         print(f"Error in start command: {e}")
+        import traceback
+        traceback.print_exc()
         bot.reply_to(message, "حدث خطأ بسيط، حاول مرة أخرى.")
 
 # ====== Debug Command ======
