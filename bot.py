@@ -6261,58 +6261,24 @@ def process_add_customer_name(message):
         bot.send_message(message.chat.id, "⚠️ الرجاء إدخال اسم صحيح!")
         return
     
-    user_states[telegram_id]["full_name"] = full_name
-    user_states[telegram_id]["step"] = "add_customer_telegram_id"
-    
-    bot.send_message(message.chat.id,
-                    f"✅ تم حفظ الاسم: {full_name}\n\n"
-                    "الخطوة 2️⃣: أدخل معرف تليجرام الزبون (Telegram ID)\n\n"
-                    "💡 **كيفية الحصول على معرف التليجرام:**\n"
-                    "أرسل `/id` إلى @userinfobot")
-
-@bot.message_handler(func=lambda message: message.from_user.id in user_states and 
-                     user_states[message.from_user.id]["step"] == "add_customer_telegram_id")
-def process_add_customer_telegram_id(message):
-    telegram_id = message.from_user.id
-    state = user_states[telegram_id]
-    
-    if message.text == "🏠 الرئيسية":
-        del user_states[telegram_id]
-        handle_main_menu(message)
-        return
-    
-    try:
-        customer_telegram_id = int(message.text.strip())
-        if customer_telegram_id <= 0:
-            bot.send_message(message.chat.id, "⚠️ معرف التليجرام يجب أن يكون رقماً موجباً!")
-            return
-    except ValueError:
-        bot.send_message(message.chat.id, "⚠️ معرف التليجرام يجب أن يكون رقماً صحيحاً!")
-        return
-    
     seller_id = state["seller_id"]
-    full_name = state["full_name"]
     
     try:
-        # إضافة الزبون بدون رقم هاتف (استخدام Telegram ID بدلاً منه)
-        print(f"DEBUG: Calling add_credit_customer with seller_id={seller_id}, full_name={full_name}, telegram_id={customer_telegram_id}")
-        customer_id = add_credit_customer(seller_id, full_name, phone_number=None, customer_type='CreditCustomer', telegram_id=customer_telegram_id)
-        print(f"DEBUG: add_credit_customer returned: {customer_id}")
+        # إضافة الزبون بدون أي بيانات إضافية - فقط الاسم
+        customer_id = add_credit_customer(seller_id, full_name, phone_number=None, customer_type='CreditCustomer', telegram_id=None)
         
         if customer_id and customer_id > 0:
             bot.send_message(message.chat.id,
                             f"✅ **تم إضافة الزبون بنجاح!**\n\n"
                             f"👤 الاسم: {full_name}\n"
-                            f"🆔 معرف التليجرام: {customer_telegram_id}\n"
                             f"📱 رقم الزبون: {customer_id}\n\n"
-                            f"💡 يمكنك الآن تعيين حد ائتماني له من قائمة إدارة الزبائن")
+                            f"💡 يمكنك الآن تعيين حد ائتماني له")
             del user_states[telegram_id]
             manage_credit_customers_new(message)
         else:
             bot.send_message(message.chat.id,
                             "⚠️ **حدث خطأ**\n\n"
-                            "تعذر إضافة الزبون. قد يكون معرف التليجرام مسجلاً مسبقاً أو حدث خطأ في قاعدة البيانات.\n\n"
-                            f"📝 معرف التليجرام: {customer_telegram_id}\n"
+                            "تعذر إضافة الزبون. قد يكون الاسم مسجلاً مسبقاً أو حدث خطأ في قاعدة البيانات.\n\n"
                             f"👤 الاسم: {full_name}")
             del user_states[telegram_id]
     except Exception as e:
@@ -6322,6 +6288,7 @@ def process_add_customer_telegram_id(message):
         bot.send_message(message.chat.id,
                         f"❌ **حدث خطأ:**\n{str(e)}")
         del user_states[telegram_id]
+
 
 # ====== معالجة Callback Queries العامة ======
 
