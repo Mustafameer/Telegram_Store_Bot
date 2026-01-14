@@ -7575,11 +7575,18 @@ def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id, customer_tele
     if len(seller) > 9:
         require_registration = seller[9] == 1 if not IS_POSTGRES else (seller[9] if seller[9] is not None else False)
     
+    print(f"🔐 متجر معرف: {store_name}, require_registration={require_registration}, customer_id={customer_telegram_id}, seller_id={seller_telegram_id}")
+    
     # التحقق من أن المستخدم مسجل في CreditCustomers لهذا المتجر (فقط إذا كان الإعداد مفعلاً)
     # استثناء: صاحب المتجر نفسه يمكنه الدخول دائماً
     if require_registration and customer_telegram_id and customer_telegram_id != seller_telegram_id:
+        print(f"✅ فحص التسجيل: يجب التحقق من تسجيل الزبون {customer_telegram_id}")
         # التحقق من Telegram ID مباشرة
-        if not is_customer_registered_for_store_by_telegram_id(customer_telegram_id, seller_id):
+        is_registered = is_customer_registered_for_store_by_telegram_id(customer_telegram_id, seller_id)
+        print(f"⚠️ نتيجة التحقق: is_registered={is_registered}")
+        
+        if not is_registered:
+            print(f"❌ الزبون {customer_telegram_id} غير مسجل في المتجر {store_name}")
             markup = types.InlineKeyboardMarkup()
             markup.add(types.InlineKeyboardButton("📞 التواصل مع البائع", url=f"https://t.me/{username}" if username else None))
             
@@ -7594,6 +7601,10 @@ def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id, customer_tele
                 reply_markup=markup if username else None,
                 parse_mode='Markdown')
             return
+        else:
+            print(f"✅ الزبون {customer_telegram_id} مسجل في المتجر {store_name} - السماح بالدخول")
+    else:
+        print(f"ℹ️ لا حاجة للتحقق: require_registration={require_registration}, customer_id={customer_telegram_id}, is_owner={customer_telegram_id == seller_telegram_id}")
     
     categories = get_categories(seller_id)
     print(f"DEBUG: Categories found: {len(categories) if categories else 0}")
