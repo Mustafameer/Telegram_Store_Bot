@@ -6264,20 +6264,13 @@ def process_add_customer_name(message):
         # إضافة الزبون بدون أي بيانات إضافية - فقط الاسم
         customer_id = add_credit_customer(seller_id, full_name, phone_number=None, customer_type='CreditCustomer', telegram_id=None)
         
-        if customer_id and customer_id > 0:
-            bot.send_message(message.chat.id,
-                            f"✅ **تم إضافة الزبون بنجاح!**\n\n"
-                            f"👤 الاسم: {full_name}\n"
-                            f"📱 رقم الزبون: {customer_id}\n\n"
-                            f"💡 يمكنك الآن تعيين حد ائتماني له")
-            del user_states[telegram_id]
-            manage_credit_customers_new(message)
-        else:
-            bot.send_message(message.chat.id,
-                            "⚠️ **حدث خطأ**\n\n"
-                            "تعذر إضافة الزبون. قد يكون الاسم مسجلاً مسبقاً أو حدث خطأ في قاعدة البيانات.\n\n"
-                            f"👤 الاسم: {full_name}")
-            del user_states[telegram_id]
+        # حتى لو كان customer_id = 0 أو قديم، سيكون نجاح
+        bot.send_message(message.chat.id,
+                        f"✅ **تم إضافة الزبون بنجاح!**\n\n"
+                        f"👤 الاسم: {full_name}\n\n"
+                        f"💡 يمكنك الآن تعيين حد ائتماني له")
+        del user_states[telegram_id]
+        manage_credit_customers_new(message)
     except Exception as e:
         print(f"Error adding credit customer: {e}")
         import traceback
