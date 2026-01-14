@@ -6435,6 +6435,141 @@ def handle_delete_credit_customer_list(call):
     bot.send_message(call.message.chat.id, "🗑️ **اختر الزبون الذي تريد حذفه:**", reply_markup=markup)
     bot.answer_callback_query(call.id)
 
+@bot.callback_query_handler(func=lambda call: call.data.startswith("edit_credit_customer_"))
+def handle_edit_credit_customer(call):
+    """تعديل بيانات زبون آجل"""
+    try:
+        customer_id = int(call.data.split("_")[-1])
+        telegram_id = call.from_user.id
+        seller = get_seller_by_telegram(telegram_id)
+        
+        if not seller:
+            bot.answer_callback_query(call.id, "⛔ أنت لست بائعاً مسجلاً!")
+            return
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM CreditCustomers WHERE CustomerID=? AND SellerID=?", (customer_id, seller[0]))
+        customer = cursor.fetchone()
+        conn.close()
+        
+        if not customer:
+            bot.answer_callback_query(call.id, "الزبون غير موجود")
+            return
+        
+        customer_id, seller_id, full_name, phone, telegram_id_cust, customer_type, created_at = customer[:7]
+        
+        text = f"✏️ **تعديل بيانات الزبون**\n\n"
+        text += f"👤 **الاسم الحالي:** {full_name}\n"
+        text += f"📞 **الهاتف الحالي:** {phone if phone else 'غير محدد'}\n\n"
+        text += "الرجاء إدخال الاسم الجديد للزبون:"
+        
+        user_states[telegram_id] = {
+            "step": "edit_customer_name",
+            "customer_id": customer_id,
+            "seller_id": seller_id
+        }
+        
+        bot.send_message(call.message.chat.id, text)
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        print(f"Error in handle_edit_credit_customer: {e}")
+        bot.answer_callback_query(call.id, "❌ حدث خطأ أثناء المعالجة")
+
+@bot.message_handler(func=lambda message: message.from_user.id in user_states and 
+                     user_states[message.from_user.id]["step"] == "edit_customer_name")
+def process_edit_customer_name(message):
+    telegram_id = message.from_user.id
+    state = user_states[telegram_id]
+    customer_id = state["customer_id"]
+    seller_id = state["seller_id"]
+    
+    new_name = message.text.strip()
+    if not new_name:
+        bot.send_message(message.chat.id, "⚠️ الرجاء إدخال اسم صحيح!")
+        return
+    
+    try:
+        update_credit_customer(customer_id, seller_id, full_name=new_name)
+        bot.send_message(message.chat.id, f"✅ تم تحديث بيانات الزبون بنجاح!\n\n👤 الاسم الجديد: {new_name}")
+        del user_states[telegram_id]
+        manage_credit_customers_new(message)
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ حدث خطأ: {str(e)}")
+        del user_states[telegram_id]
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("set_credit_limit_"))
+def handle_set_credit_limit(call):
+    """تعيين الحد الائتماني للزبون"""
+    try:
+        customer_id = int(call.data.split("_")[-1])
+        telegram_id = call.from_user.id
+        seller = get_seller_by_telegram(telegram_id)
+        
+        if not seller:
+            bot.answer_callback_query(call.id, "⛔ أنت لست بائعاً مسجلاً!")
+            return
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM CreditCustomers WHERE CustomerID=? AND SellerID=?", (customer_id, seller[0]))
+        customer = cursor.fetchone()
+        conn.close()
+        
+        if not customer:
+            bot.answer_callback_query(call.id, "الزبون غير موجود")
+            return
+        
+        customer_id, seller_id, full_name, phone, telegram_id_cust, customer_type, created_at = customer[:7]
+        
+        # الحصول على الحد الحالي
+        limit_info = get_credit_limit_info(customer_id, seller_id)
+        current_limit = limit_info['max_limit']
+        current_used = limit_info['current_used']
+        
+        text = f"💳 **تعيين الحد الائتماني**\n\n"
+        text += f"👤 **الزبون:** {full_name}\n"
+        text += f"💰 **الحد الحالي:** {current_limit:,.0f} دينار\n"
+        text += f"📊 **المستخدم:** {current_used:,.0f} دينار\n\n"
+        text += "الرجاء إدخال الحد الائتماني الجديد (رقم):\n"
+        text += "مثال: 5000000"
+        
+        user_states[telegram_id] = {
+            "step": "set_limit_amount",
+            "customer_id": customer_id,
+            "seller_id": seller_id
+        }
+        
+        bot.send_message(call.message.chat.id, text)
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        print(f"Error in handle_set_credit_limit: {e}")
+        bot.answer_callback_query(call.id, "❌ حدث خطأ أثناء المعالجة")
+
+@bot.message_handler(func=lambda message: message.from_user.id in user_states and 
+                     user_states[message.from_user.id]["step"] == "set_limit_amount")
+def process_set_limit_amount(message):
+    telegram_id = message.from_user.id
+    state = user_states[telegram_id]
+    customer_id = state["customer_id"]
+    seller_id = state["seller_id"]
+    
+    try:
+        new_limit = float(message.text.strip())
+        if new_limit <= 0:
+            bot.send_message(message.chat.id, "⚠️ الحد الائتماني يجب أن يكون رقماً موجباً!")
+            return
+        
+        set_credit_limit(customer_id, seller_id, new_limit)
+        bot.send_message(message.chat.id, f"✅ تم تحديث الحد الائتماني بنجاح!\n\n💳 الحد الجديد: {new_limit:,.0f} دينار")
+        del user_states[telegram_id]
+        manage_credit_customers_new(message)
+    except ValueError:
+        bot.send_message(message.chat.id, "⚠️ الرجاء إدخال رقم صحيح!")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ حدث خطأ: {str(e)}")
+        del user_states[telegram_id]
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith("delete_credit_customer_"))
 def handle_delete_credit_customer(call):
     try:
