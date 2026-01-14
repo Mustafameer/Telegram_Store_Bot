@@ -7660,40 +7660,48 @@ def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id, customer_tele
         require_registration = seller[9] == 1 if not IS_POSTGRES else (seller[9] if seller[9] is not None else False)
     
     print(f"🔐 متجر معرف: {store_name}, require_registration={require_registration}, customer_id={customer_telegram_id}, seller_id={seller_telegram_id}")
+    print(f"🔐 المقارنة: customer_id({type(customer_telegram_id).__name__})={customer_telegram_id} != seller_id({type(seller_telegram_id).__name__})={seller_telegram_id}")
     
     # التحقق من أن المستخدم مسجل في CreditCustomers لهذا المتجر (فقط إذا كان الإعداد مفعلاً)
     # استثناء: صاحب المتجر نفسه يمكنه الدخول دائماً
-    if require_registration and customer_telegram_id and customer_telegram_id != seller_telegram_id:
-        print(f"✅ فحص التسجيل: يجب التحقق من تسجيل الزبون {customer_telegram_id}")
-        # التحقق من Telegram ID مباشرة
-        is_registered = is_customer_registered_for_store_by_telegram_id(customer_telegram_id, seller_id)
-        print(f"⚠️ نتيجة التحقق: is_registered={is_registered}")
+    if require_registration:
+        print(f"✅ المتجر مقفول - البحث عن التسجيل")
         
-        if not is_registered:
-            print(f"❌ الزبون {customer_telegram_id} غير مسجل في المتجر {store_name}")
-            
-            # عرض خيارات للزبون:
-            # 1. طلب إضافتك من البائع
-            # 2. إدخال اسمك لنسأل البائع إضافتك
-            markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("📞 التواصل مع البائع", url=f"https://t.me/{username}" if username else None))
-            markup.add(types.InlineKeyboardButton("✏️ إدخال اسمك طلباً من البائع", callback_data=f"request_access_{seller_id}"))
-            
-            bot.send_message(chat_id,
-                f"🔒 **الدخول مقيد**\n\n"
-                f"🏪 المتجر: {store_name}\n\n"
-                f"⚠️ حسابك (Telegram ID: {customer_telegram_id}) غير مسجل في قائمة الزبائن.\n\n"
-                f"📝 **الخيارات:**\n"
-                f"1️⃣ التواصل مع البائع مباشرة\n"
-                f"2️⃣ إدخال اسمك وسنبلغ البائع بطلبك\n\n"
-                f"بعد التسجيل، يمكنك الوصول إلى جميع منتجات المتجر.",
-                reply_markup=markup,
-                parse_mode='Markdown')
-            return
+        if not customer_telegram_id:
+            print(f"⚠️ تحذير: customer_telegram_id = None - السماح بالدخول (يجب تصحيح هذا)")
+        elif customer_telegram_id == seller_telegram_id:
+            print(f"✅ صاحب المتجر - السماح بالدخول بدون فحص")
         else:
-            print(f"✅ الزبون {customer_telegram_id} مسجل في المتجر {store_name} - السماح بالدخول")
+            print(f"✅ فحص التسجيل: يجب التحقق من تسجيل الزبون {customer_telegram_id}")
+            # التحقق من Telegram ID مباشرة
+            is_registered = is_customer_registered_for_store_by_telegram_id(customer_telegram_id, seller_id)
+            print(f"⚠️ نتيجة التحقق: is_registered={is_registered}")
+            
+            if not is_registered:
+                print(f"❌ الزبون {customer_telegram_id} غير مسجل في المتجر {store_name}")
+                
+                # عرض خيارات للزبون:
+                # 1. طلب إضافتك من البائع
+                # 2. إدخال اسمك لنسأل البائع إضافتك
+                markup = types.InlineKeyboardMarkup()
+                markup.add(types.InlineKeyboardButton("📞 التواصل مع البائع", url=f"https://t.me/{username}" if username else None))
+                markup.add(types.InlineKeyboardButton("✏️ إدخال اسمك طلباً من البائع", callback_data=f"request_access_{seller_id}"))
+                
+                bot.send_message(chat_id,
+                    f"🔒 **الدخول مقيد**\n\n"
+                    f"🏪 المتجر: {store_name}\n\n"
+                    f"⚠️ حسابك (Telegram ID: {customer_telegram_id}) غير مسجل في قائمة الزبائن.\n\n"
+                    f"📝 **الخيارات:**\n"
+                    f"1️⃣ التواصل مع البائع مباشرة\n"
+                    f"2️⃣ إدخال اسمك وسنبلغ البائع بطلبك\n\n"
+                    f"بعد التسجيل، يمكنك الوصول إلى جميع منتجات المتجر.",
+                    reply_markup=markup,
+                    parse_mode='Markdown')
+                return
+            else:
+                print(f"✅ الزبون {customer_telegram_id} مسجل في المتجر {store_name} - السماح بالدخول")
     else:
-        print(f"ℹ️ لا حاجة للتحقق: require_registration={require_registration}, customer_id={customer_telegram_id}, is_owner={customer_telegram_id == seller_telegram_id}")
+        print(f"ℹ️ المتجر مفتوح - لا حاجة للتحقق من التسجيل")
     
     categories = get_categories(seller_id)
     print(f"DEBUG: Categories found: {len(categories) if categories else 0}")
