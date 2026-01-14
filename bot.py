@@ -1450,45 +1450,42 @@ def download_image_from_cloud(filename):
         return False
 
 def add_credit_customer(seller_id, full_name, phone_number=None, customer_type='CreditCustomer', telegram_id=None):
-    """إضافة زبون آجل أو نقطة بيع"""
+    """إضافة زبون آجل أو نقطة بيع - فقط باستخدام الاسم"""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor_wrapper = CursorWrapper(cursor, is_postgres=IS_POSTGRES)
     
     try:
-        # إما رقم هاتف أو معرف تليجرام يجب أن يكون موجود
-        if (not phone_number or phone_number.strip() == '') and not telegram_id:
-            print("ERROR: No phone_number or telegram_id provided")
+        # التحقق من أن الاسم موجود
+        if not full_name or not full_name.strip():
+            print("ERROR: No full_name provided")
             conn.close()
             return None
         
-        # استخدام رقم الهاتف أو معرف التليجرام (أو مزيج منهما)
-        if phone_number and phone_number.strip():
-            contact_identifier = phone_number.strip()
-        else:
-            contact_identifier = f"TG_{telegram_id}"
+        full_name = full_name.strip()
         
+        # استخدام الاسم كمعرّف فريد (مع البائع)
         if IS_POSTGRES:
             cursor_wrapper.execute("""
                 INSERT INTO CreditCustomers (SellerID, FullName, PhoneNumber, CustomerType, TelegramID)
                 VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT DO NOTHING
+                ON CONFLICT (SellerID, FullName) DO NOTHING
                 RETURNING CustomerID
-            """, (seller_id, full_name, contact_identifier, customer_type, telegram_id))
+            """, (seller_id, full_name, phone_number, customer_type, telegram_id))
             result = cursor_wrapper.fetchone()
             customer_id = result[0] if result else None
         else:
             cursor_wrapper.execute("""
                 INSERT OR IGNORE INTO CreditCustomers (SellerID, FullName, PhoneNumber, CustomerType, TelegramID)
                 VALUES (?, ?, ?, ?, ?)
-            """, (seller_id, full_name, contact_identifier, customer_type, telegram_id))
+            """, (seller_id, full_name, phone_number, customer_type, telegram_id))
             customer_id = cursor.lastrowid
         
         if not customer_id or customer_id == 0:
             # محاولة العثور على الزبون الموجود (في حالة التضارب)
             cursor_wrapper.execute(
-                "SELECT CustomerID FROM CreditCustomers WHERE SellerID=? AND (PhoneNumber=? OR TelegramID=?)",
-                (seller_id, contact_identifier, telegram_id)
+                "SELECT CustomerID FROM CreditCustomers WHERE SellerID=? AND FullName=?",
+                (seller_id, full_name)
             )
             existing = cursor_wrapper.fetchone()
             if existing:
