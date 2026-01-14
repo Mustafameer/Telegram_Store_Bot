@@ -1464,38 +1464,55 @@ def add_credit_customer(seller_id, full_name, phone_number=None, customer_type='
         
         full_name = full_name.strip()
         
-        # استخدام الاسم كمعرّف فريد (مع البائع)
-        if IS_POSTGRES:
-            cursor_wrapper.execute("""
-                INSERT INTO CreditCustomers (SellerID, FullName, PhoneNumber, CustomerType, TelegramID)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT (SellerID, FullName) DO NOTHING
-                RETURNING CustomerID
-            """, (seller_id, full_name, phone_number, customer_type, telegram_id))
-            result = cursor_wrapper.fetchone()
-            customer_id = result[0] if result else None
-        else:
-            cursor_wrapper.execute("""
-                INSERT OR IGNORE INTO CreditCustomers (SellerID, FullName, PhoneNumber, CustomerType, TelegramID)
-                VALUES (?, ?, ?, ?, ?)
-            """, (seller_id, full_name, phone_number, customer_type, telegram_id))
-            customer_id = cursor.lastrowid
+        # تحقق أولاً إذا كان الاسم موجود بالفعل
+        cursor_wrapper.execute(
+            "SELECT CustomerID FROM CreditCustomers WHERE SellerID=? AND FullName=?",
+            (seller_id, full_name)
+        )
+        existing = cursor_wrapper.fetchone()
         
-        if not customer_id or customer_id == 0:
-            # محاولة العثور على الزبون الموجود (في حالة التضارب)
+        if existing:
+            print(f"Customer '{full_name}' already exists with ID: {existing[0]}")
+            conn.close()
+            return existing[0]
+        
+        # إضافة الزبون الجديد
+        try:
+            if IS_POSTGRES:
+                cursor_wrapper.execute("""
+                    INSERT INTO CreditCustomers (SellerID, FullName, PhoneNumber, CustomerType, TelegramID)
+                    VALUES (?, ?, ?, ?, ?)
+                    RETURNING CustomerID
+                """, (seller_id, full_name, phone_number, customer_type, telegram_id))
+                result = cursor_wrapper.fetchone()
+                customer_id = result[0] if result else None
+            else:
+                cursor_wrapper.execute("""
+                    INSERT INTO CreditCustomers (SellerID, FullName, PhoneNumber, CustomerType, TelegramID)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (seller_id, full_name, phone_number, customer_type, telegram_id))
+                customer_id = cursor.lastrowid
+            
+            conn.commit()
+            print(f"Successfully added customer '{full_name}' with ID: {customer_id}")
+            cursor.close()
+            conn.close()
+            return customer_id
+        except Exception as insert_error:
+            print(f"Insert error: {insert_error}")
+            conn.rollback()
+            # محاولة أخيرة: البحث عن الزبون
             cursor_wrapper.execute(
                 "SELECT CustomerID FROM CreditCustomers WHERE SellerID=? AND FullName=?",
                 (seller_id, full_name)
             )
             existing = cursor_wrapper.fetchone()
             if existing:
-                customer_id = existing[0]
-        
-        conn.commit()
-        cursor.close()
-        conn.close()
-        
-        return customer_id
+                print(f"Found existing customer after insert error: {existing[0]}")
+                conn.close()
+                return existing[0]
+            raise insert_error
+            
     except Exception as e:
         print(f"Error adding credit customer: {e}")
         import traceback
@@ -1504,7 +1521,6 @@ def add_credit_customer(seller_id, full_name, phone_number=None, customer_type='
             conn.rollback()
         except:
             pass
-        cursor.close()
         conn.close()
         return None
 
