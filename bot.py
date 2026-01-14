@@ -6187,8 +6187,13 @@ def manage_credit_customers_new(message):
                 customer_id, seller_id, full_name, phone, customer_type, created_at, max_credit, current_used, limit_active = customer[:9]
                 telegram_id_cust = None
             
-            # معلومات الزبون - فقط الاسم والحد الائتماني
+            # معلومات الزبون - الاسم والنوع والحد الائتماني
             text = f"👤 {full_name}\n"
+            
+            # عرض نوع الزبون
+            type_emoji = "🏪" if customer_type == "RetailPoint" else "👤"
+            type_name = "نقطة بيع" if customer_type == "RetailPoint" else "زبون آجل"
+            text += f"{type_emoji} {type_name}\n"
             
             if limit_active == 1 or limit_active == True:
                 percentage_used = (current_used / max_credit * 100) if max_credit > 0 else 0
@@ -6231,13 +6236,47 @@ def handle_add_credit_customer(call):
         return
     
     user_states[telegram_id] = {
-        "step": "add_customer_name",
+        "step": "select_customer_type",
         "seller_id": seller[0]
     }
     
+    # عرض خيارات نوع الزبون
+    markup = types.InlineKeyboardMarkup()
+    markup.row(
+        types.InlineKeyboardButton("👤 زبون آجل (مفرد)", callback_data="type_creditcustomer"),
+        types.InlineKeyboardButton("🏪 نقطة بيع (جملة)", callback_data="type_retailpoint")
+    )
+    markup.add(types.InlineKeyboardButton("❌ إلغاء", callback_data="back_to_credit_menu"))
+    
     bot.send_message(call.message.chat.id,
-                    "👤 إضافة زبون آجل جديد\n\n"
-                    "الخطوة 1️⃣: أدخل اسم الزبون")
+                    "👤 إضافة زبون جديد\n\n"
+                    "الخطوة 1️⃣: اختر نوع الزبون",
+                    reply_markup=markup)
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("type_"))
+def process_select_customer_type(call):
+    telegram_id = call.from_user.id
+    
+    if telegram_id not in user_states or user_states[telegram_id]["step"] != "select_customer_type":
+        bot.answer_callback_query(call.id, "⛔ جلسة غير صحيحة")
+        return
+    
+    if call.data == "type_creditcustomer":
+        user_states[telegram_id]["customer_type"] = "CreditCustomer"
+        type_name = "زبون آجل"
+    elif call.data == "type_retailpoint":
+        user_states[telegram_id]["customer_type"] = "RetailPoint"
+        type_name = "نقطة بيع"
+    else:
+        bot.answer_callback_query(call.id, "⛔ اختيار غير صحيح")
+        return
+    
+    user_states[telegram_id]["step"] = "add_customer_name"
+    
+    bot.send_message(call.message.chat.id,
+                    f"👤 إضافة {type_name}\n\n"
+                    f"الخطوة 2️⃣: أدخل اسم الزبون")
     bot.answer_callback_query(call.id)
 
 @bot.message_handler(func=lambda message: message.from_user.id in user_states and 
@@ -6257,15 +6296,18 @@ def process_add_customer_name(message):
         return
     
     seller_id = state["seller_id"]
+    customer_type = state.get("customer_type", "CreditCustomer")
+    type_display = "زبون آجل" if customer_type == "CreditCustomer" else "نقطة بيع"
     
     try:
-        # إضافة الزبون بدون أي بيانات إضافية - فقط الاسم
-        customer_id = add_credit_customer(seller_id, full_name, phone_number=None, customer_type='CreditCustomer', telegram_id=None)
+        # إضافة الزبون مع نوع الزبون
+        customer_id = add_credit_customer(seller_id, full_name, phone_number=None, customer_type=customer_type, telegram_id=None)
         
         # حتى لو كان customer_id = 0 أو قديم، سيكون نجاح
         bot.send_message(message.chat.id,
                         f"✅ **تم إضافة الزبون بنجاح!**\n\n"
-                        f"👤 الاسم: {full_name}\n\n"
+                        f"👤 الاسم: {full_name}\n"
+                        f"📦 النوع: {type_display}\n\n"
                         f"💡 يمكنك الآن تعيين حد ائتماني له")
         del user_states[telegram_id]
         manage_credit_customers_new(message)
