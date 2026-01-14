@@ -6300,7 +6300,7 @@ def process_add_customer_name(message):
     type_display = "زبون آجل" if customer_type == "CreditCustomer" else "نقطة بيع"
     
     try:
-        # إضافة الزبون مع نوع الزبون
+        # إضافة الزبون مع نوع الزبون وحفظ Telegram ID إذا وُجد
         customer_id = add_credit_customer(seller_id, full_name, phone_number=None, customer_type=customer_type, telegram_id=None)
         
         # حتى لو كان customer_id = 0 أو قديم، سيكون نجاح
@@ -6710,6 +6710,90 @@ def handle_confirm_delete_credit_customer(call):
         traceback.print_exc()
     finally:
         conn.close()
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("request_access_"))
+def handle_request_access(call):
+    """معالج طلب الوصول للمتجر المقفول - يطلب من الزبون إدخال اسمه"""
+    telegram_id = call.from_user.id
+    
+    try:
+        parts = call.data.split("_")
+        seller_id = int(parts[2])
+        
+        # حفظ حالة الطلب
+        user_states[telegram_id] = {
+            "step": "request_access_name",
+            "seller_id": seller_id,
+            "customer_telegram_id": telegram_id
+        }
+        
+        seller = get_seller_by_id(seller_id)
+        store_name = seller[3] if seller else "المتجر"
+        
+        bot.send_message(call.message.chat.id,
+                        f"👤 طلب الوصول - {store_name}\n\n"
+                        f"الخطوة 1️⃣: أدخل اسمك الكامل\n\n"
+                        f"سيتم إرسال طلبك إلى البائع للمراجعة",
+                        parse_mode='Markdown')
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        print(f"Error in handle_request_access: {e}")
+        bot.answer_callback_query(call.id, "❌ حدث خطأ")
+
+@bot.message_handler(func=lambda message: message.from_user.id in user_states and 
+                     user_states[message.from_user.id]["step"] == "request_access_name")
+def process_request_access_name(message):
+    """معالجة إدخال اسم الزبون في طلب الوصول"""
+    telegram_id = message.from_user.id
+    state = user_states[telegram_id]
+    
+    full_name = message.text.strip()
+    if not full_name:
+        bot.send_message(message.chat.id, "⚠️ الرجاء إدخال اسم صحيح!")
+        return
+    
+    seller_id = state["seller_id"]
+    customer_telegram_id = state["customer_telegram_id"]
+    
+    try:
+        # إضافة الزبون مع حفظ Telegram ID الخاص به
+        customer_id = add_credit_customer(
+            seller_id, 
+            full_name, 
+            phone_number=None, 
+            customer_type='CreditCustomer',  # افتراضي للطلبات
+            telegram_id=customer_telegram_id  # ⭐ حفظ Telegram ID
+        )
+        
+        if customer_id:
+            # إرسال إشعار للبائع
+            seller = get_seller_by_id(seller_id)
+            if seller:
+                seller_telegram_id = seller[1]
+                bot.send_message(seller_telegram_id,
+                                f"🔔 **طلب وصول جديد**\n\n"
+                                f"👤 الاسم: {full_name}\n"
+                                f"🆔 Telegram ID: {customer_telegram_id}\n\n"
+                                f"تم إضافة الزبون تلقائياً. يمكنه الآن الوصول للمتجر.",
+                                parse_mode='Markdown')
+            
+            # رسالة للزبون
+            bot.send_message(message.chat.id,
+                            f"✅ **تم إرسال طلبك بنجاح!**\n\n"
+                            f"👤 الاسم: {full_name}\n\n"
+                            f"🎉 تم إضافتك كزبون. يمكنك الآن الدخول للمتجر!\n\n"
+                            f"💡 جرب الآن: اختر المتجر من قائمة المتاجر",
+                            parse_mode='Markdown')
+        else:
+            bot.send_message(message.chat.id, "⚠️ فشل في معالجة الطلب. حاول لاحقاً")
+        
+        del user_states[telegram_id]
+    except Exception as e:
+        print(f"Error in process_request_access_name: {e}")
+        import traceback
+        traceback.print_exc()
+        bot.send_message(message.chat.id, f"❌ حدث خطأ: {str(e)}")
+        del user_states[telegram_id]
 
 @bot.callback_query_handler(func=lambda call: call.data == "record_payment")
 def handle_record_payment(call):
@@ -7587,18 +7671,23 @@ def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id, customer_tele
         
         if not is_registered:
             print(f"❌ الزبون {customer_telegram_id} غير مسجل في المتجر {store_name}")
+            
+            # عرض خيارات للزبون:
+            # 1. طلب إضافتك من البائع
+            # 2. إدخال اسمك لنسأل البائع إضافتك
             markup = types.InlineKeyboardMarkup()
             markup.add(types.InlineKeyboardButton("📞 التواصل مع البائع", url=f"https://t.me/{username}" if username else None))
+            markup.add(types.InlineKeyboardButton("✏️ إدخال اسمك طلباً من البائع", callback_data=f"request_access_{seller_id}"))
             
             bot.send_message(chat_id,
                 f"🔒 **الدخول مقيد**\n\n"
                 f"🏪 المتجر: {store_name}\n\n"
-                f"⚠️ حسابك (Telegram ID: {customer_telegram_id}) غير مسجل في قائمة الزبائن الآجلين.\n\n"
-                f"📝 **للحصول على الوصول:**\n"
-                f"• تواصل مع البائع لإضافتك كزبون آجل\n"
-                f"• أو اطلب من البائع إضافتك من خلال قائمة '🏪 إدارة الزبائن الآجلين'\n\n"
+                f"⚠️ حسابك (Telegram ID: {customer_telegram_id}) غير مسجل في قائمة الزبائن.\n\n"
+                f"📝 **الخيارات:**\n"
+                f"1️⃣ التواصل مع البائع مباشرة\n"
+                f"2️⃣ إدخال اسمك وسنبلغ البائع بطلبك\n\n"
                 f"بعد التسجيل، يمكنك الوصول إلى جميع منتجات المتجر.",
-                reply_markup=markup if username else None,
+                reply_markup=markup,
                 parse_mode='Markdown')
             return
         else:
