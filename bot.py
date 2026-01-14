@@ -6187,14 +6187,12 @@ def manage_credit_customers_new(message):
                 customer_id, seller_id, full_name, phone, customer_type, created_at, max_credit, current_used, limit_active = customer[:9]
                 telegram_id_cust = None
             
-            # معلومات الزبون - فقط الاسم الكامل (بدون Telegram ID)
+            # معلومات الزبون - فقط الاسم والحد الائتماني
             text = f"👤 {full_name}\n"
             
             if limit_active == 1 or limit_active == True:
                 percentage_used = (current_used / max_credit * 100) if max_credit > 0 else 0
-                text += f"💳 الحد: {max_credit:,.0f} دينار ({percentage_used:.1f}%)\n"
-            
-            text += f"📅 {created_at}"
+                text += f"💳 الحد: {max_credit:,.0f} دينار ({percentage_used:.1f}%)"
             
             # أزرار الزبون الثلاث في نفس السطر
             markup = types.InlineKeyboardMarkup()
