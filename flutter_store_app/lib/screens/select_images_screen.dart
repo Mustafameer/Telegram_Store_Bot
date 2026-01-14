@@ -156,9 +156,10 @@ class _SelectImagesScreenState extends State<SelectImagesScreen> {
                           children: [
                             Text(
                               widget.product.name,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 20,
                                 fontWeight: FontWeight.bold,
+                                color: Colors.blue[900], // أزرق غامق
                               ),
                             ),
                             const SizedBox(height: 8),

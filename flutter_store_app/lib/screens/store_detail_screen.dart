@@ -5,6 +5,7 @@ import 'dart:io';
 import 'dart:async'; // Added for StreamSubscription
 import '../models/database_models.dart';
 import '../services/sync_service.dart'; // Added for SyncService
+import '../services/exit_service.dart'; // Added for ExitService
 import 'tabs/products_tab.dart';
 import 'tabs/orders_tab.dart';
 import 'tabs/categories_tab.dart';
@@ -232,20 +233,18 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
 
   Future<void> _performSyncAndLogout() async {
     try {
-      print("🔄 Syncing before logout...");
+      print("🔄 Syncing before exit...");
       await SyncService.instance.syncNow();
-      print("✅ Sync completed, logging out...");
+      print("✅ Sync completed, exiting app...");
       if (mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (context) => const LoginScreen()),
-        );
+        // الخروج من التطبيق تماماً مع مزامنة السحابة
+        await ExitService.startExitFlow(context);
       }
     } catch (e) {
-      print("⚠️ Sync error (non-critical): $e");
+      print("⚠️ Sync error: $e");
       if (mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (context) => const LoginScreen()),
-        );
+        // حتى لو فشلت المزامنة، نخرج من التطبيق
+        await ExitService.startExitFlow(context);
       }
     }
   }

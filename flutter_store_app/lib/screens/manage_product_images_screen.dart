@@ -183,7 +183,12 @@ class _ManageProductImagesScreenState extends State<ManageProductImagesScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('إدارة صور: ${widget.product.name}'),
+        title: Text(
+          'إدارة صور: ${widget.product.name}',
+          style: TextStyle(
+            color: Colors.blue[900], // أزرق غامق
+          ),
+        ),
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())

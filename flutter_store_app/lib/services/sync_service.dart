@@ -145,7 +145,7 @@ class SyncService {
              remoteKey = 'orderitemid'; // Remote is orderitemid
           }
           
-          final result = await conn.execute(
+          await conn.execute(
             Sql.named('DELETE FROM $remoteTable WHERE $remoteKey = @id'), 
             parameters: {'id': remoteId}
           );
@@ -229,46 +229,96 @@ class SyncService {
 
 
   Future<void> _pushAllInventory(Connection conn, DatabaseHelper dbHelper) async {
-      // Sellers
-      await _pushTable(conn, dbHelper, 'Sellers', 'Sellers', 'sellerid', {
-        'SellerID': 'sellerid',
-        'TelegramID': 'telegramid',
-        'UserName': 'username',
-        'StoreName': 'storename',
-        'CreatedAt': 'createdat',
-        'Status': 'status',
-        'ImagePath': 'imagepath',
-        'RequireCustomerRegistration': 'requirecustomerregistration'
-      });
-      // Categories
-      await _pushTable(conn, dbHelper, 'Categories', 'Categories', 'categoryid', {
-        'CategoryID': 'categoryid',
-        'SellerID': 'sellerid',
-        'Name': 'name',
-        'OrderIndex': 'orderindex',
-        'ImagePath': 'imagepath'
-      });
-      // Products
-      await _pushTable(conn, dbHelper, 'Products', 'Products', 'productid', {
-        'ProductID': 'productid',
-        'SellerID': 'sellerid',
-        'CategoryID': 'categoryid',
-        'Name': 'name',
-        'Description': 'description',
-        'Price': 'price',
-        'WholesalePrice': 'wholesaleprice',
-        'Quantity': 'quantity',
-        'ImagePath': 'imagepath',
-        'Status': 'status'
-      });
-      // ProductImages
-      print("🖼️ Starting ProductImages sync...");
-      await _pushTable(conn, dbHelper, 'ProductImages', 'ProductImages', 'imageid', {
-        'ImageID': 'imageid',
-        'ProductID': 'productid',
-        'ImagePath': 'imagepath',
-        'ImageOrder': 'imageorder'
-      });
+      // Get the current seller's ID from local database
+      final db = await dbHelper.database;
+      final sellers = await db.query('Sellers', limit: 1);
+      
+      if (sellers.isEmpty) {
+        print("⚠️ No seller found in local database - skipping inventory sync for sellers");
+        return;
+      }
+      
+      final currentSellerID = sellers.first['SellerID'] as int;
+      print("🔹 Syncing inventory for SellerID: $currentSellerID");
+      
+      // Sellers - Only push current seller
+      await _pushTable(
+        conn, 
+        dbHelper, 
+        'Sellers', 
+        'Sellers', 
+        'sellerid',
+        {
+          'SellerID': 'sellerid',
+          'TelegramID': 'telegramid',
+          'UserName': 'username',
+          'StoreName': 'storename',
+          'CreatedAt': 'createdat',
+          'Status': 'status',
+          'ImagePath': 'imagepath',
+          'RequireCustomerRegistration': 'requirecustomerregistration'
+        },
+        whereClause: 'SellerID = ?',
+        whereArgs: [currentSellerID]
+      );
+      
+      // Categories - Only for current seller
+      await _pushTable(
+        conn, 
+        dbHelper, 
+        'Categories', 
+        'Categories', 
+        'categoryid',
+        {
+          'CategoryID': 'categoryid',
+          'SellerID': 'sellerid',
+          'Name': 'name',
+          'OrderIndex': 'orderindex',
+          'ImagePath': 'imagepath'
+        },
+        whereClause: 'SellerID = ?',
+        whereArgs: [currentSellerID]
+      );
+      
+      // Products - Only for current seller
+      await _pushTable(
+        conn, 
+        dbHelper, 
+        'Products', 
+        'Products', 
+        'productid',
+        {
+          'ProductID': 'productid',
+          'SellerID': 'sellerid',
+          'CategoryID': 'categoryid',
+          'Name': 'name',
+          'Description': 'description',
+          'Price': 'price',
+          'WholesalePrice': 'wholesaleprice',
+          'Quantity': 'quantity',
+          'ImagePath': 'imagepath',
+          'Status': 'status'
+        },
+        whereClause: 'SellerID = ?',
+        whereArgs: [currentSellerID]
+      );
+      
+      // ProductImages - For products of current seller
+      print("🖼️ Starting ProductImages sync for SellerID: $currentSellerID...");
+      await _pushTableWithJoin(
+        conn, 
+        dbHelper, 
+        'ProductImages', 
+        'ProductImages', 
+        'imageid',
+        {
+          'ImageID': 'imageid',
+          'ProductID': 'productid',
+          'ImagePath': 'imagepath',
+          'ImageOrder': 'imageorder'
+        },
+        currentSellerID
+      );
       print("✅ ProductImages sync completed");
   }
 
@@ -629,12 +679,17 @@ class SyncService {
       String localTableName, 
       String pgTableName,
       String pgPrimaryKey,
-      Map<String, String> colMap // key: localCol, value: pgCol
+      Map<String, String> colMap, // key: localCol, value: pgCol
+      {String? whereClause, List<Object?>? whereArgs}
   ) async {
     try {
       print("⬆️ Pushing $localTableName...");
       final db = await dbHelper.database;
-      final localData = await db.query(localTableName);
+      final localData = await db.query(
+        localTableName,
+        where: whereClause,
+        whereArgs: whereArgs
+      );
       
       print("📊 Found ${localData.length} rows in $localTableName");
       
@@ -680,6 +735,76 @@ class SyncService {
            print("🛠️ DEBUG KEYS: $keys");
            print("🛠️ DEBUG VALUES: $pgMap");
         }
+        
+        try {
+          await conn.execute(Sql.named(sql), parameters: pgMap);
+        } catch (e) {
+          print("  ❌ Error pushing row from $localTableName: $e");
+          print("  📋 Row data: $pgMap");
+          rethrow;
+        }
+      }
+      print("  ✅ Pushed ${localData.length} rows from $localTableName");
+      
+    } catch (e) {
+      print("  ⚠️ Failed to push table $localTableName: $e");
+      _statusController.add("خطأ في رفع ($localTableName): $e");
+    }
+  }
+
+  Future<void> _pushTableWithJoin(
+      Connection conn, 
+      DatabaseHelper dbHelper, 
+      String localTableName, 
+      String pgTableName,
+      String pgPrimaryKey,
+      Map<String, String> colMap,
+      int currentSellerID
+  ) async {
+    try {
+      print("⬆️ Pushing $localTableName for SellerID: $currentSellerID...");
+      final db = await dbHelper.database;
+      
+      // Join with Products table to filter by SellerID
+      final localData = await db.rawQuery(
+        'SELECT pi.* FROM $localTableName pi '
+        'INNER JOIN Products p ON pi.ProductID = p.ProductID '
+        'WHERE p.SellerID = ?',
+        [currentSellerID]
+      );
+      
+      print("📊 Found ${localData.length} rows in $localTableName for SellerID: $currentSellerID");
+      
+      if (localData.isEmpty) {
+        print("⚠️ No data to push for $localTableName");
+        return;
+      }
+      
+      for (var row in localData) {
+        final pgMap = <String, dynamic>{};
+        
+        // Map Columns
+        colMap.forEach((localKey, pgKey) {
+            if (row.containsKey(localKey)) {
+              var val = row[localKey];
+              // Path Fix: Windows -> Linux
+              if (localKey == 'ImagePath' && val != null && val is String) {
+                  final fileName = p.basename(val);
+                  val = '/app/data/Images/$fileName'; 
+              }
+              pgMap[pgKey] = val;
+            }
+        });
+
+        // Build Upsert Query
+        final keys = pgMap.keys.toList();
+        final values = keys.map((k) => '@$k').toList();
+        final quotedKeys = keys.map((k) => '"$k"').toList();
+        final updateSet = keys.map((k) => '"$k" = EXCLUDED."$k"').join(', ');
+        final quotedPK = '"$pgPrimaryKey"'; 
+        
+        final sql = 'INSERT INTO $pgTableName (${quotedKeys.join(', ')}) VALUES (${values.join(', ')}) '
+                    'ON CONFLICT ($quotedPK) DO UPDATE SET $updateSet';
         
         try {
           await conn.execute(Sql.named(sql), parameters: pgMap);

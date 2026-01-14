@@ -1,5 +1,3 @@
-
-
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -12,7 +10,9 @@ import '../manage_product_images_screen.dart';
 // دالة لتنسيق المبالغ مع فاصلة الآلاف وإزالة الكسور
 String formatPrice(dynamic price) {
   if (price == null) return '0';
-  final numValue = price is num ? price : double.tryParse(price.toString()) ?? 0;
+  final numValue = price is num
+      ? price
+      : double.tryParse(price.toString()) ?? 0;
   final rounded = numValue.round();
   final formatter = NumberFormat('#,###', 'ar');
   return formatter.format(rounded);
@@ -26,8 +26,8 @@ class ProductsTab extends StatefulWidget {
   final bool requireCustomerRegistration; // إضافة هذا الحقل
 
   const ProductsTab({
-    super.key, 
-    required this.sellerId, 
+    super.key,
+    required this.sellerId,
     this.isEditable = false,
     this.onCartChanged,
     this.currentUserId,
@@ -55,10 +55,16 @@ class _ProductsTabState extends State<ProductsTab> {
       _isLoading = true;
       _errorMessage = null;
     });
-    
+
     try {
-      final cats = await DatabaseHelper.instance.getCategories(widget.sellerId, forceRefresh: force);
-      final prods = await DatabaseHelper.instance.getProducts(widget.sellerId, forceRefresh: force);
+      final cats = await DatabaseHelper.instance.getCategories(
+        widget.sellerId,
+        forceRefresh: force,
+      );
+      final prods = await DatabaseHelper.instance.getProducts(
+        widget.sellerId,
+        forceRefresh: force,
+      );
       if (mounted) {
         setState(() {
           _categories = cats;
@@ -79,12 +85,13 @@ class _ProductsTabState extends State<ProductsTab> {
   Future<void> _showProductForm({Product? product}) async {
     // الحصول على معلومات المتجر
     final seller = await DatabaseHelper.instance.getSellerById(widget.sellerId);
-    final requireCustomerRegistration = seller?.requireCustomerRegistration ?? false;
-    
+    final requireCustomerRegistration =
+        seller?.requireCustomerRegistration ?? false;
+
     final result = await showDialog(
       context: context,
       builder: (context) => ProductFormDialog(
-        sellerId: widget.sellerId, 
+        sellerId: widget.sellerId,
         product: product,
         requireCustomerRegistration: requireCustomerRegistration,
       ),
@@ -101,8 +108,14 @@ class _ProductsTabState extends State<ProductsTab> {
         title: const Text('تأكيد الحذف'),
         content: const Text('هل أنت متأكد من حذف هذا المنتج؟'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('حذف', style: TextStyle(color: Colors.red))),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('إلغاء'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('حذف', style: TextStyle(color: Colors.red)),
+          ),
         ],
       ),
     );
@@ -127,17 +140,18 @@ class _ProductsTabState extends State<ProductsTab> {
   Future<void> _selectImages(Product product) async {
     // التحقق من تسجيل الزبون أولاً
     if (widget.currentUserId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('يجب تسجيل الدخول أولاً')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('يجب تسجيل الدخول أولاً')));
       return;
     }
 
     // التحقق من تسجيل الزبون باستخدام Telegram ID
-    final isRegistered = await DatabaseHelper.instance.isCustomerRegisteredForStoreByTelegramId(
-      widget.sellerId,
-      widget.currentUserId!,
-    );
+    final isRegistered = await DatabaseHelper.instance
+        .isCustomerRegisteredForStoreByTelegramId(
+          widget.sellerId,
+          widget.currentUserId!,
+        );
 
     if (!isRegistered) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -173,27 +187,43 @@ class _ProductsTabState extends State<ProductsTab> {
             builder: (context, setSt) => Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                IconButton(onPressed: () => setSt(() => q > 1 ? q-- : q), icon: const Icon(Icons.remove)),
+                IconButton(
+                  onPressed: () => setSt(() => q > 1 ? q-- : q),
+                  icon: const Icon(Icons.remove),
+                ),
                 Text('$q', style: const TextStyle(fontSize: 20)),
-                IconButton(onPressed: () => setSt(() => q < product.quantity ? q++ : q), icon: const Icon(Icons.add)),
+                IconButton(
+                  onPressed: () => setSt(() => q < product.quantity ? q++ : q),
+                  icon: const Icon(Icons.add),
+                ),
               ],
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('إلغاء'),
+            ),
             FilledButton(
               onPressed: () => Navigator.pop(context, q),
               child: const Text('إضافة'),
             ),
           ],
         );
-      }
+      },
     );
 
     if (qty != null && qty > 0) {
-      await DatabaseHelper.instance.addToCart(currentUserId, product.productId, qty, product.price);
+      await DatabaseHelper.instance.addToCart(
+        currentUserId,
+        product.productId,
+        qty,
+        product.price,
+      );
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تمت الإضافة للسلة')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('تمت الإضافة للسلة')));
         widget.onCartChanged?.call();
       }
     }
@@ -202,31 +232,35 @@ class _ProductsTabState extends State<ProductsTab> {
   @override
   Widget build(BuildContext context) {
     if (_isLoading) return const Center(child: CircularProgressIndicator());
-    if (_errorMessage != null) return Center(child: Text('Error: $_errorMessage'));
+    if (_errorMessage != null)
+      return Center(child: Text('Error: $_errorMessage'));
     if (_products.isEmpty) {
-        return Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Text('لا يوجد منتجات'),
-              if (widget.isEditable) ...[
-                 const SizedBox(height: 16),
-                 Row(
-                   mainAxisAlignment: MainAxisAlignment.center,
-                   children: [
-                     ElevatedButton(onPressed: () => _refreshData(force: true), child: const Text('تحديث')),
-                     const SizedBox(width: 16),
-                     FilledButton.icon(
-                        onPressed: () => _showProductForm(),
-                        icon: const Icon(Icons.add),
-                        label: const Text('إضافة منتج'),
-                     ),
-                   ],
-                 ),
-              ]
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Text('لا يوجد منتجات'),
+            if (widget.isEditable) ...[
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  ElevatedButton(
+                    onPressed: () => _refreshData(force: true),
+                    child: const Text('تحديث'),
+                  ),
+                  const SizedBox(width: 16),
+                  FilledButton.icon(
+                    onPressed: () => _showProductForm(),
+                    icon: const Icon(Icons.add),
+                    label: const Text('إضافة منتج'),
+                  ),
+                ],
+              ),
             ],
-          )
-        );
+          ],
+        ),
+      );
     }
 
     // Group Products
@@ -247,128 +281,160 @@ class _ProductsTabState extends State<ProductsTab> {
         onRefresh: () => _refreshData(force: true),
         child: CustomScrollView(
           slivers: [
-          SliverPadding(
-            padding: EdgeInsets.all(MediaQuery.of(context).size.width < 600 ? 8 : 16),
-            sliver: SliverMainAxisGroup(
-              slivers: [
-                ..._categories.map((cat) {
-            final productsInCat = grouped[cat.categoryId] ?? [];
-            if (productsInCat.isEmpty) return const SliverToBoxAdapter(child: SizedBox.shrink());
+            SliverPadding(
+              padding: EdgeInsets.all(
+                MediaQuery.of(context).size.width < 600 ? 8 : 16,
+              ),
+              sliver: SliverMainAxisGroup(
+                slivers: [
+                  ..._categories.map((cat) {
+                    final productsInCat = grouped[cat.categoryId] ?? [];
+                    if (productsInCat.isEmpty)
+                      return const SliverToBoxAdapter(child: SizedBox.shrink());
 
-            return SliverMainAxisGroup(
-              slivers: [
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 16.0),
-                    child: Row(
-                      children: [
-                        Container(width: 4, height: 24, color: Theme.of(context).primaryColor),
-                        const SizedBox(width: 8),
-                        Text(
-                          cat.name,
-                          style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
+                    return SliverMainAxisGroup(
+                      slivers: [
+                        SliverToBoxAdapter(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 16.0),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 4,
+                                  height: 24,
+                                  color: Theme.of(context).primaryColor,
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  cat.name,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .headlineSmall
+                                      ?.copyWith(fontWeight: FontWeight.bold),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        SliverGrid(
+                          delegate: SliverChildBuilderDelegate((
+                            context,
+                            index,
+                          ) {
+                            final product = productsInCat[index];
+                            return _buildProductCard(product);
+                          }, childCount: productsInCat.length),
+                          gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                            maxCrossAxisExtent:
+                                MediaQuery.of(context).size.width < 600
+                                ? (MediaQuery.of(context).size.width - 32) /
+                                      2 // Mobile: 2 columns مع padding
+                                : 250, // Desktop: fixed size
+                            childAspectRatio: () {
+                              // للمشترين في المتاجر المقفولة: استخدام نسبة مربع (1.0) لبطاقة 4.97 × 4.97
+                              // لصاحب المتجر أو المتاجر المفتوحة: استخدام الأبعاد الأصلية
+                              final isRestrictedForBuyer =
+                                  !widget.isEditable &&
+                                  widget.requireCustomerRegistration;
+
+                              if (isRestrictedForBuyer) {
+                                // للمتاجر المقفولة: نسبة مربع تماماً (1.0)
+                                return 1.0;
+                              } else {
+                                // الأبعاد للمتاجر المفتوحة أو لصاحب المتجر (زيادة النسبة لتجنب overflow)
+                                return MediaQuery.of(context).size.width < 600
+                                    ? 0.58
+                                    : 0.62;
+                              }
+                            }(),
+                            crossAxisSpacing:
+                                MediaQuery.of(context).size.width < 600
+                                ? 12
+                                : 16,
+                            mainAxisSpacing:
+                                MediaQuery.of(context).size.width < 600
+                                ? 12
+                                : 16,
+                          ),
                         ),
                       ],
+                    );
+                  }),
+                  if (uncategorized.isNotEmpty) ...[
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 16.0),
+                        child: Row(
+                          children: [
+                            Container(width: 4, height: 24, color: Colors.grey),
+                            const SizedBox(width: 8),
+                            Text(
+                              'غير مصنف',
+                              style: Theme.of(context).textTheme.headlineSmall
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.grey[700],
+                                  ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-                SliverGrid(
-                  delegate: SliverChildBuilderDelegate(
-                    (context, index) {
-                      final product = productsInCat[index];
-                      return _buildProductCard(product);
-                    },
-                    childCount: productsInCat.length,
-                  ),
-                  gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-                    maxCrossAxisExtent: MediaQuery.of(context).size.width < 600 
-                        ? (MediaQuery.of(context).size.width - 32) / 2  // Mobile: 2 columns مع padding
-                        : 250,  // Desktop: fixed size
-                    childAspectRatio: () {
-                      // للمشترين في المتاجر المقفولة: استخدام نسبة مربع (1.0) لبطاقة 4.97 × 4.97
-                      // لصاحب المتجر أو المتاجر المفتوحة: استخدام الأبعاد الأصلية
-                      final isRestrictedForBuyer = !widget.isEditable && widget.requireCustomerRegistration;
-                      
-                      if (isRestrictedForBuyer) {
-                        // للمتاجر المقفولة: نسبة مربع تماماً (1.0)
-                        return 1.0;
-                  } else {
-                    // الأبعاد للمتاجر المفتوحة أو لصاحب المتجر (زيادة النسبة لتجنب overflow)
-                    return MediaQuery.of(context).size.width < 600 ? 0.58 : 0.62;
-                  }
-                    }(),
-                    crossAxisSpacing: MediaQuery.of(context).size.width < 600 ? 12 : 16,
-                    mainAxisSpacing: MediaQuery.of(context).size.width < 600 ? 12 : 16,
-                  ),
-                ),
-              ],
-            );
-          }),
-          if (uncategorized.isNotEmpty) ...[
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 16.0),
-                child: Row(
-                  children: [
-                    Container(width: 4, height: 24, color: Colors.grey),
-                    const SizedBox(width: 8),
-                    Text(
-                      'غير مصنف',
-                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold, color: Colors.grey[700]),
+                    SliverGrid(
+                      delegate: SliverChildBuilderDelegate((context, index) {
+                        final product = uncategorized[index];
+                        return _buildProductCard(product);
+                      }, childCount: uncategorized.length),
+                      gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                        maxCrossAxisExtent:
+                            MediaQuery.of(context).size.width < 600
+                            ? (MediaQuery.of(context).size.width - 32) /
+                                  2 // Mobile: 2 columns مع padding
+                            : 350, // Desktop: increased size for better display
+                        childAspectRatio: () {
+                          // للمشترين في المتاجر المقفولة: نسبة مستطيلة (عرض × 75% ارتفاع)
+                          // لصاحب المتجر أو المتاجر المفتوحة: استخدام الأبعاد الأصلية
+                          final isRestrictedForBuyer =
+                              !widget.isEditable &&
+                              widget.requireCustomerRegistration;
+
+                          if (isRestrictedForBuyer) {
+                            // للمتاجر المقفولة: نسبة مستطيلة (1.5 - عرض أكثر من الارتفاع)
+                            return 1.5;
+                          } else {
+                            // الأبعاد للمتاجر المفتوحة أو لصاحب المتجر (زيادة النسبة لتجنب overflow)
+                            return MediaQuery.of(context).size.width < 600
+                                ? 0.58
+                                : 0.62;
+                          }
+                        }(),
+                        crossAxisSpacing:
+                            MediaQuery.of(context).size.width < 600 ? 12 : 16,
+                        mainAxisSpacing: MediaQuery.of(context).size.width < 600
+                            ? 12
+                            : 16,
+                      ),
                     ),
                   ],
-                ),
+                ],
               ),
             ),
-            SliverGrid(
-              delegate: SliverChildBuilderDelegate(
-                (context, index) {
-                  final product = uncategorized[index];
-                  return _buildProductCard(product);
-                },
-                childCount: uncategorized.length,
-              ),
-              gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-                maxCrossAxisExtent: MediaQuery.of(context).size.width < 600 
-                    ? (MediaQuery.of(context).size.width - 32) / 2  // Mobile: 2 columns مع padding
-                    : 250,  // Desktop: fixed size
-                childAspectRatio: () {
-                  // للمشترين في المتاجر المقفولة: استخدام نسبة مربع (1.0) لبطاقة 4.97 × 4.97
-                  // لصاحب المتجر أو المتاجر المفتوحة: استخدام الأبعاد الأصلية
-                  final isRestrictedForBuyer = !widget.isEditable && widget.requireCustomerRegistration;
-                  
-                  if (isRestrictedForBuyer) {
-                    // للمتاجر المقفولة: نسبة مربع تماماً (1.0)
-                    return 1.0;
-                  } else {
-                    // الأبعاد للمتاجر المفتوحة أو لصاحب المتجر (زيادة النسبة لتجنب overflow)
-                    return MediaQuery.of(context).size.width < 600 ? 0.58 : 0.62;
-                  }
-                }(),
-                crossAxisSpacing: MediaQuery.of(context).size.width < 600 ? 12 : 16,
-                mainAxisSpacing: MediaQuery.of(context).size.width < 600 ? 12 : 16,
-              ),
-            ),
-          ]
-              ],
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
-      ),
-      floatingActionButton: widget.isEditable 
-        ? FloatingActionButton(
-          onPressed: () => _showProductForm(),
-          child: const Icon(Icons.add),
-        )
-        : null,
+      floatingActionButton: widget.isEditable
+          ? FloatingActionButton(
+              onPressed: () => _showProductForm(),
+              child: const Icon(Icons.add),
+            )
+          : null,
     );
   }
 
   Widget _buildProductCard(Product product) {
     // للمتاجر المقفولة: عرض بدون صور مع زر خاص لاختيار الصور
     final bool isRestrictedStore = widget.requireCustomerRegistration && !widget.isEditable;
-    
+
     return Card(
       clipBehavior: Clip.antiAlias,
       elevation: 2,
@@ -390,7 +456,8 @@ class _ProductsTabState extends State<ProductsTab> {
                     topRight: Radius.circular(12),
                   ),
                 ),
-                child: product.imagePath != null && File(product.imagePath!).existsSync()
+                child: product.imagePath != null &&
+                        File(product.imagePath!).existsSync()
                     ? ClipRRect(
                         borderRadius: const BorderRadius.only(
                           topLeft: Radius.circular(12),
@@ -407,9 +474,19 @@ class _ProductsTabState extends State<ProductsTab> {
                               child: const Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  Icon(Icons.broken_image, size: 40, color: Colors.grey),
+                                  Icon(
+                                    Icons.broken_image,
+                                    size: 40,
+                                    color: Colors.grey,
+                                  ),
                                   SizedBox(height: 8),
-                                  Text('خطأ في الصورة', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                                  Text(
+                                    'خطأ في الصورة',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey,
+                                    ),
+                                  ),
                                 ],
                               ),
                             );
@@ -427,9 +504,19 @@ class _ProductsTabState extends State<ProductsTab> {
                         child: const Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(Icons.image, size: 50, color: Colors.grey),
+                            Icon(
+                              Icons.image,
+                              size: 50,
+                              color: Colors.grey,
+                            ),
                             SizedBox(height: 8),
-                            Text('لا توجد صورة', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                            Text(
+                              'لا توجد صورة',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey,
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -438,7 +525,9 @@ class _ProductsTabState extends State<ProductsTab> {
           Container(
             color: Colors.white,
             child: Padding(
-              padding: EdgeInsets.all(MediaQuery.of(context).size.width < 600 ? 10.0 : 12.0),
+              padding: EdgeInsets.all(
+                MediaQuery.of(context).size.width < 600 ? 10.0 : 12.0,
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
@@ -446,8 +535,10 @@ class _ProductsTabState extends State<ProductsTab> {
                   Text(
                     product.name,
                     style: TextStyle(
-                      fontWeight: FontWeight.bold, 
-                      fontSize: MediaQuery.of(context).size.width < 600 ? 13 : 16
+                      fontWeight: FontWeight.bold,
+                      fontSize: MediaQuery.of(context).size.width < 600
+                          ? 13
+                          : 16,
                     ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
@@ -460,16 +551,20 @@ class _ProductsTabState extends State<ProductsTab> {
                       Text(
                         '${formatPrice(product.price)} د.ع',
                         style: TextStyle(
-                          color: Colors.blue, 
+                          color: Colors.blue,
                           fontWeight: FontWeight.bold,
-                          fontSize: MediaQuery.of(context).size.width < 600 ? 11 : 14
+                          fontSize: MediaQuery.of(context).size.width < 600
+                              ? 11
+                              : 14,
                         ),
                       ),
                       Text(
                         'الكمية: ${product.quantity}',
                         style: TextStyle(
-                          fontSize: MediaQuery.of(context).size.width < 600 ? 10 : 12, 
-                          color: Colors.grey[600]
+                          fontSize: MediaQuery.of(context).size.width < 600
+                              ? 10
+                              : 12,
+                          color: Colors.grey[600],
                         ),
                       ),
                     ],
@@ -479,9 +574,11 @@ class _ProductsTabState extends State<ProductsTab> {
                     Text(
                       'جملة: ${formatPrice(product.wholesalePrice)} د.ع',
                       style: TextStyle(
-                        fontSize: MediaQuery.of(context).size.width < 600 ? 10 : 12, 
-                        color: Colors.green, 
-                        fontWeight: FontWeight.bold
+                        fontSize: MediaQuery.of(context).size.width < 600
+                            ? 10
+                            : 12,
+                        color: Colors.green,
+                        fontWeight: FontWeight.bold,
                       ),
                       overflow: TextOverflow.ellipsis,
                       maxLines: 1,
@@ -507,21 +604,35 @@ class _ProductsTabState extends State<ProductsTab> {
                                       });
                                     }
                                   },
-                                  icon: const Icon(Icons.remove_circle_outline),
+                                  icon: const Icon(
+                                    Icons.remove_circle_outline,
+                                  ),
                                   color: Colors.red,
-                                  iconSize: MediaQuery.of(context).size.width < 600 ? 24 : 28,
+                                  iconSize: MediaQuery.of(context).size.width <
+                                          600
+                                      ? 24
+                                      : 28,
                                 ),
                                 Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 8,
+                                  ),
                                   decoration: BoxDecoration(
                                     color: Colors.grey[50],
                                     borderRadius: BorderRadius.circular(8),
-                                    border: Border.all(color: Colors.grey[300]!),
+                                    border: Border.all(
+                                      color: Colors.grey[300]!,
+                                    ),
                                   ),
                                   child: Text(
                                     '$selectedQuantity',
                                     style: TextStyle(
-                                      fontSize: MediaQuery.of(context).size.width < 600 ? 16 : 18,
+                                      fontSize:
+                                          MediaQuery.of(context).size.width <
+                                                  600
+                                              ? 16
+                                              : 18,
                                       fontWeight: FontWeight.bold,
                                     ),
                                   ),
@@ -534,9 +645,14 @@ class _ProductsTabState extends State<ProductsTab> {
                                       });
                                     }
                                   },
-                                  icon: const Icon(Icons.add_circle_outline),
+                                  icon: const Icon(
+                                    Icons.add_circle_outline,
+                                  ),
                                   color: Colors.green,
-                                  iconSize: MediaQuery.of(context).size.width < 600 ? 24 : 28,
+                                  iconSize: MediaQuery.of(context).size.width <
+                                          600
+                                      ? 24
+                                      : 28,
                                 ),
                               ],
                             ),
@@ -545,20 +661,31 @@ class _ProductsTabState extends State<ProductsTab> {
                             SizedBox(
                               width: double.infinity,
                               child: FilledButton.icon(
-                                onPressed: () => _addToCartRestricted(product, selectedQuantity),
+                                onPressed: () => _addToCartRestricted(
+                                  product,
+                                  selectedQuantity,
+                                ),
                                 icon: Icon(
                                   Icons.add_shopping_cart,
-                                  size: MediaQuery.of(context).size.width < 600 ? 16 : 18,
+                                  size: MediaQuery.of(context).size.width < 600
+                                      ? 16
+                                      : 18,
                                 ),
                                 label: Text(
                                   'أضف للسلة',
                                   style: TextStyle(
-                                    fontSize: MediaQuery.of(context).size.width < 600 ? 14 : 16,
+                                    fontSize:
+                                        MediaQuery.of(context).size.width < 600
+                                            ? 14
+                                            : 16,
                                   ),
                                 ),
                                 style: FilledButton.styleFrom(
                                   padding: EdgeInsets.symmetric(
-                                    vertical: MediaQuery.of(context).size.width < 600 ? 10 : 12,
+                                    vertical:
+                                        MediaQuery.of(context).size.width < 600
+                                            ? 10
+                                            : 12,
                                   ),
                                 ),
                               ),
@@ -578,19 +705,31 @@ class _ProductsTabState extends State<ProductsTab> {
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
                   IconButton(
-                    icon: const Icon(Icons.edit, size: 20, color: Colors.blue),
+                    icon: const Icon(
+                      Icons.edit,
+                      size: 20,
+                      color: Colors.blue,
+                    ),
                     onPressed: () => _showProductForm(product: product),
                     tooltip: 'تعديل',
                   ),
                   // إظهار زر إدارة الصور فقط في المتاجر المقفولة
                   if (widget.requireCustomerRegistration)
                     IconButton(
-                      icon: const Icon(Icons.photo_library, size: 20, color: Colors.green),
+                      icon: const Icon(
+                        Icons.photo_library,
+                        size: 20,
+                        color: Colors.green,
+                      ),
                       onPressed: () => _manageProductImages(product),
                       tooltip: 'إدارة الصور المتعددة',
                     ),
                   IconButton(
-                    icon: const Icon(Icons.delete, size: 20, color: Colors.red),
+                    icon: const Icon(
+                      Icons.delete,
+                      size: 20,
+                      color: Colors.red,
+                    ),
                     onPressed: () => _deleteProduct(product.productId),
                     tooltip: 'حذف',
                   ),
@@ -599,28 +738,36 @@ class _ProductsTabState extends State<ProductsTab> {
             )
           else if (!isRestrictedStore)
             Padding(
-              padding: EdgeInsets.all(MediaQuery.of(context).size.width < 600 ? 4.0 : 8.0),
+              padding: EdgeInsets.all(
+                MediaQuery.of(context).size.width < 600 ? 4.0 : 8.0,
+              ),
               child: FilledButton.icon(
                 onPressed: () => _addToCart(product),
                 icon: Icon(
-                  Icons.add_shopping_cart, 
-                  size: MediaQuery.of(context).size.width < 600 ? 14 : 16
+                  Icons.add_shopping_cart,
+                  size: MediaQuery.of(context).size.width < 600 ? 14 : 16,
                 ),
                 label: Text(
                   'أضف للسلة',
                   style: TextStyle(
-                    fontSize: MediaQuery.of(context).size.width < 600 ? 12 : 14
+                    fontSize: MediaQuery.of(context).size.width < 600
+                        ? 12
+                        : 14,
                   ),
                 ),
                 style: FilledButton.styleFrom(
                   visualDensity: VisualDensity.compact,
                   padding: EdgeInsets.symmetric(
-                    horizontal: MediaQuery.of(context).size.width < 600 ? 8 : 16,
-                    vertical: MediaQuery.of(context).size.width < 600 ? 4 : 8,
+                    horizontal: MediaQuery.of(context).size.width < 600
+                        ? 8
+                        : 16,
+                    vertical: MediaQuery.of(context).size.width < 600
+                        ? 4
+                        : 8,
                   ),
                 ),
               ),
-            )
+            ),
         ],
       ),
     );
@@ -630,7 +777,7 @@ class _ProductsTabState extends State<ProductsTab> {
     return StatefulBuilder(
       builder: (context, setState) {
         int selectedQuantity = 1;
-        
+
         return Container(
           color: Colors.white,
           padding: EdgeInsets.only(
@@ -639,15 +786,23 @@ class _ProductsTabState extends State<ProductsTab> {
             top: MediaQuery.of(context).size.width < 600 ? 8.0 : 12.0,
             bottom: MediaQuery.of(context).size.width < 600 ? 8.0 : 12.0,
           ),
-          child: _buildRestrictedStoreCartControlsContent(product, selectedQuantity, setState),
+          child: _buildRestrictedStoreCartControlsContent(
+            product,
+            selectedQuantity,
+            setState,
+          ),
         );
       },
     );
   }
 
-  Widget _buildRestrictedStoreCartControlsContent(Product product, [int? initialQuantity, Function? setState]) {
+  Widget _buildRestrictedStoreCartControlsContent(
+    Product product, [
+    int? initialQuantity,
+    Function? setState,
+  ]) {
     int selectedQuantity = initialQuantity ?? 1;
-    
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -725,20 +880,21 @@ class _ProductsTabState extends State<ProductsTab> {
 
   Future<void> _addToCartRestricted(Product product, int quantity) async {
     final currentUserId = widget.currentUserId ?? 1041977029;
-    
+
     // التحقق من تسجيل الدخول
     if (currentUserId == 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('يجب تسجيل الدخول أولاً')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('يجب تسجيل الدخول أولاً')));
       return;
     }
 
     // التحقق من تسجيل الزبون باستخدام Telegram ID
-    final isRegistered = await DatabaseHelper.instance.isCustomerRegisteredForStoreByTelegramId(
-      widget.sellerId,
-      currentUserId,
-    );
+    final isRegistered = await DatabaseHelper.instance
+        .isCustomerRegisteredForStoreByTelegramId(
+          widget.sellerId,
+          currentUserId,
+        );
 
     if (!isRegistered) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -748,8 +904,10 @@ class _ProductsTabState extends State<ProductsTab> {
     }
 
     // الحصول على الصور المتاحة
-    final images = await DatabaseHelper.instance.getProductImages(product.productId);
-    
+    final images = await DatabaseHelper.instance.getProductImages(
+      product.productId,
+    );
+
     if (images.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('لا توجد صور متاحة لهذا المنتج')),
@@ -759,14 +917,18 @@ class _ProductsTabState extends State<ProductsTab> {
 
     if (quantity > images.length) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('الكمية المطلوبة (${quantity}) أكبر من الصور المتاحة (${images.length})')),
+        SnackBar(
+          content: Text(
+            'الكمية المطلوبة (${quantity}) أكبر من الصور المتاحة (${images.length})',
+          ),
+        ),
       );
       return;
     }
 
     // اختيار الصور المحددة (بعدد الكمية)
     final selectedImages = images.take(quantity).toList();
-    
+
     // إضافة المنتج إلى السلة مع الصور المحددة
     await DatabaseHelper.instance.addToCartWithImages(
       currentUserId,
@@ -782,5 +944,98 @@ class _ProductsTabState extends State<ProductsTab> {
       );
       widget.onCartChanged?.call();
     }
+  }
+}
+
+class _RestrictedProductQuantitySelector extends StatefulWidget {
+  final Product product;
+  final Function(Product, int) onAddToCart;
+
+  const _RestrictedProductQuantitySelector({
+    required this.product,
+    required this.onAddToCart,
+  });
+
+  @override
+  State<_RestrictedProductQuantitySelector> createState() =>
+      _RestrictedProductQuantitySelectorState();
+}
+
+class _RestrictedProductQuantitySelectorState
+    extends State<_RestrictedProductQuantitySelector> {
+  late int selectedQuantity = 1;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        // زر الطرح
+        GestureDetector(
+          onTap: () {
+            if (selectedQuantity > 1) {
+              setState(() {
+                selectedQuantity--;
+              });
+            }
+          },
+          child: const Text(
+            '-',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: Colors.red,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        // عرض الكمية الحالية
+        Text(
+          '$selectedQuantity',
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(width: 8),
+        // زر الجمع
+        GestureDetector(
+          onTap: () {
+            if (selectedQuantity < widget.product.quantity) {
+              setState(() {
+                selectedQuantity++;
+              });
+            }
+          },
+          child: const Text(
+            '+',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: Colors.green,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        // زر الإضافة للسلة
+        SizedBox(
+          height: 32,
+          child: FilledButton(
+            onPressed: () =>
+                widget.onAddToCart(widget.product, selectedQuantity),
+            style: FilledButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              backgroundColor: Colors.blue,
+            ),
+            child: const Text(
+              'أضف للسلة',
+              style: TextStyle(fontSize: 12),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }

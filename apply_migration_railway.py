@@ -41,7 +41,8 @@ def apply_migration():
             port=PORT,
             database=DATABASE,
             user=USERNAME,
-            password=PASSWORD
+            password=PASSWORD,
+            sslmode='require'
         )
         
         cursor = conn.cursor()

@@ -105,7 +105,8 @@ def force_migration_command(message):
             user=username,
             password=password,
             host=hostname,
-            port=port
+            port=port,
+            sslmode='require'
         )
         cursor = conn.cursor()
         
@@ -293,7 +294,8 @@ def get_db_connection():
                 user=username,
                 password=password,
                 host=hostname,
-                port=port
+                port=port,
+                sslmode='require'
             )
             print("\n" + "="*50)
             print(f"✅ BOT CONNECTED TO POSTGRES (Cloud)")
@@ -956,7 +958,8 @@ def force_apply_bigint_migrations():
             user=username,
             password=password,
             host=hostname,
-            port=port
+            port=port,
+            sslmode='require'
         )
         cursor = conn.cursor()
         
@@ -3128,27 +3131,7 @@ def send_product_with_image(chat_id, product, markup=None, seller_name=""):
         pid, name, desc, price, wholesale_price, qty, img_path = product
         print(f"DEBUG: send_product_with_image called for product {pid}, img_path={img_path}")
         
-        # 1. Try to Generate Product Card
-        try:
-            from utils.receipt_generator import generate_product_card
-            card_img = generate_product_card(product, seller_name)
-            
-            if card_img:
-                card_img.name = f"product_{pid}.png"
-                caption = f"📦 **{name}**\n📦 المتوفر: {qty}"
-                
-                print(f"✅ Generated product card for {pid}")
-                bot.send_photo(chat_id, card_img, caption=caption, reply_markup=markup, parse_mode='Markdown')
-                return
-            else:
-                print(f"⚠️ Product Card generation returned None for {pid}")
-        except Exception as e:
-            print(f"⚠️ Product Card Generation Failed for {pid}: {e}")
-            # Fallthrough to legacy raw image logic
-            
-        # 2. Legacy Logic (Raw Image/Text)
-        print(f"DEBUG: sending raw product {pid} ({name}) [Fallback]")
-        
+        # Build caption first
         caption = f"🛒 **{name}**\n💰 السعر: {price} IQD"
         if wholesale_price and wholesale_price > 0:
             caption += f"\n💰 سعر الجملة: {wholesale_price} IQD"
@@ -3158,27 +3141,11 @@ def send_product_with_image(chat_id, product, markup=None, seller_name=""):
         if desc:
             caption += f"\n📝 {desc[:100]}{'...' if len(desc) > 100 else ''}"
         
+        # Try to get and send image
         if img_path:
-            print(f"DEBUG: Image path for {pid}: {img_path}")
+            print(f"🔍 DEBUG: Looking for image: {img_path}")
             
-            # 1. Try to get image from cloud directly (faster for mobile users)
-            if IS_POSTGRES:
-                base_name = os.path.basename(img_path)
-                print(f"🔄 محاولة جلب الصورة من السحابة مباشرة: {base_name}")
-                
-                cloud_image = get_image_from_cloud(base_name)
-                if cloud_image:
-                    try:
-                        print(f"✅ Got image from cloud ({len(cloud_image):,} bytes), sending directly")
-                        from io import BytesIO
-                        image_file = BytesIO(cloud_image)
-                        image_file.name = base_name
-                        bot.send_photo(chat_id, image_file, caption=caption, reply_markup=markup, parse_mode='Markdown')
-                        return
-                    except Exception as e:
-                        print(f"⚠️ Error sending image from cloud: {e}")
-            
-            # 2. Check direct path
+            # Try 1: Direct path
             if os.path.exists(img_path):
                 try:
                     print(f"✅ Found image at direct path: {img_path}")
@@ -3186,43 +3153,62 @@ def send_product_with_image(chat_id, product, markup=None, seller_name=""):
                         bot.send_photo(chat_id, photo, caption=caption, reply_markup=markup, parse_mode='Markdown')
                     return
                 except Exception as e:
-                    print(f"⚠️ Error sending image from direct path {img_path}: {e}")
+                    print(f"⚠️ Error sending from direct path: {e}")
             
-            # 3. Check in IMAGES_FOLDER by basename
+            # Try 2: Basename in IMAGES_FOLDER
             base_name = os.path.basename(img_path)
             alt_path = os.path.join(IMAGES_FOLDER, base_name)
-            print(f"DEBUG: Checking alt path: {alt_path}, exists={os.path.exists(alt_path)}")
-            
-            # 4. Try download from Cloud if not exists locally
-            if not os.path.exists(alt_path) and IS_POSTGRES:
-                print(f"🔄 محاولة تحميل الصورة من السحابة: {base_name}")
-                download_success = download_image_from_cloud(base_name)
-                if download_success:
-                    print(f"✅ تم تحميل الصورة من السحابة: {base_name}")
-                else:
-                    print(f"❌ فشل تحميل الصورة من السحابة: {base_name}")
-            
-            # 5. Send image if available locally
             if os.path.exists(alt_path):
                 try:
-                    print(f"✅ Sending image from alt path: {alt_path}")
+                    print(f"✅ Found image at alt path: {alt_path}")
                     with open(alt_path, 'rb') as photo:
                         bot.send_photo(chat_id, photo, caption=caption, reply_markup=markup, parse_mode='Markdown')
                     return
                 except Exception as e:
-                    print(f"⚠️ Error sending image from alt path {alt_path}: {e}")
-            else:
-                print(f"⚠️ الصورة غير موجودة محلياً ولم يتم تحميلها من السحابة: {base_name}")
+                    print(f"⚠️ Error sending from alt path: {e}")
+            
+            # Try 3: Get from cloud directly (if PostgreSQL)
+            if IS_POSTGRES:
+                print(f"🔄 Attempting to get image from cloud: {base_name}")
+                try:
+                    cloud_image = get_image_from_cloud(base_name)
+                    if cloud_image:
+                        print(f"✅ Got image from cloud ({len(cloud_image):,} bytes)")
+                        from io import BytesIO
+                        image_file = BytesIO(cloud_image)
+                        image_file.name = base_name
+                        bot.send_photo(chat_id, image_file, caption=caption, reply_markup=markup, parse_mode='Markdown')
+                        return
+                    else:
+                        print(f"⚠️ get_image_from_cloud returned None")
+                except Exception as e:
+                    print(f"⚠️ Error getting image from cloud: {e}")
+            
+            # Try 4: Download from cloud and send
+            if IS_POSTGRES:
+                print(f"🔄 Attempting to download image from cloud: {base_name}")
+                try:
+                    if download_image_from_cloud(base_name):
+                        print(f"✅ Downloaded image, trying to send...")
+                        if os.path.exists(alt_path):
+                            with open(alt_path, 'rb') as photo:
+                                bot.send_photo(chat_id, photo, caption=caption, reply_markup=markup, parse_mode='Markdown')
+                            return
+                except Exception as e:
+                    print(f"⚠️ Error downloading from cloud: {e}")
+            
+            print(f"⚠️ Could not find image for {pid}, sending text only")
         else:
-            print(f"DEBUG: No image path for product {pid}")
-
+            print(f"⚠️ No image path provided for product {pid}")
+        
         # Fallback: Send message without image
         if markup:
             bot.send_message(chat_id, caption, reply_markup=markup, parse_mode='Markdown')
         else:
             bot.send_message(chat_id, caption, parse_mode='Markdown')
     except Exception as e:
-        print(f"⚠️ خطأ في send_product_with_image: {e}")
+        print(f"⚠️ Error in send_product_with_image: {e}")
+        import traceback
         traceback.print_exc()
 
 # ====== دالة مساعدة لإنشاء أزرار الكمية ======
@@ -3388,6 +3374,8 @@ def show_bot_admin_menu(message):
     markup.row("🗑️ حذف متجر", "➕ إضافة متجر", "📋 قائمة المتاجر")
     # Row 5
     markup.row("👑 إدارة الحسابات", "🛍️ وضع المشتري", "🏠 الرئيسية")
+    # Row 6
+    markup.row("تصفح المتاجر 🛍️", "سلة المشتريات 🛒")
     
     welcome_msg = f"👑🏪 **مرحباً بأدمن البوت وصاحب المتجر!**\n\n"
     welcome_msg += f"🏪 متجرك: {store_name}\n"
@@ -3404,7 +3392,7 @@ def show_admin_dashboard(message):
     
     markup.row("👑 إدارة الحسابات", "📊 إحصائيات النظام", "🗑️ حذف متجر")
     markup.row("➕ إضافة متجر", "📋 قائمة المتاجر", "🛍️ وضع المشتري")
-    markup.row("🏠 الرئيسية")
+    markup.row("تصفح المتاجر 🛍️", "سلة المشتريات 🛒", "🏠 الرئيسية")
     
     bot.send_message(
         message.chat.id,
@@ -3467,11 +3455,13 @@ def show_seller_menu(message):
     orders_badge = f" 🔴 {pending_count}" if pending_count > 0 else ""
 
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
-    # Row 1
+    # Row 1 - الأزرار الأساسية للمشتري
+    markup.row("تصفح المتاجر 🛍️", "سلة المشتريات 🛒")
+    # Row 2 - أزرار المتجر
     markup.row("🏪 منتجاتي", "📁 الأقسام", f"📦 الطلبات{orders_badge}")
-    # Row 2
-    markup.row(f"📩 الرسائل{messages_badge}", "📊 كشف حساب الزبائن", "🏪 إدارة الزبائن الآجلين")
     # Row 3
+    markup.row(f"📩 الرسائل{messages_badge}", "📊 كشف حساب الزبائن", "🏪 إدارة الزبائن الآجلين")
+    # Row 4
     markup.row("🔗 رابط المتجر", "🛍️ وضع المشتري", "🏠 الرئيسية")
     
     welcome_msg = f"🏪 **مرحباً بصاحب المتجر!**\n"
@@ -3807,28 +3797,21 @@ def show_buyer_main_menu(message=None, chat_id=None, user_id=None):
     
     user = get_user(telegram_id)
     
+    # For all buyers show the same buttons regardless of registration status
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
+    markup.row("تصفح المتاجر 🛍️")
+    markup.row("سلة المشتريات 🛒") 
+    markup.row("👤 تعديل بياناتي")
+
     # التحقق إذا كان المستخدم زائراً (غير مسجل)
     if telegram_id in user_states and user_states.get(telegram_id, {}).get('is_guest'):
-        # For guest buyers show Cart and Edit Profile buttons only
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.row("سلة المشتريات 🛒", "👤 تعديل بياناتي")
-
-        bot.send_message(chat_id,
-                        "👀 **مرحباً بك كزائر!**\n\n"
-                        "يمكنك تصفح المتاجر وإضافة المنتجات للسلة.\n"
-                        "عند إنهاء الطلب، سيُطلب منك إدخال معلوماتك.",
-                        reply_markup=markup)
-        return
-    
-    # For registered buyers show only Cart and Edit Profile buttons
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row("سلة المشتريات 🛒", "👤 تعديل بياناتي")
-
-    welcome_msg = "👋 **مرحباً بك كـ مشتري!**"
-    
-    if user and (user[4] or user[5]):
-        welcome_msg += f"\n\n👤 الاسم: {user[5] if user[5] else 'غير محدد'}"
-        welcome_msg += f"\n📞 الهاتف: {user[4] if user[4] else 'غير محدد'}"
+        welcome_msg = "👀 **مرحباً بك كزائر!**\n\nيمكنك تصفح المتاجر وإضافة المنتجات للسلة.\nعند إنهاء الطلب، سيُطلب منك إدخال معلوماتك."
+    else:
+        welcome_msg = "👋 **مرحباً بك كـ مشتري!**"
+        
+        if user and (user[4] or user[5]):
+            welcome_msg += f"\n\n👤 الاسم: {user[5] if user[5] else 'غير محدد'}"
+            welcome_msg += f"\n📞 الهاتف: {user[4] if user[4] else 'غير محدد'}"
     
     bot.send_message(chat_id, welcome_msg, reply_markup=markup)
 
@@ -7473,6 +7456,8 @@ def callback_handler(call):
             handle_toggle_store_registration(call)
         elif call.data.startswith("viewcat_"):
             handle_view_category(call)
+        elif call.data.startswith("back_to_categories_"):
+            handle_back_to_categories(call)
         elif call.data.startswith("select_images_"):
             handle_select_images(call)
         elif call.data.startswith("buy_images_"):
@@ -7796,7 +7781,8 @@ def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id, customer_tele
             # لا نستدعي show_buyer_main_menu() لأنها ترسل رسالة ترحيب
             # بدلاً من ذلك، نرسل الأزرار مباشرة
             markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-            markup.row("سلة المشتريات 🛒", "👤 تعديل بياناتي")
+            markup.row("تصفح المتاجر 🛍️", "سلة المشتريات 🛒")
+            markup.row("👤 تعديل بياناتي")
             
             bot.send_message(chat_id, "👇 يمكنك استخدام الأزرار أدناه:", reply_markup=markup)
             print(f"✅ DEBUG: Buyer buttons sent successfully")
@@ -7813,84 +7799,99 @@ def browse_stores(message):
     telegram_id = message.from_user.id
     is_guest = telegram_id in user_states and user_states.get(telegram_id, {}).get('is_guest', False)
     
-    if is_guest:
-        # عرض المتاجر للزوار
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT TelegramID, UserName, StoreName 
-            FROM Sellers 
-            WHERE Status = 'active'
-            ORDER BY StoreName
-        """)
-        sellers = cursor.fetchall()
-        conn.close()
-        
-        if not sellers:
-            bot.send_message(message.chat.id, "لا توجد متاجر متاحة حالياً.")
-            return
-        
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        for seller in sellers:
-            try:
-                telegram_id, username, store_name = seller
-                
-                # Sanitize store name
-                if not store_name or not store_name.strip():
-                    store_name = "متجر بدون اسم"
-                
-                # Replace replacement character if present
-                store_name = store_name.replace('\ufffd', '?')
-                
-                label = f"🏪 {store_name} - {format_seller_mention(username, telegram_id)}"
-                markup.add(types.InlineKeyboardButton(
-                    label, 
-                    callback_data=f"viewstore_{telegram_id}"
-                ))
-            except Exception as e:
-                print(f"Skipping bad store: {e}")
-                continue
-        
+    # إذا كان المستخدم جديداً (لم يختر تسجيل أو تصفح بدون تسجيل)، نسجله كزائر
+    if not is_guest and telegram_id not in user_states:
+        user = get_user(telegram_id)
+        if not user:
+            # المستخدم جديد تماماً، نسجله كزائر
+            user_states[telegram_id] = {
+                'is_guest': True,
+                'name': message.from_user.first_name,
+                'username': message.from_user.username
+            }
+            is_guest = True
+    
+    # عرض المتاجر
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT TelegramID, UserName, StoreName 
+        FROM Sellers 
+        WHERE Status = 'active'
+        ORDER BY StoreName
+    """)
+    sellers = cursor.fetchall()
+    conn.close()
+    
+    if not sellers:
+        bot.send_message(message.chat.id, "لا توجد متاجر متاحة حالياً.")
+        return
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for seller in sellers:
         try:
-            bot.send_message(message.chat.id, "🛍️ **المتاجر المتاحة:**", reply_markup=markup)
-        except Exception as e:
-            print(f"Error sending stores list: {e}")
-            bot.send_message(message.chat.id, "حدث خطأ في عرض قائمة المتاجر.")
-    else:
-        # عرض المتاجر للمستخدمين المسجلين
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT TelegramID, UserName, StoreName 
-            FROM Sellers 
-            WHERE Status = 'active'
-            ORDER BY StoreName
-        """)
-        sellers = cursor.fetchall()
-        conn.close()
-        
-        if not sellers:
-            bot.send_message(message.chat.id, "لا توجد متاجر متاحة حالياً.")
-            return
-        
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        for seller in sellers:
-            telegram_id, username, store_name = seller
-            label = f"🏪 {store_name} - {format_seller_mention(username, telegram_id)}"
+            seller_telegram_id, username, store_name = seller
+            
+            # Sanitize store name
+            if not store_name or not store_name.strip():
+                store_name = "متجر بدون اسم"
+            
+            # Replace replacement character if present
+            store_name = store_name.replace('\ufffd', '?')
+            
+            label = f"🏪 {store_name} - {format_seller_mention(username, seller_telegram_id)}"
             markup.add(types.InlineKeyboardButton(
                 label, 
-                callback_data=f"viewstore_{telegram_id}"
+                callback_data=f"viewstore_{seller_telegram_id}"
             ))
-        
+        except Exception as e:
+            print(f"Skipping bad store: {e}")
+            continue
+    
+    try:
         bot.send_message(message.chat.id, "🛍️ **المتاجر المتاحة:**", reply_markup=markup)
+        # إرسال رسالة إضافية بالأزرار الرئيسية
+        markup2 = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup2.row("تصفح المتاجر 🛍️", "سلة المشتريات 🛒")
+        markup2.row("👤 تعديل بياناتي")
+        bot.send_message(message.chat.id, "👇 استخدم الأزرار أدناه:", reply_markup=markup2)
+    except Exception as e:
+        print(f"Error sending stores list: {e}")
+        bot.send_message(message.chat.id, "حدث خطأ في عرض قائمة المتاجر.")
 
 def handle_view_store(call):
     try:
-        telegram_id = int(call.data.split("_")[1])
+        print(f"DEBUG: handle_view_store called with data: {call.data}")
+        data_parts = call.data.split("_")
+        print(f"DEBUG: data_parts: {data_parts}")
+        
+        if len(data_parts) < 2:
+            bot.answer_callback_query(call.id, "❌ بيانات غير صحيحة")
+            return
+            
+        telegram_id = int(data_parts[1])
         customer_telegram_id = call.from_user.id
+        
+        print(f"DEBUG: telegram_id={telegram_id}, customer_telegram_id={customer_telegram_id}")
+        
+        # تأكيد تسجيل الزبون قبل عرض المتجر
+        user = get_user(customer_telegram_id)
+        if not user:
+            print(f"[INFO] Creating new customer {customer_telegram_id}...")
+            add_user(customer_telegram_id, call.from_user.username, 'buyer', None, call.from_user.first_name)
+            import time
+            time.sleep(0.1)
+        
+        # الآن عرض المتجر
+        print(f"DEBUG: Calling send_store_catalog_by_telegram_id...")
         send_store_catalog_by_telegram_id(call.message.chat.id, telegram_id, customer_telegram_id)
         bot.answer_callback_query(call.id)
-    except:
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ Error in handle_view_store: {error_msg}")
+        import traceback
+        traceback.print_exc()
+        bot.send_message(call.message.chat.id, f"❌ خطأ: {error_msg}")
         bot.answer_callback_query(call.id, "خطأ في عرض المتجر")
 
 
@@ -8062,32 +8063,40 @@ def handle_view_category(call):
         
         seller = get_seller_by_id(seller_id)
         seller_name = seller[3] if seller else "المتجر"
-        is_admin_store = (seller[1] == BOT_ADMIN_ID) if seller else False
+        # تحقق من إذا كان المتجر مقفولاً (requireCustomerRegistration)
+        # RequireCustomerRegistration هو في العمود رقم 9 (index 9)
+        requires_registration = seller[9] if seller and len(seller) > 9 else 0
         
-        # التحقق من إعداد RequireCustomerRegistration
-        require_registration = False
-        if len(seller) > 9:
-            require_registration = seller[9] == 1 if not IS_POSTGRES else (seller[9] if seller[9] is not None else False)
-        
-        text = f"📁 **قسم: {category[2]}**\n🏪 {seller_name}\n\n🛍️ المنتجات المتاحة:\n\n"
-        
-        for product in products:
-            pid, name, desc, price, wholesale_price, qty, img_path = product
-            if qty > 0:
-                # للمتاجر المقفولة: عرض بدون صور مع زر خاص لاختيار الصور
-                if require_registration:
-                    markup = types.InlineKeyboardMarkup()
-                    markup.add(types.InlineKeyboardButton("📸 اختر الصور", callback_data=f"select_images_{pid}"))
+        # إذا كان المتجر مغلقاً - عرض قائمة نصية بدون صور
+        if requires_registration:
+            markup = types.InlineKeyboardMarkup()
+            
+            for product in products:
+                pid, name, desc, price, wholesale_price, qty, img_path = product
+                if qty > 0:
+                    # عرض المنتج: اسم فقط (بدون سعر)
+                    add_button = types.InlineKeyboardButton("اضافة للسلة", callback_data=f"addtocart_{pid}_1")
+                    back_button = types.InlineKeyboardButton("رجوع للقائمة", callback_data=f"back_to_categories_{seller_id}")
+                    inc_button = types.InlineKeyboardButton("➕", callback_data=f"qty_inc_{pid}_1")
+                    dec_button = types.InlineKeyboardButton("➖", callback_data=f"qty_dec_{pid}_1")
+                    qty_display = types.InlineKeyboardButton("1", callback_data="noop")
                     
-                    product_text = f"📦 **{name}**\n"
-                    if desc:
-                        product_text += f"📝 {desc[:100]}{'...' if len(desc) > 100 else ''}\n"
-                    product_text += f"💰 السعر: {price:,.0f} د.ع للصورة الواحدة\n"
-                    product_text += f"📊 الكمية المتاحة: {qty} صورة"
-                    
-                    bot.send_message(call.message.chat.id, product_text, reply_markup=markup, parse_mode='Markdown')
-                else:
-                    # للمتاجر المفتوحة: العرض العادي مع الصور
+                    # صف واحد: اسم المنتج فقط
+                    markup.add(types.InlineKeyboardButton(f"{name}", callback_data="noop"), width=1)
+                    # صف الأزرار: - الكمية + | اضافة للسلة | رجوع للقائمة
+                    markup.row(dec_button, qty_display, inc_button)
+                    markup.row(add_button, back_button)
+            
+            text = "🛍️ اختر المنتجات:"
+            bot.send_message(call.message.chat.id, text, reply_markup=markup)
+        else:
+            # متجر مفتوح - عرض المنتجات بشكل عادي مع الصور
+            text = f"📁 **قسم: {category[2]}**\n🏪 {seller_name}\n\n🛍️ المنتجات المتاحة:\n\n"
+            
+            for product in products:
+                pid, name, desc, price, wholesale_price, qty, img_path = product
+                if qty > 0:
+                    # عرض مع الصور
                     markup = types.InlineKeyboardMarkup()
                     markup = create_product_markup_with_qty(pid, 1)
                     send_product_with_image(call.message.chat.id, product, markup, seller_name)
@@ -8095,6 +8104,32 @@ def handle_view_category(call):
         bot.answer_callback_query(call.id)
     except Exception as e:
         print(f"Error in handle_view_category: {e}")
+        bot.answer_callback_query(call.id, "حدث خطأ")
+
+def handle_back_to_categories(call):
+    """الرجوع لقائمة الفئات"""
+    try:
+        seller_id = int(call.data.split("_")[-1])
+        seller = get_seller_by_id(seller_id)
+        
+        if not seller:
+            bot.answer_callback_query(call.id, "المتجر غير موجود")
+            return
+        
+        seller_telegram_id = seller[1]
+        customer_telegram_id = call.from_user.id
+        
+        # محو الرسالة السابقة وإرسال قائمة الفئات
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
+        
+        # إعادة عرض الفئات
+        send_store_catalog_by_telegram_id(call.message.chat.id, seller_telegram_id, customer_telegram_id)
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        print(f"Error in handle_back_to_categories: {e}")
         bot.answer_callback_query(call.id, "حدث خطأ")
 
 def handle_select_images(call):
@@ -10076,21 +10111,81 @@ def handle_order_details(call):
         
     bot.answer_callback_query(call.id)
 
+# ==================== دوال مزامنة حالة الطلب ====================
+
+def send_order_notification(buyer_id, order_id, status):
+    """
+    إرسال إشعار للعميل عند تغيير حالة الطلب
+    :param buyer_id: معرف المشتري (TelegramID)
+    :param order_id: رقم الطلب
+    :param status: الحالة الجديدة (Confirmed, Shipped, Delivered, Rejected, etc)
+    """
+    messages = {
+        'Confirmed': f"✅ **تم تأكيد طلبك #{order_id}**\n\nتم تأكيد طلبك من قبل البائع. سيتم تجهيزه قريباً.",
+        'Shipped': f"🚚 **تم شحن طلبك #{order_id}**\n\nطلبك في الطريق إليك! تابع معنا للمزيد من التحديثات.",
+        'Delivered': f"🎉 **تم تسليم طلبك #{order_id}**\n\nتم تسليم طلبك بنجاح. شكراً لثقتك بنا! 💝",
+        'Rejected': f"❌ **تم رفض طلبك #{order_id}**\n\nنعتذر، تم رفض طلبك من قبل البائع."
+    }
+    
+    try:
+        message = messages.get(status, f"📦 تم تحديث حالة طلبك #{order_id}")
+        bot.send_message(buyer_id, message, parse_mode='Markdown')
+        print(f"✅ تم إرسال الإشعار للعميل {buyer_id} - الحالة: {status}")
+        return True
+    except Exception as e:
+        print(f"⚠️ لم يتمكن من إرسال الإشعار للعميل {buyer_id}: {e}")
+        return False
+
+
+def sync_order_status_to_cloud(order_id, new_status, buyer_id=None):
+    """
+    مزامنة حالة الطلب مع السحابة (PostgreSQL) والقاعدة المحلية (SQLite)
+    
+    :param order_id: رقم الطلب
+    :param new_status: الحالة الجديدة (Confirmed, Shipped, Delivered, Rejected)
+    :param buyer_id: معرف المشتري (اختياري، للإشعارات)
+    :return: True إذا نجحت المزامنة، False إذا فشلت
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # تحديث حالة الطلب في قاعدة البيانات
+        cursor.execute("UPDATE Orders SET Status=? WHERE OrderID=?", (new_status, order_id))
+        conn.commit()
+        conn.close()
+        
+        print(f"✅ تم تحديث حالة الطلب {order_id} إلى '{new_status}'")
+        
+        # إرسال الإشعار للعميل إذا كان معرفاً
+        if buyer_id:
+            send_order_notification(buyer_id, order_id, new_status)
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ خطأ في مزامنة الطلب {order_id}: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def handle_confirm_order_seller(call):
     order_id = int(call.data.split("_")[2])
-    update_order_status(order_id, "Confirmed")
+    
+    # الحصول على معرف المشتري أولاً
+    order_details, _ = get_order_details(order_id)
+    buyer_id = order_details[1] if order_details else None
+    
+    # مزامنة حالة الطلب مع السحابة والقاعدة المحلية + إرسال الإشعار
+    if sync_order_status_to_cloud(order_id, "Confirmed", buyer_id):
+        print(f"✅ تم مزامنة الطلب {order_id} إلى 'Confirmed'")
+    else:
+        print(f"⚠️ تحذير: قد يكون هناك خطأ في مزامنة الطلب {order_id}")
+    
     mark_messages_read_by_order(order_id) # Fix: Clear message counter
     
-    bot.answer_callback_query(call.id, "✅ تم تأكيد الطلب")
-    
-    order_details, _ = get_order_details(order_id)
-    if order_details and order_details[1]:
-        try:
-            bot.send_message(order_details[1], 
-                           f"✅ **تم تأكيد طلبك #{order_id}**\n\n"
-                           f"تم تأكيد طلبك من قبل البائع. سيتم تجهيزه قريباً.")
-        except:
-            pass
+    bot.answer_callback_query(call.id, "✅ تم تأكيد الطلب ومزامنة البيانات")
     
     try:
         bot.edit_message_text(
@@ -10234,23 +10329,32 @@ def send_order_images_to_buyer(order_id, buyer_id, seller_id):
 
 def handle_ship_order(call):
     order_id = int(call.data.split("_")[2])
-    update_order_status(order_id, "Shipped")
+    
+    # الحصول على معرف المشتري أولاً
+    order_details, items = get_order_details(order_id)
+    buyer_id = order_details[1] if order_details else None
+    seller_id = order_details[2] if order_details else None
+    
+    # مزامنة حالة الطلب مع السحابة والقاعدة المحلية + إرسال الإشعار
+    if sync_order_status_to_cloud(order_id, "Shipped", buyer_id):
+        print(f"✅ تم مزامنة الطلب {order_id} إلى 'Shipped'")
+    else:
+        print(f"⚠️ تحذير: قد يكون هناك خطأ في مزامنة الطلب {order_id}")
+    
     mark_messages_read_by_order(order_id) # Fix: Clear message counter
     
-    # الحصول على معلومات الطلب
-    order_details, items = get_order_details(order_id)
-    if order_details and order_details[1]:
-        buyer_id = order_details[1]
-        seller_id = order_details[2]
-        
-        # إرسال الصور للزبون
-        send_order_images_to_buyer(order_id, buyer_id, seller_id)
+    # إرسال الصور للزبون (اختياري - إذا كانت الدالة موجودة)
+    if buyer_id and seller_id and callable(globals().get('send_order_images_to_buyer')):
+        try:
+            send_order_images_to_buyer(order_id, buyer_id, seller_id)
+        except Exception as e:
+            print(f"⚠️ تحذير: لم يتمكن من إرسال الصور: {e}")
     
-    bot.answer_callback_query(call.id, "🚚 تم تحديث حالة الشحن وإرسال الصور")
+    bot.answer_callback_query(call.id, "🚚 تم تحديث حالة الشحن ومزامنة البيانات")
     
     try:
         bot.edit_message_text(
-            f"{call.message.text}\n\n🚚 **تم شحن الطلب وإرسال الصور**",
+            f"{call.message.text}\n\n🚚 **تم شحن الطلب**",
             call.message.chat.id,
             call.message.message_id,
             parse_mode='Markdown',
@@ -10264,19 +10368,20 @@ def handle_ship_order(call):
 
 def handle_deliver_order(call):
     order_id = int(call.data.split("_")[2])
-    update_order_status(order_id, "Delivered")
+    
+    # الحصول على معرف المشتري أولاً
+    order_details, _ = get_order_details(order_id)
+    buyer_id = order_details[1] if order_details else None
+    
+    # مزامنة حالة الطلب مع السحابة والقاعدة المحلية + إرسال الإشعار
+    if sync_order_status_to_cloud(order_id, "Delivered", buyer_id):
+        print(f"✅ تم مزامنة الطلب {order_id} إلى 'Delivered'")
+    else:
+        print(f"⚠️ تحذير: قد يكون هناك خطأ في مزامنة الطلب {order_id}")
+    
     mark_messages_read_by_order(order_id) # Fix: Clear message counter
     
-    bot.answer_callback_query(call.id, "✅ تم تسليم الطلب")
-    
-    order_details, _ = get_order_details(order_id)
-    if order_details and order_details[1]:
-        try:
-            bot.send_message(order_details[1], 
-                           f"🎉 **تم تسليم طلبك #{order_id}**\n\n"
-                           f"تم تسليم طلبك بنجاح. شكراً لثقتك بنا! 💝")
-        except:
-            pass
+    bot.answer_callback_query(call.id, "✅ تم تسليم الطلب ومزامنة البيانات")
     
     try:
         bot.edit_message_text(
@@ -10294,20 +10399,20 @@ def handle_deliver_order(call):
 
 def handle_reject_order(call):
     order_id = int(call.data.split("_")[2])
-    update_order_status(order_id, "Rejected")
+    
+    # الحصول على معرف المشتري أولاً
+    order_details, _ = get_order_details(order_id)
+    buyer_id = order_details[1] if order_details else None
+    
+    # مزامنة حالة الطلب مع السحابة والقاعدة المحلية + إرسال الإشعار
+    if sync_order_status_to_cloud(order_id, "Rejected", buyer_id):
+        print(f"✅ تم مزامنة الطلب {order_id} إلى 'Rejected'")
+    else:
+        print(f"⚠️ تحذير: قد يكون هناك خطأ في مزامنة الطلب {order_id}")
+    
     mark_messages_read_by_order(order_id) # Fix: Clear message counter
     
-    bot.answer_callback_query(call.id, "❌ تم رفض الطلب")
-    
-    order_details, _ = get_order_details(order_id)
-    if order_details and order_details[1]:
-        try:
-            bot.send_message(order_details[1], 
-                           f"❌ **تم رفض طلبك #{order_id}**\n\n"
-                           f"نعتذر، تم رفض طلبك من قبل البائع.\n"
-                           f"للمزيد من المعلومات، يرجى التواصل مع البائع.")
-        except:
-            pass
+    bot.answer_callback_query(call.id, "❌ تم رفض الطلب ومزامنة البيانات")
     
     try:
         bot.edit_message_text(
@@ -11174,22 +11279,18 @@ def send_welcome(message):
         else:
             # عرض قائمة المشتري (أو خيار التسجيل للمستخدم الجديد)
             if not user:
-                # للمستخدمين الجدد - إعطاؤهم خيار التسجيل أو التصفح بدون تسجيل
-                markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-                markup.row("تسجيل حساب جديد 📝", "تصفح بدون تسجيل 👀")
-                markup.row("🏠 الرئيسية")
-                
-                bot.send_message(message.chat.id,
-                                "👋 **مرحباً بك في متجرنا!**\n\n"
-                                "يمكنك:\n"
-                                "1. **تسجيل حساب جديد** للاستفادة من جميع المزايا\n"
-                                "2. **تصفح المتاجر بدون تسجيل** وإضافة المنتجات للسلة\n\n"
-                                "💡 **ملاحظة:** التسجيل مجاني ويوفر لك:\n"
-                                "• حفظ طلباتك السابقة\n"
-                                "• إمكانية الشراء على الحساب\n"
-                                "• كشف حسابك الآجل\n"
-                                "• متابعة مرتجعاتك",
-                                reply_markup=markup)
+                # للمستخدمين الجدد - نسجلهم كزوار مباشرة وندخلهم وضع المشتري
+                telegram_id = message.from_user.id
+                # حذف أي حالة قديمة
+                if telegram_id in user_states:
+                    del user_states[telegram_id]
+                # إنشاء حالة جديدة كزائر
+                user_states[telegram_id] = {
+                    'is_guest': True,
+                    'name': message.from_user.first_name,
+                    'username': message.from_user.username
+                }
+                show_buyer_main_menu(message=message)
             else:
                 show_buyer_main_menu(message=message)
         

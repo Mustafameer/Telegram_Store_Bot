@@ -52,7 +52,8 @@ def apply_migration():
                 port=int(port),
                 database=database,
                 user=username,
-                password=password
+                password=password,
+                sslmode='require'
             )
             print("✅ Connected successfully!")
         except Exception as e:
@@ -81,7 +82,8 @@ def apply_migration():
                 user=username,
                 password=password,
                 host=hostname,
-                port=port
+                port=port,
+                sslmode='require'
             )
         except Exception as e:
             print(f"❌ Error connecting to database: {e}")
