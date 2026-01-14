@@ -6295,19 +6295,71 @@ def process_add_customer_name(message):
         bot.send_message(message.chat.id, "⚠️ الرجاء إدخال اسم صحيح!")
         return
     
-    seller_id = state["seller_id"]
+    # حفظ الاسم والانتقال للخطوة التالية: طلب Telegram ID
+    user_states[telegram_id]["customer_name"] = full_name
+    user_states[telegram_id]["step"] = "add_customer_telegram_id"
+    
     customer_type = state.get("customer_type", "CreditCustomer")
     type_display = "زبون آجل" if customer_type == "CreditCustomer" else "نقطة بيع"
     
+    bot.send_message(message.chat.id,
+                    f"👤 إضافة {type_display}\n\n"
+                    f"✅ الاسم: {full_name}\n\n"
+                    f"الخطوة 3️⃣: أدخل **Telegram ID** الزبون\n\n"
+                    f"💡 **كيفية الحصول على الـ ID:**\n"
+                    f"1. اطلب من الزبون فتح أي محادثة معك\n"
+                    f"2. اضغط على اسم الزبون في أعلى المحادثة\n"
+                    f"3. ستجد رقم مثل: `123456789`\n"
+                    f"4. انسخ وألصق الرقم هنا\n\n"
+                    f"أو اكتب `0` للتخطي (يمكن إضافته لاحقاً)",
+                    parse_mode='Markdown')
+
+@bot.message_handler(func=lambda message: message.from_user.id in user_states and 
+                     user_states[message.from_user.id]["step"] == "add_customer_telegram_id")
+def process_add_customer_telegram_id(message):
+    telegram_id = message.from_user.id
+    state = user_states[telegram_id]
+    
+    if message.text == "🏠 الرئيسية":
+        del user_states[telegram_id]
+        handle_main_menu(message)
+        return
+    
+    customer_telegram_id_input = message.text.strip()
+    customer_name = state.get("customer_name", "")
+    customer_type = state.get("customer_type", "CreditCustomer")
+    type_display = "زبون آجل" if customer_type == "CreditCustomer" else "نقطة بيع"
+    seller_id = state["seller_id"]
+    
+    # تحويل الـ ID أو تعيين None إذا كان 0
+    customer_telegram_id = None
+    if customer_telegram_id_input and customer_telegram_id_input != "0":
+        try:
+            customer_telegram_id = int(customer_telegram_id_input)
+            if customer_telegram_id < 0:
+                raise ValueError("ID سالب")
+        except ValueError:
+            bot.send_message(message.chat.id, "⚠️ الرجاء إدخال رقم صحيح أو `0` للتخطي!")
+            return
+    
     try:
-        # إضافة الزبون مع نوع الزبون وحفظ Telegram ID إذا وُجد
-        customer_id = add_credit_customer(seller_id, full_name, phone_number=None, customer_type=customer_type, telegram_id=None)
+        # إضافة الزبون مع Telegram ID
+        customer_id = add_credit_customer(
+            seller_id, 
+            customer_name, 
+            phone_number=None, 
+            customer_type=customer_type, 
+            telegram_id=customer_telegram_id
+        )
         
-        # حتى لو كان customer_id = 0 أو قديم، سيكون نجاح
+        # رسالة النجاح
+        id_text = f"🆔 ID: {customer_telegram_id}" if customer_telegram_id else "🆔 ID: لم يتم إدخاله (يمكن إضافته لاحقاً)"
+        
         bot.send_message(message.chat.id,
                         f"✅ **تم إضافة الزبون بنجاح!**\n\n"
-                        f"👤 الاسم: {full_name}\n"
-                        f"📦 النوع: {type_display}\n\n"
+                        f"👤 الاسم: {customer_name}\n"
+                        f"📦 النوع: {type_display}\n"
+                        f"{id_text}\n\n"
                         f"💡 يمكنك الآن تعيين حد ائتماني له")
         del user_states[telegram_id]
         manage_credit_customers_new(message)
