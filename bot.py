@@ -7656,8 +7656,16 @@ def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id, customer_tele
     # التحقق من إعداد RequireCustomerRegistration (العمود 9 في جدول Sellers)
     # إذا كان الإعداد مفعلاً (1)، يجب التحقق من تسجيل الزبون
     require_registration = False
+    print(f"🔍 DEBUG: len(seller)={len(seller)}")
+    print(f"🔍 DEBUG: seller[0:10]={seller[0:10]}")  # اطبع أول 10 أعمدة
+    
     if len(seller) > 9:
+        print(f"🔍 DEBUG: seller[9]={seller[9]} (type: {type(seller[9]).__name__})")
         require_registration = seller[9] == 1 if not IS_POSTGRES else (seller[9] if seller[9] is not None else False)
+        print(f"🔍 DEBUG: require_registration calculated as: {require_registration}")
+    else:
+        print(f"⚠️ WARNING: seller doesn't have element 9! Only {len(seller)} elements.")
+        require_registration = False
     
     print(f"🔐 متجر معرف: {store_name}, require_registration={require_registration}, customer_id={customer_telegram_id}, seller_id={seller_telegram_id}")
     print(f"🔐 المقارنة: customer_id({type(customer_telegram_id).__name__})={customer_telegram_id} != seller_id({type(seller_telegram_id).__name__})={seller_telegram_id}")
@@ -7846,6 +7854,7 @@ def handle_view_store(call):
         
         # الآن عرض المتجر
         print(f"DEBUG: Calling send_store_catalog_by_telegram_id...")
+        print(f"📊 PARAMS: chat_id={call.message.chat.id}, seller_telegram_id={telegram_id}, customer_telegram_id={customer_telegram_id}")
         send_store_catalog_by_telegram_id(call.message.chat.id, telegram_id, customer_telegram_id)
         bot.answer_callback_query(call.id)
     except Exception as e:
