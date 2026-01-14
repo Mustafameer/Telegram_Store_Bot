@@ -6571,14 +6571,7 @@ def process_set_limit_amount(message):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("delete_credit_customer_"))
 def handle_delete_credit_customer(call):
     try:
-        print(f"DEBUG: delete_credit_customer called with data: {call.data}")
-        # استخراج customer_id من callback_data بشكل آمن
-        parts = call.data.split("_")
-        if len(parts) < 4:
-            bot.answer_callback_query(call.id, "❌ خطأ في البيانات")
-            return
-        
-        customer_id = int(parts[-1])  # استخدام آخر جزء كـ customer_id
+        customer_id = int(call.data.split("_")[-1])
         telegram_id = call.from_user.id
         seller = get_seller_by_telegram(telegram_id)
         
@@ -6588,7 +6581,12 @@ def handle_delete_credit_customer(call):
         
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM CreditCustomers WHERE CustomerID=? AND SellerID=?", (customer_id, seller[0]))
+        
+        if IS_POSTGRES:
+            cursor.execute("SELECT * FROM CreditCustomers WHERE CustomerID=%s AND SellerID=%s", (customer_id, seller[0]))
+        else:
+            cursor.execute("SELECT * FROM CreditCustomers WHERE CustomerID=? AND SellerID=?", (customer_id, seller[0]))
+        
         customer = cursor.fetchone()
         
         if not customer:
@@ -6596,34 +6594,25 @@ def handle_delete_credit_customer(call):
             conn.close()
             return
         
-        customer_id, seller_id, full_name, phone, created_at = customer
+        customer_id, seller_id, full_name = customer[0], customer[1], customer[2]
         
-        # التحقق من وجود رصيد
-        balance = get_customer_balance(customer_id, seller_id)
-        
-        text = f"🗑️ **حذف زبون آجل**\n\n"
-        text += f"👤 **الاسم:** {full_name}\n"
-        text += f"📞 **الهاتف:** {phone if phone else 'غير محدد'}\n"
-        text += f"💰 **الرصيد الحالي:** {balance} IQD\n\n"
-        
-        if balance != 0:
-            text += f"⚠️ **تحذير:** هذا الزبون لديه رصيد بقيمة {balance} IQD.\n"
-            text += f"سيتم حذف جميع المعاملات والحدود الائتمانية المرتبطة به.\n\n"
-        
+        text = f"🗑️ **حذف الزبون**\n\n"
+        text += f"👤 **الاسم:** {full_name}\n\n"
         text += "هل أنت متأكد من حذف هذا الزبون؟"
         
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
             types.InlineKeyboardButton("✅ نعم، احذف", callback_data=f"confirm_delete_credit_customer_{customer_id}"),
-            types.InlineKeyboardButton("❌ إلغاء", callback_data=f"view_credit_customer_{customer_id}")
+            types.InlineKeyboardButton("❌ إلغاء", callback_data="add_credit_customer")
         )
         
-        chat_id = call.message.chat.id if call.message else call.from_user.id
-        bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
+        bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode='Markdown')
         bot.answer_callback_query(call.id)
         conn.close()
     except Exception as e:
         print(f"Error in handle_delete_credit_customer: {e}")
+        import traceback
+        traceback.print_exc()
         bot.answer_callback_query(call.id, "❌ حدث خطأ أثناء المعالجة")
         if 'conn' in locals():
             conn.close()
@@ -6643,25 +6632,40 @@ def handle_confirm_delete_credit_customer(call):
     
     try:
         # الحصول على معلومات الزبون قبل الحذف
-        cursor.execute("SELECT FullName FROM CreditCustomers WHERE CustomerID=? AND SellerID=?", (customer_id, seller[0]))
+        if IS_POSTGRES:
+            cursor.execute("SELECT FullName FROM CreditCustomers WHERE CustomerID=%s AND SellerID=%s", (customer_id, seller[0]))
+        else:
+            cursor.execute("SELECT FullName FROM CreditCustomers WHERE CustomerID=? AND SellerID=?", (customer_id, seller[0]))
+        
         customer_info = cursor.fetchone()
         customer_name = customer_info[0] if customer_info else "الزبون"
         
         # حذف البيانات المرتبطة بالزبون
-        cursor.execute("DELETE FROM CustomerCredit WHERE CustomerID=?", (customer_id,))
-        cursor.execute("DELETE FROM CreditLimits WHERE CustomerID=?", (customer_id,))
-        cursor.execute("DELETE FROM CreditCustomers WHERE CustomerID=? AND SellerID=?", (customer_id, seller[0]))
+        if IS_POSTGRES:
+            cursor.execute("DELETE FROM CustomerCredit WHERE CustomerID=%s", (customer_id,))
+            cursor.execute("DELETE FROM CreditLimits WHERE CustomerID=%s", (customer_id,))
+            cursor.execute("DELETE FROM CreditCustomers WHERE CustomerID=%s AND SellerID=%s", (customer_id, seller[0]))
+        else:
+            cursor.execute("DELETE FROM CustomerCredit WHERE CustomerID=?", (customer_id,))
+            cursor.execute("DELETE FROM CreditLimits WHERE CustomerID=?", (customer_id,))
+            cursor.execute("DELETE FROM CreditCustomers WHERE CustomerID=? AND SellerID=?", (customer_id, seller[0]))
+        
         conn.commit()
         
         bot.answer_callback_query(call.id, "✅ تم حذف الزبون بنجاح")
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-        bot.send_message(call.message.chat.id, f"✅ **تم حذف الزبون الآجل بنجاح!**\n\n👤 الزبون: {customer_name}")
+        bot.edit_message_text(f"✅ **تم حذف الزبون بنجاح!**\n\n👤 الزبون: {customer_name}", 
+                             call.message.chat.id, call.message.message_id, parse_mode='Markdown')
         
-        # إعادة عرض قائمة الزبائن
-        manage_credit_customers(call.message)
+        # إعادة عرض قائمة الزبائن بعد ثانية واحدة
+        import time
+        time.sleep(1)
+        manage_credit_customers_new(call.message)
+        
     except Exception as e:
-        bot.answer_callback_query(call.id, "حدث خطأ أثناء الحذف")
+        bot.answer_callback_query(call.id, "❌ حدث خطأ أثناء الحذف")
         print(f"Delete Credit Customer Error: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
         conn.close()
 
