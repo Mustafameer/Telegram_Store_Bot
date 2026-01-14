@@ -1453,70 +1453,54 @@ def add_credit_customer(seller_id, full_name, phone_number=None, customer_type='
     """إضافة زبون آجل أو نقطة بيع - فقط باستخدام الاسم"""
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor_wrapper = CursorWrapper(cursor, is_postgres=IS_POSTGRES)
     
     try:
         # التحقق من أن الاسم موجود
         if not full_name or not full_name.strip():
-            print("ERROR: No full_name provided")
             conn.close()
             return None
         
         full_name = full_name.strip()
         
         # تحقق أولاً إذا كان الاسم موجود بالفعل
-        cursor_wrapper.execute(
-            "SELECT CustomerID FROM CreditCustomers WHERE SellerID=? AND FullName=?",
-            (seller_id, full_name)
-        )
-        existing = cursor_wrapper.fetchone()
+        if IS_POSTGRES:
+            cursor.execute(
+                "SELECT CustomerID FROM CreditCustomers WHERE SellerID=%s AND FullName=%s",
+                (seller_id, full_name)
+            )
+        else:
+            cursor.execute(
+                "SELECT CustomerID FROM CreditCustomers WHERE SellerID=? AND FullName=?",
+                (seller_id, full_name)
+            )
+        
+        existing = cursor.fetchone()
         
         if existing:
-            print(f"Customer '{full_name}' already exists with ID: {existing[0]}")
             conn.close()
             return existing[0]
         
         # إضافة الزبون الجديد
-        try:
-            if IS_POSTGRES:
-                cursor_wrapper.execute("""
-                    INSERT INTO CreditCustomers (SellerID, FullName, PhoneNumber, CustomerType, TelegramID)
-                    VALUES (?, ?, ?, ?, ?)
-                    RETURNING CustomerID
-                """, (seller_id, full_name, phone_number, customer_type, telegram_id))
-                result = cursor_wrapper.fetchone()
-                customer_id = result[0] if result else None
-            else:
-                cursor_wrapper.execute("""
-                    INSERT INTO CreditCustomers (SellerID, FullName, PhoneNumber, CustomerType, TelegramID)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (seller_id, full_name, phone_number, customer_type, telegram_id))
-                customer_id = cursor.lastrowid
-            
-            conn.commit()
-            print(f"Successfully added customer '{full_name}' with ID: {customer_id}")
-            cursor.close()
-            conn.close()
-            return customer_id
-        except Exception as insert_error:
-            print(f"Insert error: {insert_error}")
-            conn.rollback()
-            # محاولة أخيرة: البحث عن الزبون
-            cursor_wrapper.execute(
-                "SELECT CustomerID FROM CreditCustomers WHERE SellerID=? AND FullName=?",
-                (seller_id, full_name)
-            )
-            existing = cursor_wrapper.fetchone()
-            if existing:
-                print(f"Found existing customer after insert error: {existing[0]}")
-                conn.close()
-                return existing[0]
-            raise insert_error
+        if IS_POSTGRES:
+            cursor.execute("""
+                INSERT INTO CreditCustomers (SellerID, FullName, PhoneNumber, CustomerType, TelegramID)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING CustomerID
+            """, (seller_id, full_name, phone_number, customer_type, telegram_id))
+            result = cursor.fetchone()
+            customer_id = result[0] if result else None
+        else:
+            cursor.execute("""
+                INSERT INTO CreditCustomers (SellerID, FullName, PhoneNumber, CustomerType, TelegramID)
+                VALUES (?, ?, ?, ?, ?)
+            """, (seller_id, full_name, phone_number, customer_type, telegram_id))
+            customer_id = cursor.lastrowid
+        
+        conn.commit()
+        conn.close()
+        return customer_id
             
     except Exception as e:
-        print(f"Error adding credit customer: {e}")
-        import traceback
-        traceback.print_exc()
         try:
             conn.rollback()
         except:
