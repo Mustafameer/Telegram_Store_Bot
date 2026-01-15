@@ -7724,50 +7724,44 @@ def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id, customer_tele
     
     # التحقق من أن المستخدم مسجل في CreditCustomers لهذا المتجر (فقط إذا كان الإعداد مفعلاً)
     # استثناء: صاحب المتجر نفسه يمكنه الدخول دائماً
+    customer_is_registered = True  # افتراضياً: مسجل
+    
     if require_registration:
         print(f"✅ المتجر مقفول - البحث عن التسجيل")
         
         if not customer_telegram_id:
-            print(f"⚠️ تحذير: customer_telegram_id = None - السماح بالدخول (يجب تصحيح هذا)")
+            print(f"⚠️ تحذير: customer_telegram_id = None - زبون غير معروف")
+            customer_is_registered = False
         elif customer_telegram_id == seller_telegram_id:
-            print(f"✅ صاحب المتجر - السماح بالدخول بدون فحص")
+            print(f"✅ صاحب المتجر - السماح بالدخول كاملاً")
+            customer_is_registered = True
         else:
             print(f"✅ فحص التسجيل: يجب التحقق من تسجيل الزبون {customer_telegram_id}")
             # التحقق من Telegram ID مباشرة
             is_registered = is_customer_registered_for_store_by_telegram_id(customer_telegram_id, seller_id)
             print(f"⚠️ نتيجة التحقق: is_registered={is_registered}")
-            
-            if not is_registered:
-                print(f"❌ الزبون {customer_telegram_id} غير مسجل في المتجر {store_name}")
-                
-                # عرض خيارات للزبون:
-                # 1. طلب إضافتك من البائع
-                # 2. إدخال اسمك لنسأل البائع إضافتك
-                markup = types.InlineKeyboardMarkup()
-                markup.add(types.InlineKeyboardButton("📞 التواصل مع البائع", url=f"https://t.me/{username}" if username else None))
-                markup.add(types.InlineKeyboardButton("✏️ إدخال اسمك طلباً من البائع", callback_data=f"request_access_{seller_id}"))
-                
-                bot.send_message(chat_id,
-                    f"🔒 **الدخول مقيد**\n\n"
-                    f"🏪 المتجر: {store_name}\n\n"
-                    f"⚠️ حسابك (Telegram ID: {customer_telegram_id}) غير مسجل في قائمة الزبائن.\n\n"
-                    f"📝 **الخيارات:**\n"
-                    f"1️⃣ التواصل مع البائع مباشرة\n"
-                    f"2️⃣ إدخال اسمك وسنبلغ البائع بطلبك\n\n"
-                    f"بعد التسجيل، يمكنك الوصول إلى جميع منتجات المتجر.",
-                    reply_markup=markup,
-                    parse_mode='Markdown')
-                return
-            else:
-                print(f"✅ الزبون {customer_telegram_id} مسجل في المتجر {store_name} - السماح بالدخول")
+            customer_is_registered = is_registered
     else:
         print(f"ℹ️ المتجر مفتوح - لا حاجة للتحقق من التسجيل")
+        customer_is_registered = True
     
     categories = get_categories(seller_id)
     print(f"DEBUG: Categories found: {len(categories) if categories else 0}")
     
     if not categories:
         print(f"DEBUG: No categories, fetching products directly for seller_id={seller_id}")
+        
+        # إذا لم يكن مسجلاً، أظهر رسالة رفض بدل المنتجات
+        if require_registration and not customer_is_registered:
+            print(f"❌ زبون غير مسجل بدون فئات - رسالة رفض")
+            bot.send_message(chat_id,
+                f"🏪 **{store_name}**\n👤 البائع: {format_seller_mention(username, seller_id)}\n\n"
+                f"⚠️ **نعتذر، المتجر مغلق**\n\n"
+                f"حساب ك غير مسجل في هذا المتجر.\n"
+                f"يرجى التواصل مع البائع للتسجيل.",
+                parse_mode='Markdown')
+            return
+        
         products = get_products(seller_id=seller_id)
         print(f"DEBUG: Products found: {len(products) if products else 0}")
         
@@ -7786,8 +7780,11 @@ def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id, customer_tele
                 markup = create_product_markup_with_qty(pid, 1)
                 send_product_with_image(chat_id, product, markup, store_name)
     else:
+        # عرض الفئات للجميع (مسجلين وغير مسجلين)
         markup = types.InlineKeyboardMarkup(row_width=2)
         for cat_id, cat_name in categories:
+            # حفظ معلومة ما إذا كان مسجلاً في callback_data
+            # سنرسل customer_is_registered مع البيانات
             markup.add(types.InlineKeyboardButton(cat_name, callback_data=f"viewcat_{cat_id}_{seller_id}"))
         
         seller_display = format_seller_mention(username, seller_id)
@@ -7795,6 +7792,7 @@ def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id, customer_tele
             f"🏪 **{store_name}**\n👤 البائع: {seller_display}\n\n📁 اختر القسم:", 
             reply_markup=markup, 
             parse_mode='Markdown')
+    
     
     # إضافة قائمة الأزرار للمشتري بعد عرض المتجر
     if customer_telegram_id and customer_telegram_id != seller_telegram_id:
@@ -8077,6 +8075,36 @@ def handle_view_category(call):
             bot.answer_callback_query(call.id, "القسم غير موجود")
             return
         
+        seller = get_seller_by_id(seller_id)
+        if not seller:
+            bot.answer_callback_query(call.id, "المتجر غير موجود")
+            return
+        
+        seller_name = seller[3] if seller else "المتجر"
+        requires_registration = seller[9] if len(seller) > 9 else 0
+        customer_telegram_id = call.from_user.id
+        seller_telegram_id = seller[1]
+        
+        # التحقق من تسجيل الزبون إذا كان المتجر مقفولاً
+        is_registered = True  # افتراضياً: مسجل
+        
+        if requires_registration:
+            # التحقق من تسجيل الزبون
+            if customer_telegram_id != seller_telegram_id:  # ليس صاحب المتجر
+                is_registered = is_customer_registered_for_store_by_telegram_id(customer_telegram_id, seller_id)
+        
+        # إذا كان المتجر مغلقاً وليس مسجلاً - عرض رسالة رفض
+        if requires_registration and not is_registered:
+            bot.send_message(call.message.chat.id,
+                f"🏪 **{seller_name}**\n\n"
+                f"⚠️ **نعتذر، المتجر مغلق**\n\n"
+                f"حسابك غير مسجل في هذا المتجر.\n"
+                f"يرجى التواصل مع البائع للتسجيل.",
+                parse_mode='Markdown')
+            bot.answer_callback_query(call.id, "المتجر مغلق")
+            return
+        
+        # إذا كان مسجلاً، عرض المنتجات
         products = get_products(seller_id=seller_id, category_id=category_id)
         
         if not products:
@@ -8084,42 +8112,33 @@ def handle_view_category(call):
             bot.answer_callback_query(call.id)
             return
         
-        seller = get_seller_by_id(seller_id)
-        seller_name = seller[3] if seller else "المتجر"
-        # تحقق من إذا كان المتجر مقفولاً (requireCustomerRegistration)
-        # RequireCustomerRegistration هو في العمود رقم 9 (index 9)
-        requires_registration = seller[9] if seller and len(seller) > 9 else 0
-        
-        # إذا كان المتجر مغلقاً - عرض قائمة نصية بدون صور
-        if requires_registration:
+        # عرض المنتجات (نفس المنطق السابق)
+        if requires_registration and is_registered:
+            # متجر مغلق لكن الزبون مسجل - عرض بدون صور
             markup = types.InlineKeyboardMarkup()
             
             for product in products:
                 pid, name, desc, price, wholesale_price, qty, img_path = product
                 if qty > 0:
-                    # عرض المنتج: اسم فقط (بدون سعر)
                     add_button = types.InlineKeyboardButton("اضافة للسلة", callback_data=f"addtocart_{pid}_1")
                     back_button = types.InlineKeyboardButton("رجوع للقائمة", callback_data=f"back_to_categories_{seller_id}")
                     inc_button = types.InlineKeyboardButton("➕", callback_data=f"qty_inc_{pid}_1")
                     dec_button = types.InlineKeyboardButton("➖", callback_data=f"qty_dec_{pid}_1")
                     qty_display = types.InlineKeyboardButton("1", callback_data="noop")
                     
-                    # صف واحد: اسم المنتج فقط
                     markup.add(types.InlineKeyboardButton(f"{name}", callback_data="noop"), width=1)
-                    # صف الأزرار: - الكمية + | اضافة للسلة | رجوع للقائمة
                     markup.row(dec_button, qty_display, inc_button)
                     markup.row(add_button, back_button)
             
             text = "🛍️ اختر المنتجات:"
             bot.send_message(call.message.chat.id, text, reply_markup=markup)
         else:
-            # متجر مفتوح - عرض المنتجات بشكل عادي مع الصور
+            # متجر مفتوح - عرض مع الصور
             text = f"📁 **قسم: {category[2]}**\n🏪 {seller_name}\n\n🛍️ المنتجات المتاحة:\n\n"
             
             for product in products:
                 pid, name, desc, price, wholesale_price, qty, img_path = product
                 if qty > 0:
-                    # عرض مع الصور
                     markup = types.InlineKeyboardMarkup()
                     markup = create_product_markup_with_qty(pid, 1)
                     send_product_with_image(call.message.chat.id, product, markup, seller_name)
@@ -8127,6 +8146,8 @@ def handle_view_category(call):
         bot.answer_callback_query(call.id)
     except Exception as e:
         print(f"Error in handle_view_category: {e}")
+        import traceback
+        traceback.print_exc()
         bot.answer_callback_query(call.id, "حدث خطأ")
 
 def handle_back_to_categories(call):
