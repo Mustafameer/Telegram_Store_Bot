@@ -8,6 +8,9 @@ load_dotenv()
 
 import re
 import sys
+import time
+import uuid
+import traceback
 from datetime import datetime
 from utils.receipt_generator import generate_order_card
 import base64
@@ -1322,22 +1325,22 @@ def get_image_from_cloud(filename):
         cursor = conn.cursor()
         
         # Try exact match first
-        cursor.execute("SELECT FileData FROM ImageStorage WHERE FileName = %s", (filename,))
+        cursor.execute('SELECT "filedata" FROM "imagestorage" WHERE "filename" = %s', (filename,))
         result = cursor.fetchone()
         
         # If exact match fails, try case-insensitive
         if not result:
-            cursor.execute("SELECT FileData FROM ImageStorage WHERE LOWER(FileName) = LOWER(%s) LIMIT 1", (filename,))
+            cursor.execute('SELECT "filedata" FROM "imagestorage" WHERE LOWER("filename") = LOWER(%s) LIMIT 1', (filename,))
             result = cursor.fetchone()
         
         # If still not found, try partial match
         if not result:
             base_without_ext = os.path.splitext(filename)[0]
             cursor.execute("""
-                SELECT FileData 
-                FROM ImageStorage 
-                WHERE FileName LIKE %s 
-                ORDER BY UpdatedAt DESC 
+                SELECT "filedata" 
+                FROM "imagestorage" 
+                WHERE "filename" LIKE %s 
+                ORDER BY "uploadedat" DESC 
                 LIMIT 1
             """, (f"%{base_without_ext}%",))
             result = cursor.fetchone()
@@ -1384,14 +1387,14 @@ def download_image_from_cloud(filename):
         cursor = conn.cursor()
         
         # Try exact match first
-        cursor.execute("SELECT FileData FROM ImageStorage WHERE FileName = %s", (filename,))
+        cursor.execute('SELECT "filedata" FROM "imagestorage" WHERE "filename" = %s', (filename,))
         result = cursor.fetchone()
         found_filename = filename
         
         # If exact match fails, try case-insensitive match
         if not result:
             print(f"⚠️ Exact match failed for: {filename}, trying case-insensitive match...")
-            cursor.execute("SELECT FileName, FileData FROM ImageStorage WHERE LOWER(FileName) = LOWER(%s) LIMIT 1", (filename,))
+            cursor.execute('SELECT "filename", "filedata" FROM "imagestorage" WHERE LOWER("filename") = LOWER(%s) LIMIT 1', (filename,))
             row = cursor.fetchone()
             
             if row:
@@ -1405,10 +1408,10 @@ def download_image_from_cloud(filename):
             # Extract just the basename without extension for matching
             base_without_ext = os.path.splitext(filename)[0]
             cursor.execute("""
-                SELECT FileName, FileData 
-                FROM ImageStorage 
-                WHERE FileName LIKE %s 
-                ORDER BY UpdatedAt DESC 
+                SELECT "filename", "filedata" 
+                FROM "imagestorage" 
+                WHERE "filename" LIKE %s 
+                ORDER BY "uploadedat" DESC 
                 LIMIT 1
             """, (f"%{base_without_ext}%",))
             row = cursor.fetchone()
@@ -2137,10 +2140,10 @@ def get_product_images(product_id):
     cursor = conn.cursor()
     if IS_POSTGRES:
         cursor.execute("""
-            SELECT ImageID, ImagePath, ImageOrder 
-            FROM ProductImages 
-            WHERE ProductID=%s 
-            ORDER BY ImageOrder, ImageID
+            SELECT "imageid", "imagepath", "imageorder" 
+            FROM "productimages" 
+            WHERE "productid"=%s 
+            ORDER BY "imageorder", "imageid"
         """, (product_id,))
     else:
         cursor.execute("""
@@ -3063,7 +3066,7 @@ user_states = {}
 carts = {}
 
 def save_photo_from_message(message):
-    """يحفظ الصورة المرسلة"""
+    """يحفظ الصورة المرسلة - نفس منطق Flutter Desktop"""
     try:
         if not message.photo:
             return None
@@ -3072,48 +3075,61 @@ def save_photo_from_message(message):
         ext = os.path.splitext(file_info.file_path)[1]
         if not ext:
             ext = ".jpg"
-        filename = f"{int(time.time())}_{uuid.uuid4().hex}{ext}"
+        
+        # ✅ نفس صيغة اسم الملف من Flutter: {timestamp}_{32-char-uuid}{ext}
+        timestamp = int(time.time())
+        uuid_hex = uuid.uuid4().hex  # 32 حرف hex بدون شرطات
+        filename = f"{timestamp}_{uuid_hex}{ext}"
+        
         path = os.path.join(IMAGES_FOLDER, filename)
-        # Save to Disk
+        
+        # Save to Disk (محلي)
         with open(path, "wb") as f:
             f.write(downloaded)
-            
-        # 🟢 SYNC SUPPORT: Save to Postgres Blob Storage
+        
+        # ✅ Upload to PostgreSQL ImageStorage (السحابة)
         if IS_POSTGRES:
             try:
-                # bot.send_message(message.chat.id, "🔍 Debug: Attempting Cloud Upload...")
-                import psycopg2 
+                print(f"🔄 [Cloud] Attempting to upload image {filename} to ImageStorage ({len(downloaded)} bytes)")
                 conn_pg = get_db_connection()
-                # Unwrap DBWrapper
-                raw_conn = conn_pg.conn 
-                cur_pg = raw_conn.cursor()
+                cursor_pg = conn_pg.cursor()
                 
-                # Verify table exists
-                cur_pg.execute("CREATE TABLE IF NOT EXISTS ImageStorage (FileName TEXT PRIMARY KEY, FileData BYTEA, UpdatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+                # نفس الاستعلام من Flutter
+                # INSERT INTO ImageStorage (FileName, FileData, UploadedAt) VALUES (...) ON CONFLICT ...
+                print(f"📝 [Cloud] SQL: INSERT INTO ImageStorage (FileName, FileData, UploadedAt) VALUES ('{filename}', <{len(downloaded)} bytes>, NOW())")
                 
-                cur_pg.execute(
-                    "INSERT INTO ImageStorage (FileName, FileData) VALUES (%s, %s) ON CONFLICT (FileName) DO NOTHING",
+                # ✅ استخدم psycopg2.Binary() للبيانات الثنائية
+                import psycopg2
+                cursor_pg.execute(
+                    '''INSERT INTO ImageStorage (FileName, FileData, UploadedAt) 
+                       VALUES (%s, %s, NOW()) 
+                       ON CONFLICT (FileName) DO UPDATE 
+                       SET FileData = EXCLUDED.FileData, UploadedAt = NOW()''',
                     (filename, psycopg2.Binary(downloaded))
                 )
-                raw_conn.commit()
-                raw_conn.close()
-                print(f"✅ [Sync] Saved image {filename} to Cloud DB")
-                # bot.send_message(message.chat.id, "✅ Debug: Cloud Upload Success!")
+                conn_pg.commit()
+                conn_pg.close()
+                print(f"✅ [Cloud] Saved image {filename} to ImageStorage ({len(downloaded)} bytes)")
+                return filename  # ارجع اسم الملف بدلاً من المسار
+                
             except Exception as pg_e:
-                error_msg = f"⚠️ [Sync] Cloud Upload Failed: {pg_e}"
-                print(error_msg)
-                try:
-                    bot.send_message(message.chat.id, error_msg)
-                except: pass
+                print(f"❌ [Cloud] Upload Failed: {type(pg_e).__name__}: {pg_e}")
+                import traceback
+                traceback.print_exc()
+                if 'conn_pg' in locals():
+                    try:
+                        conn_pg.close()
+                    except: pass
+                # حاول الحفظ محلياً على الأقل
+                print(f"⚠️ [Fallback] Saving locally only")
+                return filename
         else:
-             print("⚠️ [Sync] IS_POSTGRES is False. Skipping Cloud Upload.")
-             # try:
-             #    bot.send_message(message.chat.id, "⚠️ Debug: IS_POSTGRES is False. Database URL ignored?")
-             # except: pass
+            print("⚠️ [Local] IS_POSTGRES is False. Using SQLite only.")
+            return filename
         
-        return path
     except Exception as e:
         print(f"⚠️ خطأ في حفظ الصورة: {e}")
+        import traceback
         traceback.print_exc()
         return None
 
@@ -3160,7 +3176,7 @@ def send_product_with_image(chat_id, product, markup=None, seller_name=""):
     """إرسال منتج مع صورته"""
     try:
         pid, name, desc, price, wholesale_price, qty, img_path = product
-        print(f"DEBUG: send_product_with_image called for product {pid}, img_path={img_path}")
+        print(f"DEBUG: send_product_with_image called for product {pid}")
         
         # Build caption first
         caption = f"🛒 **{name}**\n💰 السعر: {price} IQD"
@@ -3172,9 +3188,52 @@ def send_product_with_image(chat_id, product, markup=None, seller_name=""):
         if desc:
             caption += f"\n📝 {desc[:100]}{'...' if len(desc) > 100 else ''}"
         
-        # Try to get and send image
+        # 🆕 Get image from ProductImages table (most reliable source)
+        product_images = get_product_images(pid)
+        
+        if product_images:
+            # Get first image (primary image)
+            image_id, image_path, image_order = product_images[0]
+            print(f"🔍 DEBUG: Got image from ProductImages: {image_path}")
+            
+            # Try 1: Get from cloud directly (if PostgreSQL)
+            if IS_POSTGRES and image_path:
+                print(f"🔄 Attempting to get image from cloud: {image_path}")
+                try:
+                    cloud_image = get_image_from_cloud(image_path)
+                    if cloud_image:
+                        print(f"✅ Got image from cloud ({len(cloud_image):,} bytes)")
+                        from io import BytesIO
+                        image_file = BytesIO(cloud_image)
+                        image_file.seek(0)  # Reset position to beginning
+                        image_file.name = image_path
+                        bot.send_photo(chat_id, image_file, caption=caption, reply_markup=markup, parse_mode='Markdown')
+                        print(f"✅ Photo sent successfully!")
+                        return
+                    else:
+                        print(f"⚠️ get_image_from_cloud returned None")
+                except Exception as e:
+                    print(f"⚠️ Error getting image from cloud: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
+            # Try 2: Download from cloud and send
+            if IS_POSTGRES and image_path:
+                print(f"🔄 Attempting to download image from cloud: {image_path}")
+                try:
+                    if download_image_from_cloud(image_path):
+                        print(f"✅ Downloaded image, trying to send...")
+                        alt_path = os.path.join(IMAGES_FOLDER, image_path)
+                        if os.path.exists(alt_path):
+                            with open(alt_path, 'rb') as photo:
+                                bot.send_photo(chat_id, photo, caption=caption, reply_markup=markup, parse_mode='Markdown')
+                            return
+                except Exception as e:
+                    print(f"⚠️ Error downloading from cloud: {e}")
+        
+        # Fallback: Try original img_path if ProductImages wasn't found
         if img_path:
-            print(f"🔍 DEBUG: Looking for image: {img_path}")
+            print(f"🔍 DEBUG: Looking for image from Products table: {img_path}")
             
             # Try 1: Direct path
             if os.path.exists(img_path):
@@ -3197,40 +3256,8 @@ def send_product_with_image(chat_id, product, markup=None, seller_name=""):
                     return
                 except Exception as e:
                     print(f"⚠️ Error sending from alt path: {e}")
-            
-            # Try 3: Get from cloud directly (if PostgreSQL)
-            if IS_POSTGRES:
-                print(f"🔄 Attempting to get image from cloud: {base_name}")
-                try:
-                    cloud_image = get_image_from_cloud(base_name)
-                    if cloud_image:
-                        print(f"✅ Got image from cloud ({len(cloud_image):,} bytes)")
-                        from io import BytesIO
-                        image_file = BytesIO(cloud_image)
-                        image_file.name = base_name
-                        bot.send_photo(chat_id, image_file, caption=caption, reply_markup=markup, parse_mode='Markdown')
-                        return
-                    else:
-                        print(f"⚠️ get_image_from_cloud returned None")
-                except Exception as e:
-                    print(f"⚠️ Error getting image from cloud: {e}")
-            
-            # Try 4: Download from cloud and send
-            if IS_POSTGRES:
-                print(f"🔄 Attempting to download image from cloud: {base_name}")
-                try:
-                    if download_image_from_cloud(base_name):
-                        print(f"✅ Downloaded image, trying to send...")
-                        if os.path.exists(alt_path):
-                            with open(alt_path, 'rb') as photo:
-                                bot.send_photo(chat_id, photo, caption=caption, reply_markup=markup, parse_mode='Markdown')
-                            return
-                except Exception as e:
-                    print(f"⚠️ Error downloading from cloud: {e}")
-            
-            print(f"⚠️ Could not find image for {pid}, sending text only")
-        else:
-            print(f"⚠️ No image path provided for product {pid}")
+        
+        print(f"⚠️ Could not find image for product {pid}, sending text only")
         
         # Fallback: Send message without image
         if markup:
@@ -3467,17 +3494,29 @@ def show_seller_menu(message):
     
     # Self-Cleaning: Mark messages as read for processed orders (Shipped/Delivered/Rejected)
     # This fixes "stuck" counters for orders processed before the previous fix or outside the flow.
-    cursor.execute("""
-        UPDATE Messages 
-        SET IsRead = 1 
-        WHERE SellerID = ? 
-          AND IsRead = 0 
-          AND OrderID IN (SELECT OrderID FROM Orders WHERE Status IN ('Shipped', 'Delivered', 'Rejected'))
-    """, (seller[0],))
+    if IS_POSTGRES:
+        cursor.execute("""
+            UPDATE Messages 
+            SET IsRead = TRUE 
+            WHERE SellerID = %s 
+              AND IsRead = FALSE 
+              AND OrderID IN (SELECT OrderID FROM Orders WHERE Status IN ('Shipped', 'Delivered', 'Rejected'))
+        """, (seller[0],))
+    else:
+        cursor.execute("""
+            UPDATE Messages 
+            SET IsRead = 1 
+            WHERE SellerID = ? 
+              AND IsRead = 0 
+              AND OrderID IN (SELECT OrderID FROM Orders WHERE Status IN ('Shipped', 'Delivered', 'Rejected'))
+        """, (seller[0],))
     if cursor.rowcount > 0:
         conn.commit()
     
-    cursor.execute("SELECT COUNT(*) FROM Messages WHERE SellerID = ? AND IsRead = 0", (seller[0],))
+    if IS_POSTGRES:
+        cursor.execute("SELECT COUNT(*) FROM Messages WHERE SellerID = %s AND IsRead = FALSE", (seller[0],))
+    else:
+        cursor.execute("SELECT COUNT(*) FROM Messages WHERE SellerID = ? AND IsRead = 0", (seller[0],))
     unread_messages = cursor.fetchone()[0]
     conn.close()
     
@@ -5033,310 +5072,217 @@ def add_product_step4b(message):
 @bot.message_handler(func=lambda message: message.from_user.id in user_states and 
                      user_states[message.from_user.id]["step"] == "add_product_quantity")
 def add_product_step5(message):
+    """طلب كمية المنتج للمتاجر المفتوحة"""
     telegram_id = message.from_user.id
     state = user_states[telegram_id]
-    seller_id = state["seller_id"]
-    
-    # التحقق من حالة المتجر
-    seller = get_seller_by_id(seller_id)
-    require_registration = False
-    if seller and len(seller) > 9:
-        require_registration = seller[9] == 1 if not IS_POSTGRES else (seller[9] if seller[9] is not None else False)
-    
-    # إذا كان المتجر مقفول، تخطي طلب الكمية (ستكون تلقائية من عدد الصور)
-    if require_registration:
-        user_states[telegram_id]["quantity"] = 1  # افتراضياً 1، سيتم تحديثها تلقائياً من عدد الصور
-        user_states[telegram_id]["step"] = "add_product_image"
-        
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        markup.row("📸 إرسال صور متعددة", "⏭️ تخطي بدون صور")
-        
-        bot.send_message(message.chat.id, 
-                        "📸 **صور المنتج**\n\n"
-                        "⚠️ **ملاحظة:** الكمية ستكون تلقائياً بعدد الصور التي ستضيفها.\n\n"
-                        "الآن، يمكنك إرسال صور متعددة للمنتج:\n\n"
-                        "• اضغط '📸 إرسال صور متعددة' لإرسال صور (يمكن إرسال عدة صور)\n"
-                        "• أو اضغط '⏭️ تخطي بدون صور' للمتابعة بدون صور",
-                        reply_markup=markup)
-    else:
-        # المتجر مفتوح - طلب الكمية يدوياً
-        try:
-            quantity = int(message.text)
-            if quantity < 0:
-                bot.send_message(message.chat.id, "الرجاء إدخال كمية صحيحة (صفر أو أكبر).")
-                return
-        except:
-            bot.send_message(message.chat.id, "الرجاء إدخال رقم صحيح للكمية.")
-            return
-        
-        user_states[telegram_id]["quantity"] = quantity
-        user_states[telegram_id]["step"] = "add_product_image"
-        
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        markup.row("📸 إرسال صورة", "⏭️ تخطي بدون صورة")
-        
-        bot.send_message(message.chat.id, 
-                        "📸 **صورة المنتج**\n\n"
-                        "الآن، يمكنك إرسال صورة للمنتج (اختياري):\n\n"
-                        "• اضغط '📸 إرسال صورة' لإرسال صورة\n"
-                        "• أو اضغط '⏭️ تخطي بدون صورة' للمتابعة بدون صورة",
-                        reply_markup=markup)
-
-@bot.message_handler(func=lambda message: message.from_user.id in user_states and 
-                     user_states[message.from_user.id]["step"] == "add_product_image")
-def add_product_step6(message):
-    telegram_id = message.from_user.id
-    state = user_states[telegram_id]
-    
-    if message.text == "🏠 الرئيسية":
-        del user_states[telegram_id]
-        handle_main_menu(message)
-        return
-    
-    if message.text == "📸 إرسال صورة":
-        user_states[telegram_id]["step"] = "waiting_for_product_image"
-        bot.send_message(message.chat.id, "📤 الرجاء إرسال صورة المنتج الآن:")
-        return
-    elif message.text == "📸 إرسال صور متعددة":
-        user_states[telegram_id]["step"] = "waiting_for_product_images"
-        user_states[telegram_id]["product_images"] = []
-        
-        # إضافة زر "تم" في لوحة المفاتيح
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        markup.row("✅ تم - حفظ المنتج")
-        
-        bot.send_message(message.chat.id, 
-                        "📤 **إرسال صور متعددة**\n\n"
-                        "الآن، يمكنك إرسال عدة صور للمنتج.\n"
-                        "بعد الانتهاء من إرسال جميع الصور، اضغط '✅ تم - حفظ المنتج' لحفظ المنتج.",
-                        reply_markup=markup)
-        return
-    elif message.text == "⏭️ تخطي بدون صورة":
-        image_path = ""
-        finish_adding_product(message, image_path)
-        return
-    else:
-        if message.content_type == 'text':
-            image_path = ""
-            finish_adding_product(message, image_path)
-            return
-        
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        markup.row("📸 إرسال صورة", "⏭️ تخطي بدون صورة")
-        bot.send_message(message.chat.id, 
-                        "⚠️ الرجاء اختيار أحد الخيارين:\n\n"
-                        "• اضغط '📸 إرسال صورة' لإرسال صورة\n"
-                        "• أو اضغط '⏭️ تخطي بدون صورة' للمتابعة بدون صورة",
-                        reply_markup=markup)
-        return
-
-@bot.message_handler(content_types=['photo'], func=lambda message: message.from_user.id in user_states and 
-                     user_states[message.from_user.id].get("step") in ["waiting_for_product_image", "waiting_for_product_images"])
-def handle_product_image_photo(message):
-    telegram_id = message.from_user.id
-    state = user_states[telegram_id]
-    step = state.get("step")
     
     try:
-        image_path = save_photo_from_message(message)
-        if not image_path:
-            bot.send_message(message.chat.id, "⚠️ حدث خطأ في حفظ الصورة.")
+        quantity = int(message.text)
+        if quantity < 0:
+            bot.send_message(message.chat.id, "❌ الرجاء إدخال كمية صحيحة (صفر أو أكبر).")
+            return
+    except:
+        bot.send_message(message.chat.id, "❌ الرجاء إدخال رقم صحيح للكمية.")
+        return
+    
+    user_states[telegram_id]["quantity"] = quantity
+    user_states[telegram_id]["step"] = "waiting_for_product_image"
+    
+    bot.send_message(message.chat.id, 
+                    "📸 **صورة المنتج**\n\n"
+                    "الآن يمكنك إرسال صورة للمنتج (اختياري).",
+                    reply_markup=types.ForceReply(selective=False))
+
+@bot.message_handler(func=lambda message: message.from_user.id in user_states and 
+                     user_states[message.from_user.id]["step"] == "waiting_for_product_image")
+def add_product_step6(message):
+    """استقبال صورة المنتج - المتاجر المفتوحة فقط"""
+    telegram_id = message.from_user.id
+    state = user_states[telegram_id]
+    
+    if message.content_type == 'photo':
+        # استقبال الصورة
+        filename = save_photo_from_message(message)
+        if filename:
+            state["image_path"] = filename
+            bot.send_message(message.chat.id, f"✅ تم حفظ الصورة: {filename}")
+        else:
+            bot.send_message(message.chat.id, "⚠️ فشل حفظ الصورة، سيتم حفظ المنتج بدون صورة.")
+            state["image_path"] = ""
+    elif message.content_type == 'text' and message.text.lower() in ['تخطي', 'skip', 'الغاء']:
+        state["image_path"] = ""
+        bot.send_message(message.chat.id, "✅ تم تخطي الصورة.")
+    else:
+        bot.send_message(message.chat.id, "⚠️ الرجاء إرسال صورة أو كتابة 'تخطي' للمتابعة.")
+        return
+    
+    # انتقل إلى حفظ المنتج
+    finish_adding_product(message)
+
+@bot.message_handler(content_types=['photo'], func=lambda message: message.from_user.id in user_states and 
+                     user_states[message.from_user.id].get("step") == "waiting_for_product_image")
+def handle_product_image_photo(message):
+    """معالج الصور للمتاجر المفتوحة فقط"""
+    telegram_id = message.from_user.id
+    state = user_states[telegram_id]
+    
+    try:
+        # ✅ حفظ الصورة في ImageStorage
+        filename = save_photo_from_message(message)
+        if not filename:
+            bot.send_message(message.chat.id, "⚠️ فشل حفظ الصورة.")
             return
         
-        if step == "waiting_for_product_images":
-            # للمتاجر المقفولة: حفظ الصور في قائمة مؤقتة
-            if "product_images" not in state:
-                state["product_images"] = []
-            state["product_images"].append(image_path)
-            
-            # إضافة زر "تم" في لوحة المفاتيح
-            markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-            markup.row("✅ تم - حفظ المنتج", "➕ إضافة المزيد من الصور")
-            
-            bot.send_message(message.chat.id, 
-                           f"✅ تم حفظ الصورة ({len(state['product_images'])} صورة حتى الآن)\n\n"
-                           "📤 أرسل المزيد من الصور أو اضغط '✅ تم - حفظ المنتج' لحفظ المنتج.",
-                           reply_markup=markup)
-        else:
-            # للمتاجر المفتوحة: صورة واحدة فقط
-            finish_adding_product(message, image_path)
+        state["image_path"] = filename
+        print(f"✅ تم حفظ صورة المنتج: {filename}")
+        bot.send_message(message.chat.id, f"✅ تم حفظ الصورة")
+        
+        # انتقل إلى حفظ المنتج
+        finish_adding_product(message)
+        
     except Exception as e:
         print(f"⚠️ خطأ في معالجة الصورة: {e}")
-        bot.send_message(message.chat.id, "⚠️ حدث خطأ في معالجة الصورة.")
+        import traceback
+        traceback.print_exc()
+        bot.send_message(message.chat.id, f"⚠️ حدث خطأ: {str(e)}")
 
 @bot.message_handler(func=lambda message: message.from_user.id in user_states and 
                      user_states[message.from_user.id]["step"] == "waiting_for_product_image" and 
                      message.content_type == 'text')
 def handle_product_image_text(message):
+    """معالج النص - تخطي الصورة"""
     telegram_id = message.from_user.id
     if message.text.lower() in ['تخطي', 'تخطي بدون صورة', 'skip', 'الغاء']:
-        finish_adding_product(message, "")
+        state = user_states[telegram_id]
+        state["image_path"] = ""
+        finish_adding_product(message)
     else:
         bot.send_message(message.chat.id, "⚠️ الرجاء إرسال صورة أو كتابة 'تخطي' للمتابعة بدون صورة.")
 
-@bot.message_handler(func=lambda message: message.from_user.id in user_states and 
-                     user_states[message.from_user.id].get("step") == "waiting_for_product_images" and 
-                     message.content_type == 'text')
-def handle_product_images_text(message):
-    """معالج النص عند إضافة صور متعددة"""
-    telegram_id = message.from_user.id
-    state = user_states[telegram_id]
-    
-    if message.text in ['✅ تم - حفظ المنتج', 'تم', 'انتهيت', 'انتهى', 'done', 'finish']:
-        # حفظ المنتج مع الصور
-        finish_adding_product(message, "")
-    elif message.text == "➕ إضافة المزيد من الصور":
-        # الاستمرار في إضافة الصور
-        bot.send_message(message.chat.id, 
-                        "📤 الرجاء إرسال الصور التالية.\n"
-                        "بعد الانتهاء، اضغط '✅ تم - حفظ المنتج' لحفظ المنتج.")
-    else:
-        # إضافة زر "تم" في لوحة المفاتيح
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        markup.row("✅ تم - حفظ المنتج", "➕ إضافة المزيد من الصور")
-        
-        bot.send_message(message.chat.id, 
-                        "⚠️ الرجاء إرسال صورة أو اضغط '✅ تم - حفظ المنتج' لحفظ المنتج.",
-                        reply_markup=markup)
-
-def finish_adding_product(message, image_path=""):
+def finish_adding_product(message):
+    """حفظ المنتج النهائي - المتاجر المفتوحة فقط"""
     telegram_id = message.from_user.id
     if telegram_id not in user_states:
-        bot.send_message(message.chat.id, "انتهت الجلسة، ابدأ من جديد.")
+        bot.send_message(message.chat.id, "❌ انتهت الجلسة، ابدأ من جديد.")
         return
     
     state = user_states[telegram_id]
     
-    # التحقق من وجود جميع البيانات المطلوبة
-    required_fields = ["seller_id", "category_id", "product_name", "price"]
-    for field in required_fields:
+    # التحقق من البيانات المطلوبة
+    required = ["seller_id", "category_id", "product_name", "price", "quantity"]
+    for field in required:
         if field not in state:
-            bot.send_message(message.chat.id, f"⚠️ بيانات غير مكتملة: {field}")
+            bot.send_message(message.chat.id, f"❌ بيانات غير مكتملة: {field}")
             del user_states[telegram_id]
-            show_seller_menu(message)
             return
     
-    # حفظ المنتج في قاعدة البيانات
     seller_id = state["seller_id"]
     category_id = state["category_id"]
     product_name = state["product_name"]
-    description = state.get("description", "")
     price = state["price"]
-    wholesale_price = state.get("wholesale_price")
+    quantity = state["quantity"]
+    description = state.get("description", "")
+    wholesale_price = state.get("wholesale_price", None)  # قد تكون None إذا لم يدخل المستخدم قيمة
+    image_path = state.get("image_path", "")
     
-    # التحقق من حالة المتجر
-    seller = get_seller_by_id(seller_id)
-    require_registration = False
-    if seller and len(seller) > 9:
-        require_registration = seller[9] == 1 if not IS_POSTGRES else (seller[9] if seller[9] is not None else False)
-    
-    # تحديد الكمية
-    if require_registration:
-        # للمتاجر المقفولة: الكمية الافتراضية = 1، ثم سيتم تحديثها بعد إضافة الصور
-        quantity = 1  # افتراضياً، سيتم تحديثها بعد إضافة الصور
-    else:
-        # للمتاجر المفتوحة: الكمية يدوية
-        quantity = state.get("quantity", 1)  # افتراضياً 1
+    print(f"🔄 حفظ المنتج: {product_name} | السعر: {price} | سعر الجملة: {wholesale_price} | الكمية: {quantity} | الصورة: {image_path}")
     
     try:
-        # إضافة المنتج
-        add_product_db(seller_id, category_id, product_name, description, price, wholesale_price, quantity, image_path)
-        
-        # الحصول على ProductID للمنتج المضاف حديثاً
+        # إنشاء اتصال بقاعدة البيانات
         conn = get_db_connection()
         cursor = conn.cursor()
-        if IS_POSTGRES:
-            cursor.execute("SELECT ProductID FROM Products WHERE SellerID=%s AND CategoryID=%s AND Name=%s ORDER BY ProductID DESC LIMIT 1", 
-                         (seller_id, category_id, product_name))
-        else:
-            cursor.execute("SELECT ProductID FROM Products WHERE SellerID=? AND CategoryID=? AND Name=? ORDER BY ProductID DESC LIMIT 1", 
-                         (seller_id, category_id, product_name))
-        result = cursor.fetchone()
-        product_id = None
-        if result:
-            product_id = result[0]
         
-        # إذا كان المتجر مقفول، حفظ الصور المتعددة في ProductImages
-        if require_registration and product_id:
-            product_images = state.get("product_images", [])
-            
-            # حفظ الصور في ProductImages
-            for idx, img_path in enumerate(product_images):
-                try:
-                    add_product_image_db(product_id, img_path, idx)
-                    print(f"✅ تم حفظ الصورة {idx+1}: {img_path}")
-                except Exception as e:
-                    print(f"⚠️ خطأ في حفظ الصورة {idx+1}: {e}")
-            
-            # حساب عدد الصور وتحديث الكمية
-            if IS_POSTGRES:
-                cursor.execute("SELECT COUNT(*) FROM ProductImages WHERE ProductID=%s", (product_id,))
-            else:
-                cursor.execute("SELECT COUNT(*) FROM ProductImages WHERE ProductID=?", (product_id,))
-            result = cursor.fetchone()
-            image_count = result[0] if result else 0
-            
-            print(f"📊 عدد الصور المحفوظة: {image_count}")
-            
-            # تحديث الكمية
-            if IS_POSTGRES:
-                cursor.execute("UPDATE Products SET Quantity=%s WHERE ProductID=%s", (image_count, product_id))
-            else:
-                cursor.execute("UPDATE Products SET Quantity=? WHERE ProductID=?", (image_count, product_id))
-            conn.commit()
-            quantity = image_count
-            print(f"✅ تم تحديث الكمية إلى: {quantity}")
+        # إدراج المنتج
+        if IS_POSTGRES:
+            cursor.execute("""
+                INSERT INTO Products (SellerID, CategoryID, Name, Description, Price, WholesalePrice, Quantity, ImagePath, Status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'active')
+            """, (seller_id, category_id, product_name, description, price, wholesale_price, quantity, image_path))
+        else:
+            cursor.execute("""
+                INSERT INTO Products (SellerID, CategoryID, Name, Description, Price, WholesalePrice, Quantity, ImagePath, Status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')
+            """, (seller_id, category_id, product_name, description, price, wholesale_price, quantity, image_path))
+        
+        conn.commit()
+        
+        # استرجاع ProductID
+        if IS_POSTGRES:
+            cursor.execute("""
+                SELECT ProductID FROM Products 
+                WHERE SellerID=%s AND CategoryID=%s AND Name=%s 
+                ORDER BY ProductID DESC LIMIT 1
+            """, (seller_id, category_id, product_name))
+        else:
+            cursor.execute("""
+                SELECT ProductID FROM Products 
+                WHERE SellerID=? AND CategoryID=? AND Name=? 
+                ORDER BY ProductID DESC LIMIT 1
+            """, (seller_id, category_id, product_name))
+        
+        result = cursor.fetchone()
+        if not result:
+            print("❌ فشل إنشاء المنتج!")
+            bot.send_message(message.chat.id, "❌ حدث خطأ في إنشاء المنتج.")
+            conn.close()
+            return
+        
+        product_id = result[0] if isinstance(result, tuple) else result['productid']
+        print(f"✅ تم إنشاء المنتج: ProductID={product_id}")
+        
+        # إدراج الصورة في ProductImages إذا كانت موجودة
+        if image_path:
+            try:
+                print(f"📝 [ProductImages] Inserting image_path='{image_path}' for ProductID={product_id}")
+                if IS_POSTGRES:
+                    cursor.execute("""
+                        INSERT INTO ProductImages (ProductID, ImagePath, ImageOrder)
+                        VALUES (%s, %s, 0)
+                    """, (product_id, image_path))
+                else:
+                    cursor.execute("""
+                        INSERT INTO ProductImages (ProductID, ImagePath, ImageOrder)
+                        VALUES (?, ?, 0)
+                    """, (product_id, image_path))
+                conn.commit()
+                print(f"✅ [ProductImages] Saved: ProductID={product_id}, ImagePath='{image_path}'")
+            except Exception as e:
+                print(f"⚠️ خطأ في إدراج الصورة: {e}")
         
         conn.close()
-    except Exception as e:
-        print(f"⚠️ خطأ في حفظ المنتج: {e}")
-        bot.send_message(message.chat.id, "⚠️ حدث خطأ في حفظ المنتج، يرجى المحاولة مرة أخرى.")
+        
+        # رسالة النجاح
+        success_msg = f"""
+✅ **تم حفظ المنتج بنجاح!**
+
+📦 **اسم المنتج:** {product_name}
+💰 **السعر:** {price}
+📊 **الكمية:** {quantity}
+"""
+        
+        if image_path:
+            success_msg += f"📸 **الصورة:** تم رفعها\n"
+        
+        if description:
+            success_msg += f"📝 **الوصف:** {description}\n"
+        
+        bot.send_message(message.chat.id, success_msg)
+        
+        # حذف الحالة
         del user_states[telegram_id]
-        return
-    
-    # الحصول على اسم القسم
-    category = get_category_by_id(category_id)
-    category_name = category[2] if category else "غير محدد"
-    
-    success_msg = f"✅ **تم إضافة المنتج بنجاح!**\n\n"
-    success_msg += f"🛒 **المنتج:** {product_name}\n"
-    success_msg += f"📁 **القسم:** {category_name}\n"
-    success_msg += f"💰 **السعر:** {price} IQD\n"
-    if wholesale_price:
-        success_msg += f"💰 **سعر الجملة:** {wholesale_price} IQD\n"
-    if require_registration:
-        success_msg += f"📦 **الكمية:** {quantity} صورة (تلقائية)\n"
-    else:
-        success_msg += f"📦 **الكمية:** {quantity}\n"
-    
-    if description:
-        success_msg += f"📝 **الوصف:** {description}\n"
-    
-    # عرض معلومات الصور
-    if require_registration:
-        product_images = state.get("product_images", [])
-        if product_images:
-            success_msg += f"📸 **تم رفع {len(product_images)} صورة للمنتج**"
-        else:
-            success_msg += "📷 **لم يتم رفع صور للمنتج**"
-    elif image_path and os.path.exists(image_path):
-        success_msg += "📸 **تم رفع صورة المنتج**"
-    else:
-        success_msg += "📷 **بدون صورة**"
-    
-    # إرسال الصورة مع التفاصيل إذا كان هناك صورة
-    if image_path and os.path.exists(image_path):
-        try:
-            with open(image_path, 'rb') as photo:
-                bot.send_photo(message.chat.id, photo, caption=success_msg, parse_mode='Markdown')
-        except Exception as e:
-            print(f"⚠️ خطأ في إرسال الصورة: {e}")
-            bot.send_message(message.chat.id, success_msg, parse_mode='Markdown')
-    else:
-        bot.send_message(message.chat.id, success_msg, parse_mode='Markdown')
-    
-    del user_states[telegram_id]
-    show_seller_menu(message)
+        
+        # إظهار القائمة الرئيسية
+        show_seller_menu(message)
+        
+    except Exception as e:
+        print(f"❌ خطأ في حفظ المنتج: {e}")
+        import traceback
+        traceback.print_exc()
+        bot.send_message(message.chat.id, f"❌ خطأ: {str(e)}")
+        if telegram_id in user_states:
+            del user_states[telegram_id]
+
+# Handler لـ متجر مقفول - يحتاج صور متعددة (سيتم إضافته لاحقاً)
 
 # ====== تعديل المنتج ======
 @bot.message_handler(func=lambda message: message.text == "✏️ تعديل منتج" and is_seller(message.from_user.id))
@@ -5396,27 +5342,16 @@ def handle_select_product_to_edit(call):
             "product_data": product
         }
         
-        # التحقق من حالة المتجر
-        seller_id = product[1]
-        seller = get_seller_by_id(seller_id)
-        require_registration = False
-        if seller and len(seller) > 9:
-            require_registration = seller[9] == 1 if not IS_POSTGRES else (seller[9] if seller[9] is not None else False)
-        
+        # جميع المتاجر مفتوحة - عرض جميع خيارات التعديل
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
             types.InlineKeyboardButton("✏️ تعديل الاسم", callback_data="edit_prod_name"),
             types.InlineKeyboardButton("📝 تعديل الوصف", callback_data="edit_prod_desc"),
             types.InlineKeyboardButton("💰 تعديل السعر", callback_data="edit_prod_price"),
             types.InlineKeyboardButton("💰 تعديل سعر الجملة", callback_data="edit_prod_wholesale"),
-        )
-        # إخفاء تعديل الكمية للمتاجر المقفولة (الكمية تلقائية من عدد الصور)
-        if not require_registration:
-            markup.add(types.InlineKeyboardButton("📦 تعديل الكمية", callback_data="edit_prod_qty"))
-        markup.add(
+            types.InlineKeyboardButton("📦 تعديل الكمية", callback_data="edit_prod_qty"),
             types.InlineKeyboardButton("📁 تغيير القسم", callback_data="edit_prod_cat"),
             types.InlineKeyboardButton("📸 تغيير الصورة", callback_data="edit_prod_img"),
-            types.InlineKeyboardButton("🖼️ إدارة الصور المتعددة", callback_data=f"manage_product_images_{product_id}"),
             types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_edit_product")
         )
         
@@ -5697,22 +5632,7 @@ def process_edit_product_quantity(message):
     product_id = state["product_id"]
     product = state["product_data"]
     
-    # التحقق من حالة المتجر
-    seller_id = product[1]
-    seller = get_seller_by_id(seller_id)
-    require_registration = False
-    if seller and len(seller) > 9:
-        require_registration = seller[9] == 1 if not IS_POSTGRES else (seller[9] if seller[9] is not None else False)
-    
-    # إذا كان المتجر مقفول، لا يمكن تعديل الكمية يدوياً
-    if require_registration:
-        bot.send_message(message.chat.id,
-            "⚠️ **لا يمكن تعديل الكمية يدوياً**\n\n"
-            "في المتاجر المقفولة، الكمية تحسب تلقائياً من عدد الصور.\n"
-            "لتعديل الكمية، أضف أو احذف الصور من قائمة '🖼️ إدارة الصور المتعددة'.")
-        del user_states[telegram_id]
-        show_seller_menu(message)
-        return
+    # جميع المتاجر مفتوحة - يمكن تعديل الكمية مباشرة
     
     if message.text == "🏠 الرئيسية":
         del user_states[telegram_id]
@@ -5739,7 +5659,10 @@ def process_edit_product_quantity(message):
 
 @bot.message_handler(func=lambda message: message.from_user.id in user_states and 
                      user_states[message.from_user.id]["step"] == "edit_product_image")
+@bot.message_handler(func=lambda message: message.from_user.id in user_states and 
+                     user_states[message.from_user.id]["step"] == "edit_product_image")
 def process_edit_product_image(message):
+    """معالجة تحديث الصورة مع خيارات واضحة"""
     telegram_id = message.from_user.id
     state = user_states[telegram_id]
     
@@ -5754,7 +5677,25 @@ def process_edit_product_image(message):
         return
     
     elif message.text == "🗑️ حذف الصورة الحالية":
-        update_product(state["product_id"], image_path="")
+        try:
+            product_id = state["product_id"]
+            
+            # حذف من ProductImages
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            if IS_POSTGRES:
+                cursor.execute('DELETE FROM "productimages" WHERE "productid"=%s', (product_id,))
+            else:
+                cursor.execute("DELETE FROM ProductImages WHERE ProductID=?", (product_id,))
+            conn.commit()
+            conn.close()
+            print(f"✅ تم حذف الصور من ProductImages للمنتج {product_id}")
+            
+            # تحديث Products (للتوافق)
+            update_product(product_id, image_path="")
+            
+        except Exception as e:
+            print(f"⚠️ خطأ في حذف الصورة: {e}")
         
         bot.send_message(message.chat.id,
                         "✅ **تم حذف صورة المنتج بنجاح!**")
@@ -5774,20 +5715,63 @@ def process_edit_product_image(message):
 @bot.message_handler(content_types=['photo'], func=lambda message: message.from_user.id in user_states and 
                      user_states[message.from_user.id]["step"] == "waiting_for_new_product_image")
 def handle_new_product_image_photo(message):
+    """معالج تحديث صورة المنتج - نفس منطق Flutter"""
     telegram_id = message.from_user.id
     state = user_states[telegram_id]
+    product_id = state["product_id"]
     
-    image_path = save_photo_from_message(message)
-    if not image_path:
-        bot.send_message(message.chat.id, "⚠️ حدث خطأ في حفظ الصورة، لم يتم تغيير الصورة.")
-    else:
-        update_product(state["product_id"], image_path=image_path)
+    try:
+        # ✅ حفظ الصورة في ImageStorage والحصول على اسم الملف
+        filename = save_photo_from_message(message)
+        if not filename:
+            bot.send_message(message.chat.id, "⚠️ حدث خطأ في حفظ الصورة، لم يتم تغيير الصورة.")
+            del user_states[telegram_id]
+            show_seller_menu(message)
+            return
+        
+        # ✅ حذف الصور القديمة للمنتج (إن وجدت)
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            
+            # حذف الروابط القديمة
+            if IS_POSTGRES:
+                cursor.execute('DELETE FROM "productimages" WHERE "productid"=%s', (product_id,))
+            else:
+                cursor.execute("DELETE FROM ProductImages WHERE ProductID=?", (product_id,))
+            
+            conn.commit()
+            conn.close()
+            print(f"✅ تم حذف الصور القديمة للمنتج {product_id}")
+        except Exception as e:
+            print(f"⚠️ خطأ في حذف الصور القديمة: {e}")
+        
+        # ✅ إضافة الصورة الجديدة في ProductImages
+        try:
+            image_id = add_product_image_db(product_id, filename, 0)
+            print(f"✅ [ProductImages] تم إضافة صورة جديدة: ImageID={image_id}, Filename={filename}")
+        except Exception as e:
+            print(f"⚠️ خطأ في إضافة الصورة في ProductImages: {e}")
+        
+        # ✅ تحديث Products لم يعد ضروري (الصور الآن في ProductImages)
+        # لكن نحتفظ بـ ImagePath للتوافق مع الأنظمة القديمة
+        update_product(product_id, image_path=filename)
         
         bot.send_message(message.chat.id,
-                        "✅ **تم تغيير صورة المنتج بنجاح!**")
+                        "✅ **تم تغيير صورة المنتج بنجاح!**\n\n"
+                        f"📁 {filename}\n"
+                        "الصورة الجديدة ستظهر الآن في عرض المنتج.")
+        
+    except Exception as e:
+        print(f"❌ خطأ في معالجة الصورة الجديدة: {e}")
+        import traceback
+        traceback.print_exc()
+        bot.send_message(message.chat.id, "⚠️ حدث خطأ في معالجة الصورة.")
     
-    del user_states[telegram_id]
-    show_seller_menu(message)
+    finally:
+        if telegram_id in user_states:
+            del user_states[telegram_id]
+        show_seller_menu(message)
 
 @bot.message_handler(func=lambda message: message.from_user.id in user_states and 
                      user_states[message.from_user.id]["step"] == "waiting_for_new_product_image" and 
@@ -5934,33 +5918,52 @@ def handle_view_product_detail(call):
         markup.add(types.InlineKeyboardButton("🔙 رجوع للقائمة", callback_data="back_to_prod_list"))
 
         # Try to resolve valid image path
-        final_img_path = None
+        final_img_data = None  # Changed from final_img_path to handle binary data
+        
         if img_path:
-            # 1. Check exact path from DB
-            if os.path.exists(img_path):
-                final_img_path = img_path
-            else:
-                # 2. Check local Images folder (Fix for OS path mismatch)
+            # 1. Try to get image from cloud (ImageStorage table)
+            if IS_POSTGRES:
                 filename = os.path.basename(img_path)
-                local_path = os.path.join(IMAGES_FOLDER, filename)
-                if os.path.exists(local_path):
-                    final_img_path = local_path
+                cloud_data = get_image_from_cloud(filename)
+                if cloud_data:
+                    final_img_data = cloud_data
+                    print(f"✅ Got image from cloud: {filename} ({len(cloud_data)} bytes)")
+            
+            # 2. If not found in cloud, check local file
+            if not final_img_data:
+                if os.path.exists(img_path):
+                    final_img_path = img_path
                 else:
-                    # Lazy Download from Cloud if missing
-                    print(f"⚠️ Image found in DB but missing locally: {filename}. Attempting download...")
-                    if download_image_from_cloud(filename):
-                        if os.path.exists(local_path):
-                             final_img_path = local_path
-                             print(f"✅ Successfully downloaded {filename}")
-                        else:
-                             print(f"❌ Download reported success but file still missing: {local_path}")
+                    # Check local Images folder (Fix for OS path mismatch)
+                    filename = os.path.basename(img_path)
+                    local_path = os.path.join(IMAGES_FOLDER, filename)
+                    if os.path.exists(local_path):
+                        final_img_path = local_path
                     else:
-                        print(f"❌ Failed to download {filename} from cloud.")
+                        # Lazy Download from Cloud if missing
+                        print(f"⚠️ Image found in DB but missing locally: {filename}. Attempting download...")
+                        if download_image_from_cloud(filename):
+                            if os.path.exists(local_path):
+                                final_img_path = local_path
+                                print(f"✅ Successfully downloaded {filename}")
+                            else:
+                                print(f"❌ Download reported success but file still missing: {local_path}")
+                        else:
+                            print(f"❌ Failed to download {filename} from cloud.")
+                
+                # Load local file as binary if exists
+                if 'final_img_path' in locals() and final_img_path:
+                    try:
+                        with open(final_img_path, 'rb') as f:
+                            final_img_data = f.read()
+                    except Exception as e:
+                        print(f"❌ Error reading local image: {e}")
 
-        if final_img_path:
+        if final_img_data:
             try:
-                with open(final_img_path, 'rb') as photo:
-                    bot.send_photo(call.message.chat.id, photo, caption=text, parse_mode='Markdown', reply_markup=markup)
+                from io import BytesIO
+                photo = BytesIO(final_img_data)
+                bot.send_photo(call.message.chat.id, photo, caption=text, parse_mode='Markdown', reply_markup=markup)
             except Exception as img_error:
                 print(f"⚠️ Error sending photo for product {pid}: {img_error}")
                 bot.send_message(call.message.chat.id, text, parse_mode='Markdown', reply_markup=markup)
@@ -7374,6 +7377,11 @@ def handle_delete_order(call):
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
     try:
+        call_data = call.data
+        print(f"\n{'='*60}")
+        print(f"🔍 CALLBACK RECEIVED: '{call_data}'")
+        print(f"{'='*60}\n")
+        
         # تخطي معالجات الزبائن الآجلين لأنها موجودة كمعالجات منفصلة
         if (call.data.startswith("edit_credit_customer_") or 
             call.data.startswith("edit_customer_name_") or 
@@ -7390,6 +7398,14 @@ def callback_handler(call):
             handle_create_admin_store(call)
         elif call.data == "admin_mode_only":
             handle_admin_mode_only(call)
+        elif call.data.startswith("toggle_store_reg_"):
+            handle_toggle_store_registration(call)
+        elif call.data.startswith("viewcat_"):
+            print(f"✅ MATCHED: viewcat_ handler will be called")
+            print(f"✅ استدعاء handle_view_category مع callback data: {call.data}")
+            handle_view_category(call)
+        elif call.data.startswith("back_to_categories_"):
+            handle_back_to_categories(call)
         elif call.data == "list_active_stores":
             list_active_stores_callback(call)
         elif call.data == "list_suspended_stores":
@@ -7444,8 +7460,6 @@ def callback_handler(call):
             handle_manage_store_registration(call)
         elif call.data.startswith("toggle_store_reg_"):
             handle_toggle_store_registration(call)
-        elif call.data.startswith("viewcat_"):
-            handle_view_category(call)
         elif call.data.startswith("back_to_categories_"):
             handle_back_to_categories(call)
         elif call.data.startswith("select_images_"):
@@ -7494,8 +7508,12 @@ def callback_handler(call):
         else:
             bot.answer_callback_query(call.id, "هذا الزر غير نشط حالياً")
     except Exception as e:
+        print(f"❌ ERROR in callback_handler: {e}")
         traceback.print_exc()
-        bot.answer_callback_query(call.id, f"حدث خطأ: {e}")
+        try:
+            bot.answer_callback_query(call.id, f"حدث خطأ: {str(e)[:50]}")
+        except:
+            pass
 
 def list_active_stores_callback(call):
     conn = get_db_connection()
@@ -7653,9 +7671,111 @@ def activate_store_selected(call):
     
     bot.send_message(call.message.chat.id, "✅ تم تنشيط المتجر بنجاح")
 
+# ====== دالة خاصة لمتجر TELEBOT (المتاجر المغلقة) ======
+def send_telebot_catalog(chat_id, customer_telegram_id=None):
+    """
+    إرسال كتالوج متجر TELEBOT - يعرض منتجات المتاجر المغلقة فقط
+    """
+    try:
+        print(f"🔍 send_telebot_catalog: عرض منتجات المتاجر المغلقة")
+        
+        # التأكد من تسجيل الزبون
+        if customer_telegram_id:
+            user = get_user(customer_telegram_id)
+            if not user:
+                add_user(customer_telegram_id, None, 'buyer', None, None)
+        
+        # جلب المنتجات من المتاجر المغلقة (RequireCustomerRegistration = 1)
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        if IS_POSTGRES:
+            query = """
+                SELECT DISTINCT p.ProductID, p.SellerID, p.CategoryID, p.Name, p.Description, 
+                       p.Price, p.WholesalePrice, p.Quantity, p.ImagePath, p.Status,
+                       s.StoreName, s.UserName
+                FROM Products p
+                JOIN Sellers s ON p.SellerID = s.SellerID
+                WHERE s.RequireCustomerRegistration = 1 AND s.Status = 'active' AND p.Status = 'active'
+                ORDER BY s.StoreName, p.ProductID
+            """
+            cursor.execute(query)
+        else:
+            query = """
+                SELECT DISTINCT p.ProductID, p.SellerID, p.CategoryID, p.Name, p.Description, 
+                       p.Price, p.WholesalePrice, p.Quantity, p.ImagePath, p.Status,
+                       s.StoreName, s.UserName
+                FROM Products p
+                JOIN Sellers s ON p.SellerID = s.SellerID
+                WHERE s.RequireCustomerRegistration = 1 AND s.Status = 'active' AND p.Status = 'active'
+                ORDER BY s.StoreName, p.ProductID
+            """
+            cursor.execute(query)
+        
+        products = cursor.fetchall()
+        conn.close()
+        
+        if not products:
+            bot.send_message(chat_id, "📭 لا توجد منتجات في المتاجر المغلقة حالياً.")
+            return
+        
+        # تجميع المنتجات حسب المتجر
+        products_by_store = {}
+        for product in products:
+            seller_id = product[1]
+            store_name = product[10]
+            
+            if seller_id not in products_by_store:
+                products_by_store[seller_id] = {'store_name': store_name, 'products': []}
+            
+            products_by_store[seller_id]['products'].append(product)
+        
+        # إرسال رسالة الترحيب
+        bot.send_message(chat_id, "🏪 **TELEBOT - المتاجر المغلقة**\n\nمنتجات المتاجر المقفولة للزبائن المسجلين:")
+        
+        # إرسال المنتجات لكل متجر
+        for seller_id, store_data in products_by_store.items():
+            store_name = store_data['store_name']
+            store_products = store_data['products']
+            
+            # عنوان المتجر
+            bot.send_message(chat_id, f"\n🏪 **{store_name}** ({len(store_products)} منتج)")
+            
+            # إرسال كل منتج مع صورة واحدة فقط
+            for product in store_products:
+                product_id, seller_id, category_id, name, description, price, wholesale_price, quantity, image_path, status, store_name, username = product
+                
+                text = f"📦 **{name}**\n"
+                if description:
+                    text += f"📝 {description}\n"
+                text += f"💰 السعر: {price:,.0f} IQD\n"
+                text += f"📦 الكمية المتاحة: {quantity}\n"
+                
+                markup = types.InlineKeyboardMarkup()
+                markup.row(
+                    types.InlineKeyboardButton("➕ إضافة للسلة", callback_data=f"addtocart_{product_id}_1"),
+                    types.InlineKeyboardButton("🛒 السلة", callback_data="view_cart")
+                )
+                
+                # ⚡ إرسال رسالة نصية سريعة (بدون صور لتجنب timeout)
+                bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
+        
+    except Exception as e:
+        print(f"❌ خطأ في send_telebot_catalog: {e}")
+        import traceback
+        traceback.print_exc()
+        bot.send_message(chat_id, f"❌ خطأ: {str(e)}")
+
 # ====== معالجة المتاجر والعرض ======
 def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id, customer_telegram_id=None):
     """إرسال كتالوج المتجر - يتطلب تسجيل الزبون في CreditCustomers إذا كان الإعداد مفعلاً"""
+    
+    # معالجة خاصة لمتجر TELEBOT
+    if seller_telegram_id == 999999999:  # TelegramID لـ TELEBOT
+        print(f"🔍 متجر TELEBOT - عرض المتاجر المغلقة")
+        send_telebot_catalog(chat_id, customer_telegram_id)
+        return
+    
     try:
         print(f"🔍 send_store_catalog_by_telegram_id: seller_telegram_id={seller_telegram_id}, customer_telegram_id={customer_telegram_id}")
         
@@ -7696,28 +7816,17 @@ def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id, customer_tele
         bot.send_message(chat_id, f"⚠️ حدث خطأ في فتح المتجر: {str(e)}")
         return
     
-    if not seller or seller[5] != 'active':
+    if not seller or seller.status != 'active':
         bot.send_message(chat_id, "⚠️ المتجر غير موجود أو معطل حالياً.")
         return
     
-    seller_id = seller[0]
-    store_name = seller[3]
-    username = seller[2] or "بائع"
-    is_admin_store = (seller[1] == BOT_ADMIN_ID)
+    seller_id = seller.seller_id
+    store_name = seller.store_name
+    username = seller.user_name or "بائع"
+    is_admin_store = (seller.telegram_id == BOT_ADMIN_ID)
     
-    # التحقق من إعداد RequireCustomerRegistration (العمود 9 في جدول Sellers)
-    # إذا كان الإعداد مفعلاً (1)، يجب التحقق من تسجيل الزبون
-    require_registration = False
-    print(f"🔍 DEBUG: len(seller)={len(seller)}")
-    print(f"🔍 DEBUG: seller[0:10]={seller[0:10]}")  # اطبع أول 10 أعمدة
-    
-    if len(seller) > 9:
-        print(f"🔍 DEBUG: seller[9]={seller[9]} (type: {type(seller[9]).__name__})")
-        require_registration = seller[9] == 1 if not IS_POSTGRES else (seller[9] if seller[9] is not None else False)
-        print(f"🔍 DEBUG: require_registration calculated as: {require_registration}")
-    else:
-        print(f"⚠️ WARNING: seller doesn't have element 9! Only {len(seller)} elements.")
-        require_registration = False
+    # التحقق من إعداد RequireCustomerRegistration
+    require_registration = bool(seller.require_registration)
     
     print(f"🔐 متجر معرف: {store_name}, require_registration={require_registration}, customer_id={customer_telegram_id}, seller_id={seller_telegram_id}")
     print(f"🔐 المقارنة: customer_id({type(customer_telegram_id).__name__})={customer_telegram_id} != seller_id({type(seller_telegram_id).__name__})={seller_telegram_id}")
@@ -7771,23 +7880,34 @@ def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id, customer_tele
         
         bot.send_message(chat_id, f"🏪 **{store_name}**\n👤 البائع: {format_seller_mention(username, seller_id)}\n\n🛍️ المنتجات المتاحة:")
         
+        # ⚡ إرسال المنتجات بسرعة (بدون صور لتجنب timeout)
         for product in products:
             pid, name, desc, price, wholesale_price, qty, img_path = product
             print(f"DEBUG: Displaying product {pid}: {name}, qty={qty}")
             if qty > 0:
-                # دائماً: عرض مع الصور والأزرار
+                # إرسال رسالة نصية سريعة بدل الصورة
+                caption = f"🛒 **{name}**\n💰 السعر: {price} IQD"
+                if wholesale_price and wholesale_price > 0:
+                    caption += f"\n💰 سعر الجملة: {wholesale_price} IQD"
+                caption += f"\n📦 متاح: {qty}"
+                if desc:
+                    caption += f"\n📝 {desc[:50]}{'...' if len(desc) > 50 else ''}"
+                
                 markup = types.InlineKeyboardMarkup()
                 markup = create_product_markup_with_qty(pid, 1)
-                send_product_with_image(chat_id, product, markup, store_name)
+                bot.send_message(chat_id, caption, reply_markup=markup, parse_mode='Markdown')
     else:
         # عرض الفئات للجميع (مسجلين وغير مسجلين)
         markup = types.InlineKeyboardMarkup(row_width=2)
         for cat_id, cat_name in categories:
             # حفظ معلومة ما إذا كان مسجلاً في callback_data
             # سنرسل customer_is_registered مع البيانات
-            markup.add(types.InlineKeyboardButton(cat_name, callback_data=f"viewcat_{cat_id}_{seller_id}"))
+            callback_data = f"viewcat_{cat_id}_{seller_id}"
+            print(f"🔘 إضافة زر: '{cat_name}' مع callback: '{callback_data}'")
+            markup.add(types.InlineKeyboardButton(cat_name, callback_data=callback_data))
         
         seller_display = format_seller_mention(username, seller_id)
+        print(f"📤 إرسال كتالوج المتجر: {store_name} (seller_id={seller_id}, categories={len(categories)})")
         bot.send_message(chat_id, 
             f"🏪 **{store_name}**\n👤 البائع: {seller_display}\n\n📁 اختر القسم:", 
             reply_markup=markup, 
@@ -8066,17 +8186,32 @@ def handle_back_to_stores_list(call):
 
 def handle_view_category(call):
     try:
+        print(f"\n{'='*60}")
+        print(f"🔥 handle_view_category STARTED")
+        print(f"📦 call.data = {call.data}")
+        print(f"{'='*60}\n")
+        
         parts = call.data.split("_")
         category_id = int(parts[1])
         seller_id = int(parts[2])
         
+        print(f"✅ Parsed: category_id={category_id}, seller_id={seller_id}")
+        
         category = get_category_by_id(category_id)
+        print(f"🔍 get_category_by_id({category_id}) returned: {category}")
         if not category:
+            print(f"❌ Category not found!")
             bot.answer_callback_query(call.id, "القسم غير موجود")
             return
         
+        # category هو tuple: (CategoryID, SellerID, Name)
+        category_name = category[2] if len(category) > 2 else "قسم"
+        print(f"✅ Category found: {category_name}")
+        
         seller = get_seller_by_id(seller_id)
+        print(f"🔍 get_seller_by_id({seller_id}) returned: {seller}")
         if not seller:
+            print(f"❌ Seller not found!")
             bot.answer_callback_query(call.id, "المتجر غير موجود")
             return
         
@@ -8085,36 +8220,69 @@ def handle_view_category(call):
         customer_telegram_id = call.from_user.id
         seller_telegram_id = seller[1]
         
+        print(f"🔍 DEBUG handle_view_category: category_id={category_id}, seller_id={seller_id}, category_name={category_name}")
+        print(f"🔍 DEBUG: seller length={len(seller) if seller else 0}, requires_registration={requires_registration}")
+        
+        # ⚡ الإجابة السريعة على callback query أولاً لتجنب timeout
+        bot.answer_callback_query(call.id)
+        
         # التحقق من تسجيل الزبون إذا كان المتجر مقفولاً
         is_registered = True  # افتراضياً: مسجل
         
         if requires_registration:
+            print(f"🔐 متجر مقفول - البحث عن التسجيل")
             # التحقق من تسجيل الزبون
             if customer_telegram_id != seller_telegram_id:  # ليس صاحب المتجر
-                is_registered = is_customer_registered_for_store_by_telegram_id(customer_telegram_id, seller_id)
+                try:
+                    is_registered = is_customer_registered_for_store_by_telegram_id(customer_telegram_id, seller_id)
+                    print(f"✅ نتيجة التحقق: is_registered={is_registered}")
+                except Exception as e:
+                    print(f"⚠️ خطأ في التحقق: {e}, افتراض أن العميل غير مسجل")
+                    is_registered = False
+        else:
+            print(f"ℹ️ متجر مفتوح")
         
         # إذا كان المتجر مغلقاً وليس مسجلاً - عرض رسالة رفض
         if requires_registration and not is_registered:
+            print(f"❌ متجر مغلق وعميل غير مسجل")
             bot.send_message(call.message.chat.id,
                 f"🏪 **{seller_name}**\n\n"
                 f"⚠️ **نعتذر، المتجر مغلق**\n\n"
                 f"حسابك غير مسجل في هذا المتجر.\n"
                 f"يرجى التواصل مع البائع للتسجيل.",
                 parse_mode='Markdown')
-            bot.answer_callback_query(call.id, "المتجر مغلق")
             return
         
+        print(f"✅ يمكن عرض المنتجات")
+        print(f"🔍 جاري جلب المنتجات من قاعدة البيانات...")
+        
+        # ⚡ إرسال رسالة التحميل سريعاً قبل جلب المنتجات
+        try:
+            bot.send_message(call.message.chat.id, f"📁 **قسم: {category_name}**\n🏪 {seller_name}\n\n⏳ جاري تحميل المنتجات...")
+        except Exception as e:
+            print(f"⚠️ خطأ في إرسال رسالة التحميل: {e}")
+        
         # إذا كان مسجلاً، عرض المنتجات
-        products = get_products(seller_id=seller_id, category_id=category_id)
+        try:
+            products = get_products(seller_id=seller_id, category_id=category_id)
+            print(f"📦 نوع المنتجات: {type(products)}")
+            print(f"📦 عدد المنتجات: {len(products) if products else 0}")
+        except Exception as e:
+            print(f"❌ خطأ في جلب المنتجات: {e}")
+            import traceback
+            traceback.print_exc()
+            bot.send_message(call.message.chat.id, f"❌ خطأ في جلب المنتجات: {e}")
+            return
         
         if not products:
-            bot.send_message(call.message.chat.id, f"📦 لا توجد منتجات في قسم {category[2]}")
-            bot.answer_callback_query(call.id)
+            print(f"⚠️ products is None or empty list")
+            bot.send_message(call.message.chat.id, f"📦 لا توجد منتجات في قسم {category_name}")
             return
         
         # عرض المنتجات (نفس المنطق السابق)
         if requires_registration and is_registered:
-            # متجر مغلق لكن الزبون مسجل - عرض بدون صور
+            # متجر مقفول لكن الزبون مسجل - عرض بدون صور
+            print(f"🎯 عرض بدون صور (متجر مقفول)")
             markup = types.InlineKeyboardMarkup()
             
             for product in products:
@@ -8134,21 +8302,52 @@ def handle_view_category(call):
             bot.send_message(call.message.chat.id, text, reply_markup=markup)
         else:
             # متجر مفتوح - عرض مع الصور
-            text = f"📁 **قسم: {category[2]}**\n🏪 {seller_name}\n\n🛍️ المنتجات المتاحة:\n\n"
+            print(f"🎯 عرض مع صور (متجر مفتوح)")
             
+            # ⚡ إرسال رسالة سريعة أولاً لتجنب timeout
+            text = f"📁 **قسم: {category_name}**\n🏪 {seller_name}\n\n🛍️ جاري تحميل المنتجات..."
+            try:
+                bot.send_message(call.message.chat.id, text, parse_mode='Markdown')
+            except:
+                pass
+            
+            # ⚡ إرسال المنتجات بسرعة (بدون صور أولاً، ثم الصور)
+            products_sent = 0
             for product in products:
                 pid, name, desc, price, wholesale_price, qty, img_path = product
                 if qty > 0:
-                    markup = types.InlineKeyboardMarkup()
-                    markup = create_product_markup_with_qty(pid, 1)
-                    send_product_with_image(call.message.chat.id, product, markup, seller_name)
-        
-        bot.answer_callback_query(call.id)
+                    try:
+                        markup = types.InlineKeyboardMarkup()
+                        markup = create_product_markup_with_qty(pid, 1)
+                        # إرسال نص سريع بدل الصورة (أسرع بكثير)
+                        caption = f"🛒 **{name}**\n💰 السعر: {price} IQD"
+                        if wholesale_price and wholesale_price > 0:
+                            caption += f"\n💰 سعر الجملة: {wholesale_price} IQD"
+                        caption += f"\n📦 متاح: {qty}"
+                        if desc:
+                            caption += f"\n📝 {desc[:50]}{'...' if len(desc) > 50 else ''}"
+                        
+                        bot.send_message(call.message.chat.id, caption, reply_markup=markup, parse_mode='Markdown')
+                        products_sent += 1
+                        
+                        # تأخير صغير لتجنب flood
+                        if products_sent % 5 == 0:
+                            import time
+                            time.sleep(0.1)
+                    except Exception as e:
+                        print(f"⚠️ Error sending product {pid}: {e}")
+                        continue
+            
+            print(f"✅ تم إرسال {products_sent} منتج")
     except Exception as e:
-        print(f"Error in handle_view_category: {e}")
+        print(f"❌ Error in handle_view_category: {e}")
         import traceback
         traceback.print_exc()
-        bot.answer_callback_query(call.id, "حدث خطأ")
+        try:
+            bot.send_message(call.message.chat.id, "❌ حدث خطأ في تحميل المنتجات")
+        except:
+            pass
+
 
 def handle_back_to_categories(call):
     """الرجوع لقائمة الفئات"""
@@ -8427,7 +8626,7 @@ def delete_product_image_db(image_id):
         cursor = conn.cursor()
         
         if IS_POSTGRES:
-            cursor.execute("DELETE FROM ProductImages WHERE ImageID=%s", (image_id,))
+            cursor.execute('DELETE FROM "productimages" WHERE "imageid"=%s', (image_id,))
         else:
             cursor.execute("DELETE FROM ProductImages WHERE ImageID=?", (image_id,))
         
@@ -8557,15 +8756,16 @@ def handle_save_product_image(message):
                 seller_id = product[1]
                 seller = get_seller_by_id(seller_id)
                 require_registration = False
-                if seller and len(seller) > 9:
-                    require_registration = seller[9] == 1 if not IS_POSTGRES else (seller[9] if seller[9] is not None else False)
+                if seller and len(seller) > 10:
+                    # المعامل 10 = RequireCustomerRegistration (بعد إضافة ImagePath)
+                    require_registration = seller[10] == 1 if not IS_POSTGRES else (seller[10] if seller[10] is not None else False)
                 
                 if require_registration:
                     # حساب عدد الصور بعد إضافة الصورة الجديدة وتحديث الكمية
                     conn = get_db_connection()
                     cursor = conn.cursor()
                     if IS_POSTGRES:
-                        cursor.execute("SELECT COUNT(*) FROM ProductImages WHERE ProductID=%s", (product_id,))
+                        cursor.execute('SELECT COUNT(*) FROM "productimages" WHERE "productid"=%s', (product_id,))
                     else:
                         cursor.execute("SELECT COUNT(*) FROM ProductImages WHERE ProductID=?", (product_id,))
                     result = cursor.fetchone()
@@ -8670,8 +8870,9 @@ def handle_delete_product_image(call):
             # تحديث كمية المنتج تلقائياً إذا كان المتجر مقفول
             seller = get_seller_by_id(seller_id)
             require_registration = False
-            if seller and len(seller) > 9:
-                require_registration = seller[9] == 1 if not IS_POSTGRES else (seller[9] if seller[9] is not None else False)
+            if seller and len(seller) > 10:
+                # المعامل 10 = RequireCustomerRegistration (بعد إضافة ImagePath)
+                require_registration = seller[10] == 1 if not IS_POSTGRES else (seller[10] if seller[10] is not None else False)
             
             if require_registration:
                 # حساب عدد الصور المتبقية وتحديث الكمية
