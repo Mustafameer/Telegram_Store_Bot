@@ -62,7 +62,7 @@ class _CartScreenState extends State<CartScreen> {
       try {
         // Get seller info
         final sellers = await DatabaseHelper.instance.getAllSellers(forceRefresh: true);
-        final seller = sellers.firstWhere((s) => s.sellerID == sellerId, orElse: () => null as dynamic);
+        final seller = sellers.firstWhere((s) => s.sellerId == sellerId, orElse: () => null as dynamic);
         
         if (seller == null || !seller.requireCustomerRegistration) {
           allStoresClosed = false;
@@ -71,7 +71,7 @@ class _CartScreenState extends State<CartScreen> {
         
         // Check if user is registered as a credit customer
         final creditCustomers = await DatabaseHelper.instance.getCreditCustomers(sellerId);
-        final isRegistered = creditCustomers.any((cc) => cc.telegramID == widget.userId);
+        final isRegistered = creditCustomers.any((cc) => cc.telegramId == widget.userId);
         
         if (!isRegistered) {
           userRegisteredInAll = false;
