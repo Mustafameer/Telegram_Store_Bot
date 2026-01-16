@@ -9232,20 +9232,11 @@ def handle_checkout_cart(call):
             # حذف المنتجات من السلة
             clear_cart_db(telegram_id)
             
-            # الحصول على الرصيد الجديد من أول متجر (المتاجر المغلقة عادة واحد)
-            first_seller_id = list(items_by_seller.keys())[0]
-            customer = get_credit_customer(first_seller_id, user_info[4] if len(user_info) > 4 else None, user_info[2] if len(user_info) > 2 else None)
-            new_balance = 0
-            if customer:
-                new_balance = get_customer_balance(customer[0], first_seller_id)
-            
             bot.answer_callback_query(call.id, "✅ تم تأكيد طلبك!")
             
-            # رسالة مفصلة تتضمن الرصيد الجديد
+            # رسالة مفصلة تتضمن المبلغ المخصوم
             detail_msg = f"✅ تم إنزال طلبك بنجاح!\n\n"
             detail_msg += f"💰 المبلغ المخصوم: {total_amount_all:,.0f} د.ع\n"
-            if new_balance != 0:
-                detail_msg += f"📊 الرصيد الحالي: {new_balance:,.0f} د.ع\n\n"
             detail_msg += f"سيتم معالجة الطلب من قبل البائع."
             
             bot.send_message(call.message.chat.id, detail_msg)
@@ -9850,8 +9841,12 @@ def create_confirmed_order_for_closed_store(message, telegram_id, seller_id, sel
         )
         
         # Handle both tuple (order_id, total) and single value responses
-        if isinstance(result, tuple):
+        if isinstance(result, tuple) and len(result) == 2:
             order_id, total_amount = result
+            # Check if order_id is None (error case)
+            if order_id is None:
+                print(f"❌ Order creation failed: {total_amount}")
+                return False
         else:
             order_id = result
             total_amount = seller_data.get('subtotal', 0)
