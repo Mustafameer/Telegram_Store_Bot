@@ -284,7 +284,12 @@ class _CartScreenState extends State<CartScreen> {
                              child: Text(storeName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                            ),
                            ...storeItems.map((item) => ListTile(
-                             title: Text(item['Name'] ?? 'منتج محذوف'),
+                             title: Text(item['Name'] ?? 'منتج محذوف', 
+                               style: const TextStyle(
+                                 fontWeight: FontWeight.bold,
+                                 color: Color(0xFF1565C0), // أزرق غامق
+                                 fontSize: 16
+                               )),
                              subtitle: Text('السعر: ${formatPrice(item['Price'])} د.ع'),
                              leading: item['ImagePath'] != null 
                               ? CircleAvatar(backgroundImage: FileImage(File(item['ImagePath']))) 
