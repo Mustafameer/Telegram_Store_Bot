@@ -9188,6 +9188,7 @@ def handle_checkout_cart(call):
                     'subtotal': 0
                 }
             
+            # Store only the essential data: (product_id, quantity, price, name)
             items_by_seller[seller_id]['items'].append((product_id, quantity, price, name))
             items_by_seller[seller_id]['subtotal'] += price * quantity
         
@@ -9297,7 +9298,7 @@ def process_guest_checkout_phone(message):
                 'subtotal': 0
             }
         
-        items_by_seller[seller_id]['items'].append((product_id, quantity, price))
+        items_by_seller[seller_id]['items'].append((product_id, quantity, price, name))
         items_by_seller[seller_id]['subtotal'] += price * quantity
     
     # تحديث حالة المستخدم
