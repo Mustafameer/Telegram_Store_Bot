@@ -72,37 +72,64 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
     // Refresh for both Seller (stats) and Buyer (cart/products)
     // if (!widget.isSellerMode) return;  <-- REMOVED limitation
     
+    print('🔄 جاري تحديث الأرقام...');
     final sellerId = widget.seller.sellerId;
-    final products = await DatabaseHelper.instance.getProductsCount(sellerId);
-    final categories = await DatabaseHelper.instance.getCategoriesCount(sellerId);
     
-    int orders = 0;
-    int customers = 0;
-    int messages = 0;
-    int cart = 0;
+    try {
+      // استخدام Future.wait لتحميل البيانات بشكل متوازي مع timeouts
+      final results = await Future.wait([
+        DatabaseHelper.instance.getProductsCount(sellerId).timeout(
+          const Duration(seconds: 5),
+          onTimeout: () => 0,
+        ),
+        DatabaseHelper.instance.getCategoriesCount(sellerId).timeout(
+          const Duration(seconds: 5),
+          onTimeout: () => 0,
+        ),
+        if (widget.isSellerMode) ...[
+          DatabaseHelper.instance.getOrdersCount(sellerId).timeout(
+            const Duration(seconds: 5),
+            onTimeout: () => 0,
+          ),
+          DatabaseHelper.instance.getCustomersCount(sellerId).timeout(
+            const Duration(seconds: 5),
+            onTimeout: () => 0,
+          ),
+        ] else ...[
+          Future.value(0),
+          Future.value(0),
+        ],
+      ]);
 
-    if (widget.isSellerMode) {
-       orders = await DatabaseHelper.instance.getOrdersCount(sellerId);
-       customers = await DatabaseHelper.instance.getCustomersCount(sellerId);
-       messages = await DatabaseHelper.instance.getMessagesCount(sellerId);
-    } else {
-       // Buyer Mode
-       if (widget.currentUserId != null) {
-          cart = await DatabaseHelper.instance.getCartCount(widget.currentUserId!);
-       }
-    }
-    
-    if (mounted) {
-      setState(() {
-        _counts = {
-          'products': products,
-          'orders': orders,
-          'categories': categories,
-          'customers': customers,
-          'messages': messages,
-          'cart': cart
-        };
-      });
+      int products = results[0];
+      int categories = results[1];
+      int orders = results[2];
+      int customers = results[3];
+      int messages = 0;
+      int cart = 0;
+
+      if (!widget.isSellerMode && widget.currentUserId != null) {
+        cart = await DatabaseHelper.instance.getCartCount(widget.currentUserId!).timeout(
+          const Duration(seconds: 5),
+          onTimeout: () => 0,
+        );
+      }
+      
+      if (mounted) {
+        print('✅ تم التحديث: منتجات=$products, أقسام=$categories, طلبات=$orders, زبائن=$customers, سلة=$cart');
+        setState(() {
+          _counts = {
+            'products': products,
+            'orders': orders,
+            'categories': categories,
+            'customers': customers,
+            'messages': messages,
+            'cart': cart
+          };
+        });
+      }
+    } catch (e) {
+      print('❌ خطأ في تحديث الأرقام: $e');
     }
   }
 

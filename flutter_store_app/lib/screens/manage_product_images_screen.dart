@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import '../database/database_helper.dart';
@@ -29,16 +29,27 @@ class _ManageProductImagesScreenState extends State<ManageProductImagesScreen> {
   Future<void> _loadImages() async {
     setState(() => _isLoading = true);
     try {
+      print('🔍 جاري تحميل الصور للمنتج: ${widget.product.productId}');
       final images = await DatabaseHelper.instance.getProductImages(widget.product.productId);
+      print('✅ تم تحميل ${images.length} صورة للمنتج ${widget.product.productId}');
+      for (var img in images) {
+        print('   - صورة ID: ${img.imageId}, المسار: ${img.imagePath}');
+      }
       setState(() {
         _images = images;
         _isLoading = false;
       });
-    } catch (e) {
+    } catch (e, stackTrace) {
+      print('❌ خطأ في تحميل الصور: $e');
+      print('📍 StackTrace: $stackTrace');
       setState(() => _isLoading = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ في تحميل الصور: $e')),
+          SnackBar(
+            content: Text('خطأ في تحميل الصور: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
         );
       }
     }
@@ -52,46 +63,55 @@ class _ManageProductImagesScreenState extends State<ManageProductImagesScreen> {
       );
 
       if (result != null && result.files.isNotEmpty) {
+        print('📁 تم اختيار ${result.files.length} صورة');
         int addedCount = 0;
         int imageOrder = _images.length;
 
         for (var file in result.files) {
           if (file.path != null) {
             try {
-              await DatabaseHelper.instance.addProductImage(
+              print('📤 جاري إضافة الصورة: ${file.name}');
+              final imageId = await DatabaseHelper.instance.addProductImage(
                 widget.product.productId,
                 file.path!,
                 imageOrder: imageOrder++,
               );
-              addedCount++;
+              if (imageId > 0) {
+                print('✅ تم إضافة الصورة بنجاح: ${file.name} (ID: $imageId)');
+                addedCount++;
+              } else {
+                print('❌ فشل إضافة الصورة: ${file.name}');
+              }
             } catch (e) {
-              print('خطأ في إضافة الصورة ${file.name}: $e');
+              print('❌ خطأ في إضافة الصورة ${file.name}: $e');
             }
           }
         }
         
-        // تحديث كمية المنتج تلقائياً إذا كان المتجر مقفول
+        print('📊 تم إضافة $addedCount صورة من أصل ${result.files.length}');
+        
+        // تحديث كمية المنتج تلقائياً
         if (addedCount > 0) {
-          final seller = await DatabaseHelper.instance.getSellerById(widget.product.sellerId);
-          if (seller?.requireCustomerRegistration == true) {
-            // إعادة تحميل الصور بعد الإضافة
+          try {
+            print('📥 جاري جلب الصور بعد الإضافة...');
             final images = await DatabaseHelper.instance.getProductImages(widget.product.productId);
             final imageCount = images.length;
             
             print('📊 عدد الصور بعد الإضافة: $imageCount');
+            print('   - الصور:');
+            for (var img in images) {
+              print('   - صورة ID: ${img.imageId}, المسار: ${img.imagePath}');
+            }
             
-            // الحصول على المنتج المحدث من قاعدة البيانات
-            final products = await DatabaseHelper.instance.getProducts(widget.product.sellerId);
-            final currentProduct = products.firstWhere(
-              (p) => p.productId == widget.product.productId,
-              orElse: () => widget.product,
-            );
-            
-            // تحديث الكمية
-            final updatedProduct = currentProduct.copyWith(quantity: imageCount);
+            // تحديث الكمية بناءً على عدد الصور
+            print('🔄 جاري تحديث الكمية من ${widget.product.quantity} إلى $imageCount');
+            final updatedProduct = widget.product.copyWith(quantity: imageCount);
             await DatabaseHelper.instance.updateProduct(updatedProduct);
             
             print('✅ تم تحديث الكمية إلى: $imageCount');
+            print('📝 المنتج المحدث: ${updatedProduct.name}, الكمية: ${updatedProduct.quantity}');
+          } catch (e) {
+            print('❌ خطأ في تحديث الكمية: $e');
           }
         }
 
@@ -102,10 +122,12 @@ class _ManageProductImagesScreenState extends State<ManageProductImagesScreen> {
               backgroundColor: Colors.green,
             ),
           );
+          await Future.delayed(const Duration(milliseconds: 500));
           _loadImages();
         }
       }
     } catch (e) {
+      print('❌ خطأ في عملية الإضافة: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('خطأ في إضافة الصور: $e')),
@@ -146,15 +168,8 @@ class _ManageProductImagesScreenState extends State<ManageProductImagesScreen> {
             
             print('📊 عدد الصور بعد الحذف: $imageCount');
             
-            // الحصول على المنتج المحدث من قاعدة البيانات
-            final products = await DatabaseHelper.instance.getProducts(widget.product.sellerId);
-            final currentProduct = products.firstWhere(
-              (p) => p.productId == widget.product.productId,
-              orElse: () => widget.product,
-            );
-            
-            // تحديث الكمية
-            final updatedProduct = currentProduct.copyWith(quantity: imageCount);
+            // تحديث الكمية مباشرة
+            final updatedProduct = widget.product.copyWith(quantity: imageCount);
             await DatabaseHelper.instance.updateProduct(updatedProduct);
             
             print('✅ تم تحديث الكمية إلى: $imageCount');
@@ -276,36 +291,109 @@ class _ManageProductImagesScreenState extends State<ManageProductImagesScreen> {
                           itemCount: _images.length,
                           itemBuilder: (context, index) {
                             final image = _images[index];
-                            final file = File(image.imagePath);
-                            final exists = file.existsSync();
-
-                            return Stack(
-                              children: [
-                                Card(
+                            
+                            // حساب الحجم: 4×4 سم = ~454×454 pixels (عند 96 DPI)
+                            final imageSize = 454.0;
+                            
+                            return Container(
+                              width: imageSize,
+                              height: imageSize,
+                              child: Stack(
+                                children: [
+                                  Card(
                                   clipBehavior: Clip.antiAlias,
-                                  child: exists
-                                      ? Image.file(
-                                          file,
+                                  child: FutureBuilder<Uint8List?>(
+                                    future: DatabaseHelper.instance.getImageData(image.imagePath),
+                                    builder: (context, snapshot) {
+                                      print('🔍 حالة الصورة: ${image.imagePath}, الحالة: ${snapshot.connectionState}');
+                                      
+                                      if (snapshot.connectionState == ConnectionState.waiting) {
+                                        print('⏳ جاري تحميل الصورة: ${image.imagePath}');
+                                        return Container(
+                                          color: Colors.grey[100],
+                                          child: const Center(
+                                            child: CircularProgressIndicator(),
+                                          ),
+                                        );
+                                      }
+                                      
+                                      if (snapshot.hasData && snapshot.data != null) {
+                                        print('✅ تم تحميل الصورة بنجاح: ${image.imagePath}, الحجم: ${snapshot.data!.length} bytes');
+                                        return Image.memory(
+                                          snapshot.data!,
                                           fit: BoxFit.cover,
                                           errorBuilder: (context, error, stackTrace) {
+                                            print('❌ خطأ في عرض الصورة: ${image.imagePath}, الخطأ: $error');
                                             return Container(
                                               color: Colors.grey[200],
-                                              child: const Icon(
-                                                Icons.broken_image,
-                                                size: 40,
-                                                color: Colors.grey,
+                                              child: const Column(
+                                                mainAxisAlignment: MainAxisAlignment.center,
+                                                children: [
+                                                  Icon(
+                                                    Icons.broken_image,
+                                                    size: 40,
+                                                    color: Colors.grey,
+                                                  ),
+                                                  SizedBox(height: 8),
+                                                  Text(
+                                                    'خطأ في الصورة',
+                                                    style: TextStyle(fontSize: 10, color: Colors.grey),
+                                                  ),
+                                                ],
                                               ),
                                             );
                                           },
-                                        )
-                                      : Container(
-                                          color: Colors.grey[200],
-                                          child: const Icon(
-                                            Icons.image_not_supported,
-                                            size: 40,
-                                            color: Colors.grey,
+                                        );
+                                      }
+                                      
+                                      if (snapshot.hasError) {
+                                        print('⚠️ خطأ في تحميل الصورة: ${image.imagePath}, الخطأ: ${snapshot.error}');
+                                        return Container(
+                                          color: Colors.red[100],
+                                          child: Center(
+                                            child: Column(
+                                              mainAxisAlignment: MainAxisAlignment.center,
+                                              children: [
+                                                const Icon(
+                                                  Icons.error,
+                                                  size: 40,
+                                                  color: Colors.red,
+                                                ),
+                                                const SizedBox(height: 8),
+                                                Text(
+                                                  '${snapshot.error}'.length > 30 ? '${snapshot.error}'.substring(0, 30) + '...' : '${snapshot.error}',
+                                                  style: const TextStyle(fontSize: 9, color: Colors.red),
+                                                  textAlign: TextAlign.center,
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        );
+                                      }
+                                      
+                                      print('⚠️ لم يتم تحميل الصورة: ${image.imagePath}، البيانات: ${snapshot.data}');
+                                      return Container(
+                                        color: Colors.grey[300],
+                                        child: const Center(
+                                          child: Column(
+                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            children: [
+                                              Icon(
+                                                Icons.image_not_supported,
+                                                size: 40,
+                                                color: Colors.grey,
+                                              ),
+                                              SizedBox(height: 8),
+                                              Text(
+                                                'لم يتم تحميل الصورة',
+                                                style: TextStyle(fontSize: 10, color: Colors.grey),
+                                              ),
+                                            ],
                                           ),
                                         ),
+                                      );
+                                    },
+                                  ),
                                 ),
                                 Positioned(
                                   top: 4,
@@ -326,31 +414,8 @@ class _ManageProductImagesScreenState extends State<ManageProductImagesScreen> {
                                     ),
                                   ),
                                 ),
-                                if (!exists)
-                                  Positioned(
-                                    bottom: 4,
-                                    left: 4,
-                                    right: 4,
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 8,
-                                        vertical: 4,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: Colors.orange.withOpacity(0.8),
-                                        borderRadius: BorderRadius.circular(4),
-                                      ),
-                                      child: const Text(
-                                        'ملف غير موجود',
-                                        style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 10,
-                                        ),
-                                        textAlign: TextAlign.center,
-                                      ),
-                                    ),
-                                  ),
                               ],
+                              ),
                             );
                           },
                         ),
