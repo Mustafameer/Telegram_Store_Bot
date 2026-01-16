@@ -9042,12 +9042,16 @@ def view_cart(message, user_id=None):
             item_total = price * quantity
             total += item_total
             
+            # Escape special markdown characters to avoid parsing errors
+            safe_name = escape_markdown_v1(name) if name else "منتج"
+            safe_seller_name = escape_markdown_v1(seller_name) if seller_name else "متجر"
+            
             # Text Line
             # 1. Product Name (xQty) - Total
-            cart_text += f"{idx}. **{name}**\n"
+            cart_text += f"{idx}. **{safe_name}**\n"
             cart_text += f"   💰 {price:,.0f} x {quantity} = {item_total:,.0f} IQD\n"
-            cart_text += f"   🏪 {seller_name}\n"
-            cart_text += "   ------------------------\n"
+            cart_text += f"   🏪 {safe_seller_name}\n"
+            cart_text += "   ────────────────────\n"
             
             # Control Row for this item
             # [ ➖ ] [ Qty ] [ ➕ ] [ 🗑️ ]
@@ -9095,10 +9099,14 @@ def update_cart_view(chat_id, message_id, user_id):
             item_total = price * quantity
             total += item_total
             
-            cart_text += f"{idx}. **{name}**\n"
+            # Escape special markdown characters
+            safe_name = escape_markdown_v1(name) if name else "منتج"
+            safe_seller_name = escape_markdown_v1(seller_name) if seller_name else "متجر"
+            
+            cart_text += f"{idx}. **{safe_name}**\n"
             cart_text += f"   💰 {price:,.0f} x {quantity} = {item_total:,.0f} IQD\n"
-            cart_text += f"   🏪 {seller_name}\n"
-            cart_text += "   ------------------------\n"
+            cart_text += f"   🏪 {safe_seller_name}\n"
+            cart_text += "   ────────────────────\n"
             
             markup.row(
                 types.InlineKeyboardButton("➖", callback_data=f"decrease_cart_{product_id}"),
