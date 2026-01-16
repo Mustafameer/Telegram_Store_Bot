@@ -9641,7 +9641,7 @@ def handle_skip_seller(call):
     
     # حذف عناصر هذا البائع من السلة
     seller_items = state["items_by_seller"][seller_id]['items']
-    for product_id, quantity, price in seller_items:
+    for product_id, quantity, price, name in seller_items:
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("DELETE FROM Carts WHERE UserID=? AND ProductID=?", (telegram_id, product_id))
@@ -9692,10 +9692,12 @@ def process_delivery_address(message):
         guest_phone = state.get("guest_phone")
         
         # إنشاء طلب للزائر
+        # Extract only (product_id, quantity, price) from seller_data['items']
+        cart_items_for_guest = [(pid, qty, price) for pid, qty, price, name in seller_data['items']]
         order_id, total = create_order_for_guest(
             telegram_id, 
             seller_id, 
-            seller_data['items'], 
+            cart_items_for_guest, 
             delivery_address, 
             guest_name, 
             guest_phone, 
@@ -9776,7 +9778,7 @@ def process_delivery_address(message):
             return
     
     # حذف عناصر هذا البائع من السلة
-    for product_id, quantity, price in seller_data['items']:
+    for product_id, quantity, price, name in seller_data['items']:
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("DELETE FROM Carts WHERE UserID=? AND ProductID=?", (telegram_id, product_id))
