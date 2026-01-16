@@ -233,37 +233,14 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
                           style: const TextStyle(fontSize: 16),
                         ),
                         const SizedBox(height: 12),
-                        // إخفاء حقل الكمية للمتاجر المقفولة (الكمية تلقائية من عدد الصور)
-                        if (!widget.requireCustomerRegistration)
-                          TextFormField(
-                            controller: _qtyController,
-                            decoration: const InputDecoration(labelText: 'الكمية', border: OutlineInputBorder()),
-                            keyboardType: TextInputType.number,
-                            validator: (v) => v!.isEmpty ? 'مطلوب' : null,
-                            style: const TextStyle(fontSize: 16),
-                          ),
-                        if (widget.requireCustomerRegistration)
-                          Card(
-                            color: Colors.blue.shade50,
-                            child: Padding(
-                              padding: const EdgeInsets.all(12.0),
-                              child: Row(
-                                children: [
-                                  const Icon(Icons.info_outline, color: Colors.blue),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      '⚠️ الكمية ستكون تلقائياً بعدد الصور التي ستضيفها',
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        color: Colors.blue.shade900,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
+                        // كل المتاجر مفتوحة - حقل الكمية مرئي دائماً
+                        TextFormField(
+                          controller: _qtyController,
+                          decoration: const InputDecoration(labelText: 'الكمية', border: OutlineInputBorder()),
+                          keyboardType: TextInputType.number,
+                          validator: (v) => v!.isEmpty ? 'مطلوب' : null,
+                          style: const TextStyle(fontSize: 16),
+                        ),
                       ],
                     )
                   : Row(
@@ -295,41 +272,16 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        // إخفاء حقل الكمية للمتاجر المقفولة (الكمية تلقائية من عدد الصور)
-                        if (!widget.requireCustomerRegistration)
-                          Expanded(
-                            child: TextFormField(
-                              controller: _qtyController,
-                              decoration: const InputDecoration(labelText: 'الكمية', border: OutlineInputBorder()),
-                              keyboardType: TextInputType.number,
-                              validator: (v) => v!.isEmpty ? 'مطلوب' : null,
-                              style: const TextStyle(fontSize: 16),
-                            ),
+                        // كل المتاجر مفتوحة - حقل الكمية مرئي دائماً
+                        Expanded(
+                          child: TextFormField(
+                            controller: _qtyController,
+                            decoration: const InputDecoration(labelText: 'الكمية', border: OutlineInputBorder()),
+                            keyboardType: TextInputType.number,
+                            validator: (v) => v!.isEmpty ? 'مطلوب' : null,
+                            style: const TextStyle(fontSize: 16),
                           ),
-                        if (widget.requireCustomerRegistration)
-                          Expanded(
-                            child: Card(
-                              color: Colors.blue.shade50,
-                              child: Padding(
-                                padding: const EdgeInsets.all(12.0),
-                                child: Row(
-                                  children: [
-                                    const Icon(Icons.info_outline, color: Colors.blue),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Text(
-                                        '⚠️ الكمية ستكون تلقائياً بعدد الصور التي ستضيفها',
-                                        style: TextStyle(
-                                          fontSize: 14,
-                                          color: Colors.blue.shade900,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
+                        ),
                       ],
                     ),
                 const SizedBox(height: 12),

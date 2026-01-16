@@ -32,7 +32,8 @@ class Seller:
     user_name: Optional[str]
     store_name: Optional[str]
     status: Optional[str]
-    image_path: Optional[str]
+    image_path: Optional[str] = None
+    require_registration: int = 0
 
     @classmethod
     def from_tuple(cls, data):
@@ -42,8 +43,9 @@ class Seller:
             telegram_id=data[1],
             user_name=data[2],
             store_name=data[3],
-            status=data[4] if len(data) > 4 else None,
-            image_path=data[9] if len(data) > 9 else None # ImagePath is 10th column in init_db (index 9)
+            status=data[5] if len(data) > 5 else None,
+            image_path=None,  # No image_path column in Sellers table
+            require_registration=data[9] if len(data) > 9 else 0  # RequireCustomerRegistration is index 9
         )
 
 @dataclass

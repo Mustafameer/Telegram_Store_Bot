@@ -136,6 +136,17 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
   }
 
   Future<void> _showEditStoreDialog(BuildContext context) async {
+    // ⚠️ منع تعديل متجر TELEBOT
+    if (widget.seller.telegramId == 999999999) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('⛔ متجر TELEBOT (المتاجر المغلقة) لا يمكن تعديله - يتم إدارته بواسطة النظام'),
+          backgroundColor: Colors.orangeAccent,
+        ),
+      );
+      return;
+    }
+
     await showDialog(
       context: context,
       builder: (context) => StoreFormDialog(
@@ -306,7 +317,8 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
                   );
                 },
               ),
-            if (widget.isSellerMode)
+            // ⚠️ أزرار التحكم (مخفية لـ TELEBOT)
+            if (widget.isSellerMode && widget.seller.telegramId != 999999999)
               IconButton(
                 icon: Icon(
                   widget.seller.requireCustomerRegistration ? Icons.lock : Icons.lock_open,
@@ -315,7 +327,8 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
                 tooltip: widget.seller.requireCustomerRegistration ? 'فتح المتجر' : 'قفل المتجر',
                 onPressed: () => _toggleStoreLock(),
               ),
-            if (widget.isSellerMode)
+            // ⚠️ زر التعديل (مخفي لـ TELEBOT)
+            if (widget.isSellerMode && widget.seller.telegramId != 999999999)
               IconButton(
                 icon: const Icon(Icons.edit),
                 tooltip: 'تعديل المتجر',

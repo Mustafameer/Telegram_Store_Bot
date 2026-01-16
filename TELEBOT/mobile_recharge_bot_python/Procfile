@@ -1,0 +1,4 @@
+# Procfile for Railway (and Heroku)
+# تعريف كيفية تشغيل التطبيق على Railway
+
+worker: python polling_bot.py

@@ -1,0 +1,10 @@
+{
+  "build": {
+    "builder": "nixpacks"
+  },
+  "deploy": {
+    "startCommand": "gunicorn --bind 0.0.0.0:$PORT --workers 4 webhook:app",
+    "restartPolicyCondition": "on-failure",
+    "restartPolicyMaxRetries": 3
+  }
+}

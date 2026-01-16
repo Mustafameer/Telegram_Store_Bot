@@ -1,0 +1,1 @@
+[{"text":"1 [0$]","data":1},{"text":"3 [0$]","data":3},{"text":"20 [0$]","data":20},{"text":"40 [0$]","data":40},{"text":"60 [0$]","data":60},{"text":"250 [0$]","data":250},{"text":"500 [0$]","data":500},"SELECT * FROM `pricesnow` WHERE `type`='photos' AND `select`=1 AND `company`='zain'"]

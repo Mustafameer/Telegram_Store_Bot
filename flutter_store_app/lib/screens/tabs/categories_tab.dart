@@ -60,6 +60,18 @@ class _CategoriesTabState extends State<CategoriesTab> {
   }
 
   void _showCategoryDialog({Category? category}) {
+    // ⚠️ السماح للبائع بإضافة الفئات لمتجره حتى لو كان مقفولاً
+    // لكن منع TELEBOT من الفئات (لأنه متجر موحد)
+    if (!widget.isEditable) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('🔒 هذا المتجر ليس متجرك - لا يمكنك إضافة فئات'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+    
     showDialog(
       context: context,
       builder: (context) => CategoryFormDialog(
@@ -79,7 +91,9 @@ class _CategoriesTabState extends State<CategoriesTab> {
           } else {
             await DatabaseHelper.instance.updateCategory(newCategory);
           }
-          if (mounted) _refreshCategories(force: true);
+          if (mounted) {
+            await _refreshCategories(force: true);
+          }
         },
       ),
     );
@@ -255,7 +269,11 @@ class _CategoryFormDialogState extends State<CategoryFormDialog> {
             if (_nameController.text.isNotEmpty) {
               try {
                 await widget.onSave(_nameController.text, _imagePath);
-                if (context.mounted) Navigator.pop(context);
+                if (context.mounted) {
+                  // انتظر قليلاً لضمان تحديث البيانات
+                  await Future.delayed(const Duration(milliseconds: 500));
+                  if (context.mounted) Navigator.pop(context);
+                }
               } catch (e) {
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red));

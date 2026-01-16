@@ -9147,7 +9147,6 @@ def handle_checkout_cart(call):
 
         # Admin store filtering removed to allow purchases
         cleaned_cart = cart_items
-        # removed_any = False logic removed
 
         if not cleaned_cart:
             bot.send_message(call.message.chat.id, "⛔ السلة لا تحتوي على منتجات قابلة للشراء حالياً.")
@@ -9176,6 +9175,7 @@ def handle_checkout_cart(call):
             bot.answer_callback_query(call.id)
             return
         
+        # تجميع المنتجات حسب البائع
         items_by_seller = {}
         
         for item in cart_items:
@@ -9188,9 +9188,52 @@ def handle_checkout_cart(call):
                     'subtotal': 0
                 }
             
-            items_by_seller[seller_id]['items'].append((product_id, quantity, price))
+            items_by_seller[seller_id]['items'].append((product_id, quantity, price, name))
             items_by_seller[seller_id]['subtotal'] += price * quantity
         
+        # ========== التحقق من نوع المتاجر (مغلقة أم مفتوحة) ==========
+        # إذا كانت جميع المتاجر مغلقة والزبون مسجل، عمل طلب مؤكد مباشرة
+        
+        all_sellers_closed = True
+        user_info = get_user(telegram_id)
+        
+        for seller_id in items_by_seller.keys():
+            seller = get_seller_by_id(seller_id)
+            if not seller:
+                all_sellers_closed = False
+                break
+            
+            require_registration = seller[9] if len(seller) > 9 else 0
+            if not require_registration:
+                # متجر مفتوح
+                all_sellers_closed = False
+                break
+            
+            # التحقق من أن الزبون مسجل في هذا المتجر المقفول
+            if not user_info:
+                all_sellers_closed = False
+                break
+            
+            is_registered = is_customer_registered_for_store_by_telegram_id(telegram_id, seller_id)
+            if not is_registered:
+                all_sellers_closed = False
+                break
+        
+        # إذا كانت جميع المتاجر مغلقة والزبون مسجل في جميعها
+        if all_sellers_closed and user_info:
+            print(f"✅ جميع المتاجر مغلقة - إنشاء طلب مؤكد مباشرة")
+            # إنشاء طلب لكل متجر مقفول
+            for seller_id, seller_data in items_by_seller.items():
+                create_confirmed_order_for_closed_store(call.message, telegram_id, seller_id, seller_data, user_info)
+            
+            # حذف المنتجات من السلة
+            clear_cart_db(telegram_id)
+            
+            bot.answer_callback_query(call.id, "✅ تم تأكيد طلبك!")
+            bot.send_message(call.message.chat.id, "✅ تم إنزال طلبك بنجاح!\n\nسيتم معالجة الطلب من قبل البائع.")
+            return
+        
+        # خلاف ذلك، استخدم النظام الحالي (خطوات إضافية للمتاجر المفتوحة)
         user_states[telegram_id] = {
             "step": "checkout_select_seller",
             "items_by_seller": items_by_seller,
@@ -9757,6 +9800,86 @@ def process_delivery_address(message):
         else:
             del user_states[telegram_id]
             show_buyer_main_menu(message)
+
+def create_confirmed_order_for_closed_store(message, telegram_id, seller_id, seller_data, user_info):
+    """
+    Create 'Confirmed' order immediately for closed stores with registered customers.
+    
+    Parameters:
+    - message: Telegram message object
+    - telegram_id: Customer telegram ID
+    - seller_id: Seller ID
+    - seller_data: Dict containing {'seller_name', 'items': [(product_id, quantity, price, name)], 'subtotal'}
+    - user_info: Tuple from get_user() containing customer info
+    
+    Returns: True if successful, False otherwise
+    """
+    try:
+        print(f"🔄 Creating confirmed order for closed store {seller_id} for customer {telegram_id}")
+        
+        # 1. Format items for order creation: [(product_id, quantity), ...]
+        items = [(int(product_id), int(quantity)) for product_id, quantity, price, name in seller_data['items']]
+        
+        # 2. Create order with status='Confirmed' (آجل)
+        # Using create_order with credit payment (آجل) and set to Confirmed
+        order_id = create_order(
+            buyer_id=telegram_id,
+            seller_id=seller_id,
+            cart_items=items,
+            delivery_address=None,  # No address needed for closed stores
+            payment_method='credit',  # آجل (credit)
+            fully_paid=False
+        )
+        
+        if not order_id:
+            print(f"❌ Failed to create order for closed store {seller_id}")
+            return False
+        
+        print(f"✅ Order created with ID: {order_id}")
+        
+        # 3. Get seller telegram ID for notification
+        seller = get_seller_by_id(seller_id)
+        if not seller:
+            print(f"⚠️ Seller {seller_id} not found")
+            return False
+        
+        seller_telegram_id = seller[1] if seller else None
+        seller_name = escape_markdown_v1(seller[3]) if seller else "المتجر"
+        
+        # 4. Get customer name from user_info
+        # user_info structure: (user_id, telegram_id, first_name, last_name, phone, ...)
+        customer_name = escape_markdown_v1(user_info[2] if len(user_info) > 2 else "الزبون")
+        
+        # 5. Format items list for notification
+        items_text = "\n".join([f"• {escape_markdown_v1(name)} x {qty}" for _, qty, _, name in seller_data['items']])
+        
+        # 6. Create notification message for store owner
+        subtotal = seller_data.get('subtotal', 0)
+        notification = (
+            f"📦 *طلب جديد من زبون آجل*\n\n"
+            f"👤 الزبون: *{customer_name}*\n"
+            f"🏪 المتجر: *{seller_name}*\n\n"
+            f"📋 *المنتجات المطلوبة:*\n"
+            f"{items_text}\n\n"
+            f"💰 *الإجمالي:* {subtotal} د.ع\n\n"
+            f"📌 رقم الطلب: `{order_id}`"
+        )
+        
+        # 7. Send notification to store owner
+        if seller_telegram_id:
+            try:
+                bot.send_message(seller_telegram_id, notification, parse_mode='Markdown')
+                print(f"✅ Notification sent to seller {seller_telegram_id}")
+            except Exception as notify_error:
+                print(f"⚠️ Failed to send notification to seller: {notify_error}")
+                # Don't fail the order creation if notification fails
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error creating confirmed order for closed store: {e}")
+        traceback.print_exc()
+        return False
 
 def create_order_for_guest(buyer_id, seller_id, cart_items, delivery_address=None, guest_name=None, guest_phone=None, payment_method='cash', fully_paid=False):
     """إنشاء طلب للزوار (غير المسجلين)"""

@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🤖 بوت شحن الهاتف المحمول - السرفر المحلي</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+        
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px 20px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+        
+        .content {
+            padding: 40px;
+        }
+        
+        .section {
+            margin-bottom: 40px;
+        }
+        
+        .section h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+            font-size: 1.8em;
+            border-bottom: 3px solid #667eea;
+            padding-bottom: 10px;
+        }
+        
+        .info-box {
+            background: #f0f4ff;
+            border-left: 5px solid #667eea;
+            padding: 20px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        
+        .step {
+            background: #fff;
+            border: 2px solid #e0e0e0;
+            padding: 20px;
+            margin: 15px 0;
+            border-radius: 8px;
+            transition: all 0.3s;
+        }
+        
+        .step:hover {
+            border-color: #667eea;
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.2);
+        }
+        
+        .step-number {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 40px;
+            font-weight: bold;
+            margin-right: 15px;
+        }
+        
+        .step-title {
+            font-weight: bold;
+            font-size: 1.2em;
+            margin-bottom: 10px;
+            color: #333;
+        }
+        
+        .step-content {
+            margin-left: 55px;
+        }
+        
+        .code-block {
+            background: #2d3436;
+            color: #00ff00;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            overflow-x: auto;
+            margin: 10px 0;
+            font-size: 0.9em;
+        }
+        
+        .table-info {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        
+        .table-info th,
+        .table-info td {
+            padding: 12px;
+            text-align: right;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        .table-info th {
+            background: #667eea;
+            color: white;
+            font-weight: bold;
+        }
+        
+        .table-info tr:hover {
+            background: #f5f5f5;
+        }
+        
+        .success {
+            background: #d4edda;
+            border-left-color: #28a745;
+            color: #155724;
+        }
+        
+        .warning {
+            background: #fff3cd;
+            border-left-color: #ffc107;
+            color: #856404;
+        }
+        
+        .error {
+            background: #f8d7da;
+            border-left-color: #dc3545;
+            color: #721c24;
+        }
+        
+        .button {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 12px 25px;
+            border-radius: 5px;
+            text-decoration: none;
+            margin: 10px 5px 10px 0;
+            transition: all 0.3s;
+            border: none;
+            cursor: pointer;
+            font-size: 1em;
+        }
+        
+        .button:hover {
+            background: #764ba2;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        
+        .endpoint {
+            background: #f9f9f9;
+            padding: 10px;
+            border-left: 4px solid #667eea;
+            margin: 10px 0;
+            font-family: monospace;
+            border-radius: 4px;
+        }
+        
+        .footer {
+            background: #f0f4ff;
+            padding: 20px;
+            text-align: center;
+            color: #666;
+            border-top: 1px solid #ddd;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>🤖 بوت شحن الهاتف المحمول</h1>
+            <p>Mobile Recharge Bot - Local Server Setup</p>
+        </div>
+        
+        <!-- Content -->
+        <div class="content">
+            
+            <!-- Server Info -->
+            <div class="section">
+                <h2>📡 معلومات السرفر المحلي</h2>
+                <table class="table-info">
+                    <tr>
+                        <th>المعلومة</th>
+                        <th>القيمة</th>
+                    </tr>
+                    <tr>
+                        <td>🌐 عنوان IP</td>
+                        <td><strong>192.168.0.108</strong></td>
+                    </tr>
+                    <tr>
+                        <td>🔌 المنفذ</td>
+                        <td><strong>8000</strong></td>
+                    </tr>
+                    <tr>
+                        <td>📍 رابط الـ Webhook</td>
+                        <td><strong>http://192.168.0.108:8000/webhook</strong></td>
+                    </tr>
+                    <tr>
+                        <td>💾 قاعدة البيانات</td>
+                        <td><strong>bot_data.db (SQLite)</strong></td>
+                    </tr>
+                    <tr>
+                        <td>🔐 كلمة المرور</td>
+                        <td><strong>123</strong></td>
+                    </tr>
+                    <tr>
+                        <td>⚙️ البيئة</td>
+                        <td><strong>Local Development</strong></td>
+                    </tr>
+                </table>
+            </div>
+            
+            <!-- Quick Start -->
+            <div class="section">
+                <h2>⚡ البدء السريع</h2>
+                
+                <div class="step">
+                    <div class="step-title">
+                        <span class="step-number">1</span>
+                        فتح سطر الأوامر (Command Prompt)
+                    </div>
+                    <div class="step-content">
+                        <p>افتح نافذة Command Prompt أو PowerShell</p>
+                    </div>
+                </div>
+                
+                <div class="step">
+                    <div class="step-title">
+                        <span class="step-number">2</span>
+                        الذهاب إلى مجلد المشروع
+                    </div>
+                    <div class="step-content">
+                        <div class="code-block">cd c:\Users\Hp\Desktop\TELEBOT\mobile_recharge_bot_python</div>
+                    </div>
+                </div>
+                
+                <div class="step">
+                    <div class="step-title">
+                        <span class="step-number">3</span>
+                        تثبيت المتطلبات (المرة الأولى فقط)
+                    </div>
+                    <div class="step-content">
+                        <div class="code-block">pip install -r requirements.txt</div>
+                    </div>
+                </div>
+                
+                <div class="step">
+                    <div class="step-title">
+                        <span class="step-number">4</span>
+                        تشغيل السرفر
+                    </div>
+                    <div class="step-content">
+                        <div class="code-block">python start_server.py</div>
+                        <p style="margin-top: 10px;">أو انقر على ملف <strong>start.bat</strong></p>
+                    </div>
+                </div>
+                
+                <div class="info-box success">
+                    ✅ إذا رأيت "Starting bot on 192.168.0.108:8000" فالسرفر يعمل بنجاح!
+                </div>
+            </div>
+            
+            <!-- Testing -->
+            <div class="section">
+                <h2>✅ اختبار السرفر</h2>
+                
+                <div class="step">
+                    <div class="step-title">اختبر الـ Status</div>
+                    <div class="step-content">
+                        <div class="code-block">curl http://192.168.0.108:8000/status</div>
+                        <p style="margin-top: 10px;"><strong>النتيجة المتوقعة:</strong></p>
+                        <div class="code-block">{"status": "running"}</div>
+                    </div>
+                </div>
+                
+                <div class="step">
+                    <div class="step-title">اختبر معلومات الـ Webhook</div>
+                    <div class="step-content">
+                        <div class="code-block">curl http://192.168.0.108:8000/get_webhook_info</div>
+                    </div>
+                </div>
+                
+                <div class="step">
+                    <div class="step-title">اختبر البوت على Telegram</div>
+                    <div class="step-content">
+                        <p>افتح Telegram وابحث عن البوت الخاص بك</p>
+                        <p>أرسل الرسالة: <strong>/start</strong></p>
+                        <p>يجب أن تتلقى رسالة ترحيب</p>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- API Endpoints -->
+            <div class="section">
+                <h2>🔗 نقاط النهاية (API Endpoints)</h2>
+                
+                <table class="table-info">
+                    <tr>
+                        <th>الطلب</th>
+                        <th>الوصف</th>
+                        <th>الأمثلة</th>
+                    </tr>
+                    <tr>
+                        <td>POST /webhook</td>
+                        <td>استقبال التحديثات من Telegram</td>
+                        <td>تحديثات البوت</td>
+                    </tr>
+                    <tr>
+                        <td>GET /status</td>
+                        <td>حالة السرفر</td>
+                        <td>http://192.168.0.108:8000/status</td>
+                    </tr>
+                    <tr>
+                        <td>GET /test</td>
+                        <td>اختبار الاتصال بـ Telegram</td>
+                        <td>http://192.168.0.108:8000/test</td>
+                    </tr>
+                    <tr>
+                        <td>GET /get_webhook_info</td>
+                        <td>معلومات الـ Webhook</td>
+                        <td>http://192.168.0.108:8000/get_webhook_info</td>
+                    </tr>
+                </table>
+            </div>
+            
+            <!-- Troubleshooting -->
+            <div class="section">
+                <h2>🐛 استكشاف الأخطاء</h2>
+                
+                <div class="info-box error">
+                    <strong>❌ المشكلة:</strong> "Address already in use"
+                    <p style="margin-top: 10px;"><strong>السبب:</strong> البوت يعمل بالفعل على نفس المنفذ</p>
+                    <p style="margin-top: 10px;"><strong>الحل:</strong> غيّر PORT في ملف .env إلى 8001</p>
+                </div>
+                
+                <div class="info-box error">
+                    <strong>❌ المشكلة:</strong> "Module not found"
+                    <p style="margin-top: 10px;"><strong>السبب:</strong> المتطلبات لم تُثبّت</p>
+                    <div class="code-block" style="margin-top: 10px;">pip install -r requirements.txt</div>
+                </div>
+                
+                <div class="info-box warning">
+                    <strong>⚠️ تلميح:</strong> اطلع على ملف bot.log لتفاصيل أكثر عن الأخطاء
+                </div>
+            </div>
+            
+            <!-- Configuration -->
+            <div class="section">
+                <h2>⚙️ الإعدادات</h2>
+                
+                <p>جميع الإعدادات موجودة في ملف <strong>.env</strong></p>
+                
+                <div class="info-box">
+                    <strong>الإعدادات الرئيسية:</strong>
+                    <table class="table-info" style="margin-top: 15px;">
+                        <tr>
+                            <th>الإعداد</th>
+                            <th>القيمة الحالية</th>
+                            <th>الوصف</th>
+                        </tr>
+                        <tr>
+                            <td>HOST</td>
+                            <td>192.168.0.108</td>
+                            <td>عنوان IP</td>
+                        </tr>
+                        <tr>
+                            <td>PORT</td>
+                            <td>8000</td>
+                            <td>المنفذ</td>
+                        </tr>
+                        <tr>
+                            <td>DEBUG</td>
+                            <td>True</td>
+                            <td>وضع التطوير</td>
+                        </tr>
+                        <tr>
+                            <td>LOG_LEVEL</td>
+                            <td>DEBUG</td>
+                            <td>مستوى التسجيل</td>
+                        </tr>
+                        <tr>
+                            <td>DATABASE_URL</td>
+                            <td>sqlite:///bot_data.db</td>
+                            <td>قاعدة البيانات</td>
+                        </tr>
+                    </table>
+                </div>
+            </div>
+            
+            <!-- Files -->
+            <div class="section">
+                <h2>📁 ملفات المشروع</h2>
+                
+                <div class="info-box">
+                    <strong>الملفات الرئيسية:</strong>
+                    <ul style="margin-top: 15px; margin-right: 20px;">
+                        <li><strong>start_server.py</strong> - نقطة الدخول للسرفر</li>
+                        <li><strong>start.bat</strong> - ملف تشغيل سريع</li>
+                        <li><strong>webhook.py</strong> - تطبيق Flask</li>
+                        <li><strong>config.py</strong> - الإعدادات</li>
+                        <li><strong>database.py</strong> - قاعدة البيانات</li>
+                        <li><strong>handlers.py</strong> - معالجات الرسائل</li>
+                        <li><strong>.env</strong> - متغيرات البيئة</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Footer -->
+        <div class="footer">
+            <p>🚀 البوت جاهز للعمل المحلي!</p>
+            <p style="margin-top: 10px; color: #999;">آخر تحديث: January 15, 2026</p>
+        </div>
+    </div>
+</body>
+</html>

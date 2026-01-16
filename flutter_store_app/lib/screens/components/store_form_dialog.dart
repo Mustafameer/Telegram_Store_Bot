@@ -136,6 +136,9 @@ class _StoreFormDialogState extends State<StoreFormDialog> {
                    print("💾 StoreFormDialog: Saving with requireCustomerRegistration = $_requireCustomerRegistration");
                    await widget.onSave(_nameController.text, tid, _userController.text, _imagePath, _requireCustomerRegistration);
                    print("✅ StoreFormDialog: Save completed successfully");
+                   if (context.mounted) {
+                     Navigator.pop(context);
+                   }
                 } catch (e) {
                   print("❌ StoreFormDialog: Error saving: $e");
                   if (context.mounted) {

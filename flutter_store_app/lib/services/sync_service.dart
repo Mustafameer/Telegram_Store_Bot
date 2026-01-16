@@ -14,27 +14,16 @@ class SyncService {
   SyncService._init();
 
 
-  /// Get the application's executable directory (where .exe is located)
-  String _getExecutableDirectory() {
-    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-      final executablePath = Platform.resolvedExecutable;
-      return p.dirname(executablePath);
-    }
-    return Directory.current.path;
-  }
-
   // Constants
   Future<String> get _localImagesPath async {
     if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-       final exeDir = _getExecutableDirectory();
-       // Check parent directory first (Bot Integration) - relative to executable directory
-       final parentDir = Directory(p.join(p.dirname(exeDir), 'data', 'Images'));
+       // Check parent directory first (Bot Integration)
+       final parentDir = Directory(p.join(Directory.current.parent.path, 'data', 'Images'));
        if (await parentDir.exists()) {
           print("📂 Found Bot Images Directory: ${parentDir.path}");
           return parentDir.path;
        }
-       // Use directory next to executable
-       return p.join(exeDir, 'data', 'Images');
+       return p.join(Directory.current.path, 'data', 'Images');
     } else {
        final docs = await getApplicationDocumentsDirectory();
        return p.join(docs.path, 'Images');
@@ -72,7 +61,6 @@ class SyncService {
     }
     
     _isSyncing = true;
-    _isSyncing = true;
     _statusController.add("جاري بدء المزامنة (رفع البيانات) - v2...");
     print("☁️ Starting Push Sync (v2 Fixed)...");
 
@@ -98,7 +86,11 @@ class SyncService {
       _statusController.add("جاري رفع الرسائل...");
       await _pushAllMessages(conn, dbHelper);
       
-      // 5. Sync Images
+      // 5. PULL & RECONCILE (Fix Deleted Orders)
+      _statusController.add("جاري المزامنة العكسية (Pull)...");
+      await _pullOrders(conn, dbHelper, prune: true);
+      
+      // 6. Sync Images
       await _syncImages(conn, uploadOnly: true);
 
       _statusController.add("✅ تمت المزامنة بنجاح");
@@ -145,7 +137,7 @@ class SyncService {
              remoteKey = 'orderitemid'; // Remote is orderitemid
           }
           
-          await conn.execute(
+          final result = await conn.execute(
             Sql.named('DELETE FROM $remoteTable WHERE $remoteKey = @id'), 
             parameters: {'id': remoteId}
           );
@@ -176,7 +168,6 @@ class SyncService {
     
     _isSyncing = true; 
     print("☁️ Starting Startup Sync (Pull All & Prune)...");
-    print("🚀 SYNC SERVICE VERSION: 3.0 (Lowercase Keys Fix)");
     _statusController.add("جاري بدء المزامنة التلقائية (سحب)...");
 
     Connection? conn;
@@ -229,102 +220,42 @@ class SyncService {
 
 
   Future<void> _pushAllInventory(Connection conn, DatabaseHelper dbHelper) async {
-      // Get the current seller's ID from local database
-      final db = await dbHelper.database;
-      final sellers = await db.query('Sellers', limit: 1);
-      
-      if (sellers.isEmpty) {
-        print("⚠️ No seller found in local database - skipping inventory sync for sellers");
-        return;
-      }
-      
-      final currentSellerID = sellers.first['SellerID'] as int;
-      print("🔹 Syncing inventory for SellerID: $currentSellerID");
-      
-      // Sellers - Only push current seller
-      await _pushTable(
-        conn, 
-        dbHelper, 
-        'Sellers', 
-        'Sellers', 
-        'sellerid',
-        {
-          'SellerID': 'sellerid',
-          'TelegramID': 'telegramid',
-          'UserName': 'username',
-          'StoreName': 'storename',
-          'CreatedAt': 'createdat',
-          'Status': 'status',
-          'ImagePath': 'imagepath',
-          'RequireCustomerRegistration': 'requirecustomerregistration'
-        },
-        whereClause: 'SellerID = ?',
-        whereArgs: [currentSellerID]
-      );
-      
-      // Categories - Only for current seller
-      await _pushTable(
-        conn, 
-        dbHelper, 
-        'Categories', 
-        'Categories', 
-        'categoryid',
-        {
-          'CategoryID': 'categoryid',
-          'SellerID': 'sellerid',
-          'Name': 'name',
-          'OrderIndex': 'orderindex',
-          'ImagePath': 'imagepath'
-        },
-        whereClause: 'SellerID = ?',
-        whereArgs: [currentSellerID]
-      );
-      
-      // Products - Only for current seller
-      await _pushTable(
-        conn, 
-        dbHelper, 
-        'Products', 
-        'Products', 
-        'productid',
-        {
-          'ProductID': 'productid',
-          'SellerID': 'sellerid',
-          'CategoryID': 'categoryid',
-          'Name': 'name',
-          'Description': 'description',
-          'Price': 'price',
-          'WholesalePrice': 'wholesaleprice',
-          'Quantity': 'quantity',
-          'ImagePath': 'imagepath',
-          'Status': 'status'
-        },
-        whereClause: 'SellerID = ?',
-        whereArgs: [currentSellerID]
-      );
-      
-      // ProductImages - For products of current seller
-      print("🖼️ Starting ProductImages sync for SellerID: $currentSellerID...");
-      await _pushTableWithJoin(
-        conn, 
-        dbHelper, 
-        'ProductImages', 
-        'ProductImages', 
-        'imageid',
-        {
-          'ImageID': 'imageid',
-          'ProductID': 'productid',
-          'ImagePath': 'imagepath',
-          'ImageOrder': 'imageorder'
-        },
-        currentSellerID
-      );
-      print("✅ ProductImages sync completed");
+      // Sellers
+      await _pushTable(conn, dbHelper, 'Sellers', 'Sellers', 'SellerID', {
+        'SellerID': 'sellerid',
+        'TelegramID': 'telegramid',
+        'UserName': 'username',
+        'StoreName': 'storename',
+        'CreatedAt': 'createdat',
+        'Status': 'status',
+        'ImagePath': 'imagepath'
+      });
+      // Categories
+      await _pushTable(conn, dbHelper, 'Categories', 'Categories', 'CategoryID', {
+        'CategoryID': 'categoryid',
+        'SellerID': 'sellerid',
+        'Name': 'name',
+        'OrderIndex': 'orderindex',
+        'ImagePath': 'imagepath'
+      });
+      // Products
+      await _pushTable(conn, dbHelper, 'Products', 'Products', 'ProductID', {
+        'ProductID': 'productid',
+        'SellerID': 'sellerid',
+        'CategoryID': 'categoryid',
+        'Name': 'name',
+        'Description': 'description',
+        'Price': 'price',
+        'WholesalePrice': 'wholesaleprice',
+        'Quantity': 'quantity',
+        'ImagePath': 'imagepath',
+        'Status': 'status'
+      });
   }
 
   Future<void> _pushAllOrders(Connection conn, DatabaseHelper dbHelper) async {
       // Orders
-      await _pushTable(conn, dbHelper, 'Orders', 'Orders', 'orderid', {
+      await _pushTable(conn, dbHelper, 'Orders', 'Orders', 'OrderID', {
         'OrderID': 'orderid',
         'BuyerID': 'buyerid',
         'SellerID': 'sellerid',
@@ -339,7 +270,7 @@ class SyncService {
 
       // OrderItems
       try {
-          await _pushTable(conn, dbHelper, 'OrderItems', 'OrderItems', 'orderitemid', {
+          await _pushTable(conn, dbHelper, 'OrderItems', 'OrderItems', 'OrderItemID', {
             'OrderItemID': 'orderitemid',
             'OrderID': 'orderid',
             'ProductID': 'productid',
@@ -354,7 +285,6 @@ class SyncService {
 
   // Full Migration (Local -> Remote)
   Future<void> uploadFullDatabase() async {
-    // ... (rest of method seems fine or we assume it calls _pushAll* methods)
     if (_isSyncing) return;
     _isSyncing = true;
     _statusController.add("Starting Full Migration...");
@@ -408,8 +338,7 @@ class SyncService {
         'storename': 'StoreName',
         'createdat': 'CreatedAt',
         'status': 'Status',
-        'imagepath': 'ImagePath',
-        'requirecustomerregistration': 'RequireCustomerRegistration'
+        'imagepath': 'ImagePath'
       }, prune: prune);
        // Categories
       await _syncTable(conn, dbHelper, 'Categories', 'categoryid', {
@@ -432,13 +361,6 @@ class SyncService {
          'imagepath': 'ImagePath',
          'status': 'Status'
       }, prune: prune);
-       // ProductImages
-      await _syncTable(conn, dbHelper, 'ProductImages', 'imageid', {
-         'imageid': 'ImageID',
-         'productid': 'ProductID',
-         'imagepath': 'ImagePath',
-         'imageorder': 'ImageOrder'
-      }, prune: prune);
   }
 
   Future<void> _pullOrders(Connection conn, DatabaseHelper dbHelper, {bool prune = false}) async {
@@ -447,8 +369,8 @@ class SyncService {
          'userid': 'UserID',
          'telegramid': 'TelegramID',
          'username': 'UserName',
-         'phonenumber': 'PhoneNumber', 
-         'fullname': 'FullName',       
+         'phonenumber': 'PhoneNumber',
+         'fullname': 'FullName',
          'createdat': 'CreatedAt'
       });
        // Orders
@@ -456,7 +378,7 @@ class SyncService {
          'orderid': 'OrderID',
          'buyerid': 'BuyerID',
          'sellerid': 'SellerID',
-         'total': 'Total', 
+         'total': 'Total',
          'status': 'Status',
          'createdat': 'CreatedAt',
          'deliveryaddress': 'DeliveryAddress',
@@ -519,7 +441,7 @@ class SyncService {
 
   Future<void> _pushAllMessages(Connection conn, DatabaseHelper dbHelper) async {
        // Messages
-       await _pushTable(conn, dbHelper, 'Messages', 'Messages', 'messageid', {
+       await _pushTable(conn, dbHelper, 'Messages', 'Messages', 'MessageID', {
             'MessageID': 'messageid',
             'OrderID': 'orderid',
             'SellerID': 'sellerid',
@@ -530,14 +452,14 @@ class SyncService {
        });
        
        // Credits
-       await _pushTable(conn, dbHelper, 'CreditCustomers', 'CreditCustomers', 'customerid', {
+       await _pushTable(conn, dbHelper, 'CreditCustomers', 'CreditCustomers', 'CustomerID', {
           'CustomerID': 'customerid',
           'SellerID': 'sellerid',
           'FullName': 'fullname',
           'PhoneNumber': 'phonenumber',
           'CreatedAt': 'createdat'
        });
-       await _pushTable(conn, dbHelper, 'CustomerCredit', 'CustomerCredit', 'creditid', {
+       await _pushTable(conn, dbHelper, 'CustomerCredit', 'CustomerCredit', 'CreditID', {
           'CreditID': 'creditid',
           'CustomerID': 'customerid',
           'SellerID': 'sellerid',
@@ -555,98 +477,22 @@ class SyncService {
       _statusController.add("جاري فحص تخزين الصور...");
       print("🖼️ Starting Image Sync with Garbage Collection...");
 
-      // 1. Get All Active Images from Local DB
-      final db = await DatabaseHelper.instance.database;
-      final Set<String> activeImages = {};
-      
-      final products = await db.query('Products', columns: ['ImagePath']);
-      final sellers = await db.query('Sellers', columns: ['ImagePath']);
-      final categories = await db.query('Categories', columns: ['ImagePath']);
-      final productImages = await db.query('ProductImages', columns: ['ImagePath']);
-      
-      for (var row in [...products, ...sellers, ...categories, ...productImages]) {
-          final path = row['ImagePath'] as String?;
-          if (path != null && path.isNotEmpty) {
-              activeImages.add(p.basename(path));
-          }
-      }
-      print("📊 Active Images Count: ${activeImages.length}");
+      final imagesPath = await _localImagesPath; 
+      final imgDir = Directory(imagesPath);
+      if (!await imgDir.exists()) await imgDir.create(recursive: true);
       
       // Ensure Table Exists
       try {
         await conn.execute("CREATE TABLE IF NOT EXISTS ImageStorage (FileName TEXT PRIMARY KEY, FileData BYTEA, UpdatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
       } catch (e) { }
 
-      final imgDir = Directory(await _localImagesPath);
-      if (!await imgDir.exists()) await imgDir.create(recursive: true);
-      
       final localFiles = imgDir.listSync().whereType<File>().toList();
       
-      // 2. Local Prune (Delete files not in activeImages)
-      int prunedLocal = 0;
-      for (var file in localFiles) {
-          final name = p.basename(file.path);
-          if (!activeImages.contains(name)) {
-              try {
-                  await file.delete();
-                  prunedLocal++;
-                  print("🗑️ GC: Deleted local orphan: $name");
-              } catch (e) {
-                  print("⚠️ GC: Failed to delete local orphan $name: $e");
-              }
-          }
-      }
-      if (prunedLocal > 0) _statusController.add("تم تنظيف $prunedLocal صور محلية غير مستخدمة.");
-      
-      // 3. Cloud Prune & Download
-      if (!uploadOnly) {
-          final cloudFilesResult = await conn.execute('SELECT FileName FROM ImageStorage');
-          int prunedCloud = 0;
-          
-          for (var row in cloudFilesResult) {
-             final cloudName = row[0] as String;
-             
-             if (!activeImages.contains(cloudName)) {
-                 // Delete Orphan from Cloud
-                 try {
-                     await conn.execute(Sql.named('DELETE FROM ImageStorage WHERE FileName = @name'), parameters: {'name': cloudName});
-                     prunedCloud++;
-                     print("☁️🗑️ GC: Deleted cloud orphan: $cloudName");
-                 } catch (e) { print("⚠️ GC: Cloud delete failed: $e"); }
-             } else {
-                 // It is active! Check if we need to download it
-                 final localFile = File(p.join(imgDir.path, cloudName));
-                 if (!await localFile.exists()) {
-                     try {
-                         _statusController.add("جاري تنزيل الصورة $cloudName...");
-                         final dataResult = await conn.execute(
-                           Sql.named('SELECT FileData FROM ImageStorage WHERE FileName = @name'),
-                           parameters: {'name': cloudName}
-                         );
-                         if (dataResult.isNotEmpty && dataResult.first[0] != null) {
-                             // Cast based on driver version/result type (binary)
-                             var fileData = dataResult.first[0];
-                             if (fileData is Uint8List) {
-                                await localFile.writeAsBytes(fileData);
-                             } else if (fileData is List<int>) {
-                                await localFile.writeAsBytes(List<int>.from(fileData));
-                             }
-                             print("✅ Downloaded $cloudName");
-                         }
-                     } catch (e) { print("Download error $cloudName: $e"); }
-                 }
-             }
-          }
-          if (prunedCloud > 0) _statusController.add("تم تنظيف $prunedCloud صور سحابية غير مستخدمة.");
-      }
-      
-      // 4. Upload Missing Active Images
+      // 3. Upload Missing Active Images
       int uploadedCount = 0;
-      final remainingLocalFiles = imgDir.listSync().whereType<File>().toList();
       
-      for (var file in remainingLocalFiles) {
+      for (var file in localFiles) {
           final fileName = p.basename(file.path);
-          if (!activeImages.contains(fileName)) continue; 
           
           try {
              // Efficient check before upload?
@@ -679,24 +525,14 @@ class SyncService {
       String localTableName, 
       String pgTableName,
       String pgPrimaryKey,
-      Map<String, String> colMap, // key: localCol, value: pgCol
-      {String? whereClause, List<Object?>? whereArgs}
+      Map<String, String> colMap // key: localCol, value: pgCol
   ) async {
     try {
       print("⬆️ Pushing $localTableName...");
       final db = await dbHelper.database;
-      final localData = await db.query(
-        localTableName,
-        where: whereClause,
-        whereArgs: whereArgs
-      );
+      final localData = await db.query(localTableName);
       
-      print("📊 Found ${localData.length} rows in $localTableName");
-      
-      if (localData.isEmpty) {
-        print("⚠️ No data to push for $localTableName");
-        return;
-      }
+      if (localData.isEmpty) return;
       
       for (var row in localData) {
         final pgMap = <String, dynamic>{};
@@ -719,99 +555,19 @@ class SyncService {
         // Build Upsert Query
         final keys = pgMap.keys.toList();
         final values = keys.map((k) => '@$k').toList();
-        // Quote identifiers to be safe
-        final quotedKeys = keys.map((k) => '"$k"').toList();
-        final updateSet = keys.map((k) => '"$k" = EXCLUDED."$k"').join(', ');
+        final updateSet = keys.map((k) => '$k = EXCLUDED.$k').join(', ');
         
-        // Ensure Primary Key is also quoted if we use it in conflict
-        final quotedPK = '"$pgPrimaryKey"'; 
+        final sql = 'INSERT INTO $pgTableName (${keys.join(', ')}) VALUES (${values.join(', ')}) '
+                    'ON CONFLICT ($pgPrimaryKey) DO UPDATE SET $updateSet';
         
-        final sql = 'INSERT INTO $pgTableName (${quotedKeys.join(', ')}) VALUES (${values.join(', ')}) '
-                    'ON CONFLICT ($quotedPK) DO UPDATE SET $updateSet';
+        await conn.execute(Sql.named(sql), parameters: pgMap);
         
-        // DEBUG LOGGING
-        if (localTableName == 'OrderItems' || localTableName == 'ProductImages') {
-           print("🛠️ DEBUG SQL: $sql");
-           print("🛠️ DEBUG KEYS: $keys");
-           print("🛠️ DEBUG VALUES: $pgMap");
-        }
-        
-        try {
-          await conn.execute(Sql.named(sql), parameters: pgMap);
-        } catch (e) {
-          print("  ❌ Error pushing row from $localTableName: $e");
-          print("  📋 Row data: $pgMap");
-          rethrow;
-        }
-      }
-      print("  ✅ Pushed ${localData.length} rows from $localTableName");
-      
-    } catch (e) {
-      print("  ⚠️ Failed to push table $localTableName: $e");
-      _statusController.add("خطأ في رفع ($localTableName): $e");
-    }
-  }
-
-  Future<void> _pushTableWithJoin(
-      Connection conn, 
-      DatabaseHelper dbHelper, 
-      String localTableName, 
-      String pgTableName,
-      String pgPrimaryKey,
-      Map<String, String> colMap,
-      int currentSellerID
-  ) async {
-    try {
-      print("⬆️ Pushing $localTableName for SellerID: $currentSellerID...");
-      final db = await dbHelper.database;
-      
-      // Join with Products table to filter by SellerID
-      final localData = await db.rawQuery(
-        'SELECT pi.* FROM $localTableName pi '
-        'INNER JOIN Products p ON pi.ProductID = p.ProductID '
-        'WHERE p.SellerID = ?',
-        [currentSellerID]
-      );
-      
-      print("📊 Found ${localData.length} rows in $localTableName for SellerID: $currentSellerID");
-      
-      if (localData.isEmpty) {
-        print("⚠️ No data to push for $localTableName");
-        return;
-      }
-      
-      for (var row in localData) {
-        final pgMap = <String, dynamic>{};
-        
-        // Map Columns
-        colMap.forEach((localKey, pgKey) {
-            if (row.containsKey(localKey)) {
-              var val = row[localKey];
-              // Path Fix: Windows -> Linux
-              if (localKey == 'ImagePath' && val != null && val is String) {
-                  final fileName = p.basename(val);
-                  val = '/app/data/Images/$fileName'; 
-              }
-              pgMap[pgKey] = val;
-            }
-        });
-
-        // Build Upsert Query
-        final keys = pgMap.keys.toList();
-        final values = keys.map((k) => '@$k').toList();
-        final quotedKeys = keys.map((k) => '"$k"').toList();
-        final updateSet = keys.map((k) => '"$k" = EXCLUDED."$k"').join(', ');
-        final quotedPK = '"$pgPrimaryKey"'; 
-        
-        final sql = 'INSERT INTO $pgTableName (${quotedKeys.join(', ')}) VALUES (${values.join(', ')}) '
-                    'ON CONFLICT ($quotedPK) DO UPDATE SET $updateSet';
-        
-        try {
-          await conn.execute(Sql.named(sql), parameters: pgMap);
-        } catch (e) {
-          print("  ❌ Error pushing row from $localTableName: $e");
-          print("  📋 Row data: $pgMap");
-          rethrow;
+        // Mark as Synced (Local)
+        if (localTableName == 'Orders') {
+           final localId = row['OrderID'];
+           if (localId != null) {
+              await db.update('Orders', {'IsSynced': 1}, where: 'OrderID = ?', whereArgs: [localId]);
+           }
         }
       }
       print("  ✅ Pushed ${localData.length} rows from $localTableName");
@@ -833,22 +589,23 @@ class SyncService {
      try {
        print("⬇️ Pulling $pgTableName (Prune: $prune)...");
        
-       // SAFETY GUARD: Never prune OrderItems or Orders automatically during sync
-       // This prevents local data loss if cloud is empty/lagging.
-       if (prune && (pgTableName == 'OrderItems' || pgTableName == 'Orders')) {
-          print("🛡️ SAFETY: Disabled Pruning for $pgTableName to protect local data.");
-          prune = false;
+       // SAFETY: Disable pruning for OrderItems to avoid accidental deletion of new items
+       // Logic: We relying on 'Orders' pruning to clean up orphans, or 'replace' to update content.
+       // Partial item deletion sync is complex without per-item tracking.
+       if (pgTableName == 'OrderItems') {
+           prune = false;
        }
 
        final result = await conn.execute('SELECT * FROM $pgTableName');
-       final imagesPath = await _localImagesPath; // Preload path
+       final imagesPath = await _localImagesPath; 
        
-       // Handle Pruning (Delete local records not in Cloud)
+       final db = await dbHelper.database;
+
+       // --- PRUNING LOGIC ---
        if (prune) {
            final localPrimaryKey = colMap[pgPrimaryKey]; 
            if (localPrimaryKey != null) {
-               // Get Cloud IDs
-               final cloudIds = <String>{}; // Using string for generality
+               final cloudIds = <String>{}; 
                for (final row in result) {
                    final pgMap = row.toColumnMap();
                    if (pgMap[pgPrimaryKey] != null) {
@@ -856,32 +613,57 @@ class SyncService {
                    }
                }
                
-               final db = await dbHelper.database;
-               
-               // Fetch all Local IDs
-               final localTable = pgTableName; // Assumption holds for this app
-               final localRows = await db.query(localTable, columns: [localPrimaryKey]);
-               
-               int deletedCount = 0;
-               final batchDelete = db.batch();
-               
-               for (var row in localRows) {
-                   final id = row[localPrimaryKey].toString();
-                   if (!cloudIds.contains(id)) {
-                       batchDelete.delete(localTable, where: '$localPrimaryKey = ?', whereArgs: [row[localPrimaryKey]]);
-                       deletedCount++;
+               // Special Logic for Orders
+               if (pgTableName == 'Orders') {
+                   // Only prune if IsSynced = 1 AND not in Cloud
+                   final localRows = await db.query('Orders', columns: ['OrderID', 'IsSynced']);
+                   final batchDelete = db.batch();
+                   int deletedCount = 0;
+                   
+                   for (var row in localRows) {
+                       final id = row['OrderID'].toString();
+                       final isSynced = (row['IsSynced'] as int?) == 1; // Explicit check
+                       final inCloud = cloudIds.contains(id);
+                       
+                       if (isSynced && !inCloud) {
+                           // This order claims to be synced but is missing from cloud -> It was deleted remotely.
+                           print("🗑️ DETECTED DELETED ORDER: #$id (Local Synced=true, Cloud=false) -> DELETE EXECUTED.");
+                           // Delete Order AND Items
+                           batchDelete.delete('OrderItems', where: 'OrderID = ?', whereArgs: [row['OrderID']]);
+                           batchDelete.delete('Orders', where: 'OrderID = ?', whereArgs: [row['OrderID']]);
+                           deletedCount++;
+                       } else if (!isSynced && !inCloud) {
+                           print("⚠️ Skipping Delete for Order #$id: Marked as Unsynced (Likely New/Offline) - Will Push Instead.");
+                       }
                    }
-               }
-               if (deletedCount > 0) {
-                   await batchDelete.commit(noResult: true);
-                   print("🗑️ Pruned $deletedCount records from $localTable");
+                   if (deletedCount > 0) {
+                       await batchDelete.commit(noResult: true);
+                       print("🗑️ Smart Pruned $deletedCount Deleted Orders (Local Sync Clean)");
+                   }
+               } else {
+                   // Default Generic Pruning (Users, etc)
+                   final localTable = pgTableName; 
+                   final localRows = await db.query(localTable, columns: [localPrimaryKey]);
+                   final batchDelete = db.batch();
+                   int deletedCount = 0;
+                   
+                   for (var row in localRows) {
+                       final id = row[localPrimaryKey].toString();
+                       if (!cloudIds.contains(id)) {
+                           batchDelete.delete(localTable, where: '$localPrimaryKey = ?', whereArgs: [row[localPrimaryKey]]);
+                           deletedCount++;
+                       }
+                   }
+                   if (deletedCount > 0) {
+                       await batchDelete.commit(noResult: true);
+                       print("🗑️ Pruned $deletedCount records from $localTable");
+                   }
                }
            }
        }
        
        if (result.isEmpty) return;
        
-       final db = await dbHelper.database;
        final batch = db.batch();
 
        for (final row in result) {
@@ -902,6 +684,11 @@ class SyncService {
                 localMap[localKey] = val;
              }
           });
+          
+          // Mark as Synced for Orders
+          if (pgTableName == 'Orders') {
+             localMap['IsSynced'] = 1;
+          }
           
           batch.insert(pgTableName, localMap, conflictAlgorithm: ConflictAlgorithm.replace);
        }
@@ -1036,16 +823,6 @@ class SyncService {
 
       // 9. ImageStorage
       await conn.execute("CREATE TABLE IF NOT EXISTS ImageStorage (FileName TEXT PRIMARY KEY, FileData BYTEA, UpdatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
-
-      // 10. ProductImages
-      await conn.execute('''
-        CREATE TABLE IF NOT EXISTS ProductImages (
-          ImageID SERIAL PRIMARY KEY,
-          ProductID INTEGER,
-          ImagePath TEXT,
-          ImageOrder INTEGER DEFAULT 0
-        )
-      ''');
 
       print("✅ Remote Schema Verified");
     } catch (e) {

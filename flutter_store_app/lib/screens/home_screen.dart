@@ -8,8 +8,6 @@ import 'dart:io';
 import '../models/database_models.dart';
 import '../database/database_helper.dart';
 import '../services/telegram_service.dart';
-import '../services/sync_service.dart';
-import '../services/exit_service.dart';
 import 'store_detail_screen.dart';
 import 'login_screen.dart';
 import 'cart_screen.dart';
@@ -39,7 +37,6 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
   bool _isExtended = true;
-  StreamSubscription? _syncSub;
   Map<String, int> _counts = {'products': 0, 'messages': 0, 'cart': 0};
   
   @override
@@ -58,47 +55,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     
     _refreshCounts();
-    _syncSub = SyncService.instance.statusStream.listen((msg) {
-      if (msg.contains('Failed') || msg.contains('Error') || msg.toLowerCase().contains('fatal')) {
-          if (mounted) {
-            showDialog(
-              context: context,
-              builder: (context) => AlertDialog(
-                title: const Row(children: [Icon(Icons.error, color: Colors.red), SizedBox(width: 8), Text("Sync Error")]),
-                content: SelectableText(msg), 
-                actions: [
-                  TextButton(onPressed: () => Navigator.pop(context), child: const Text("OK")),
-                  TextButton(onPressed: () { 
-                      Navigator.pop(context);
-                      Navigator.push(context, MaterialPageRoute(builder: (_) => ServerSettingsScreen()));
-                    }, child: const Text("Settings"))
-                ],
-              )
-            );
-          }
-      }
-      if (mounted) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                if (msg.contains('Starting') || msg.contains('ing...')) 
-                  const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
-                const SizedBox(width: 10),
-                Expanded(child: Text(msg)),
-              ],
-            ),
-            backgroundColor: msg.contains('Failed') || msg.contains('Error') ? Colors.red : Colors.blue.shade700,
-            duration: const Duration(seconds: 4),
-          )
-        );
-      }
-    });
-
-    Future.delayed(const Duration(seconds: 1), () {
-        SyncService.instance.startSyncTimer();
-    });
   }
 
   Future<void> _initWindowCloseHandler() async {
@@ -120,14 +76,13 @@ class _HomeScreenState extends State<HomeScreen> {
         // Ignore on mobile
       }
     }
-    _syncSub?.cancel();
     super.dispose();
   }
   
   void _handleWindowClose() {
     if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
       try {
-        ExitService.startExitFlow(context);
+        exit(0);
       } catch (e) {
         // Ignore on mobile
       }
@@ -171,7 +126,6 @@ class _HomeScreenState extends State<HomeScreen> {
       {'icon': Icons.shopping_cart, 'label': 'سلة المشتريات 🛒', 'count': _counts['cart']},
       {'icon': Icons.settings, 'label': 'الاعدادات'},
       if (widget.isAdmin || widget.isSeller) {'icon': Icons.message, 'label': 'الرسائل', 'count': _counts['messages']},
-      {'icon': Icons.logout, 'label': 'خروج', 'isExit': true},
     ];
   }
 
@@ -206,11 +160,6 @@ class _HomeScreenState extends State<HomeScreen> {
      if (index >= destinations.length) return;
      final selectedItem = destinations[index];
     
-    if (selectedItem['isExit'] == true) {
-       ExitService.startExitFlow(context);
-       return;
-    }
-    
     if (selectedItem['icon'] == Icons.settings) {
        Navigator.push(context, MaterialPageRoute(builder: (_) => ServerSettingsScreen()));
        return;
@@ -237,7 +186,7 @@ class _HomeScreenState extends State<HomeScreen> {
         canPop: false,
         onPopInvokedWithResult: (didPop, result) async {
           if (didPop) return;
-          await ExitService.startExitFlow(context);
+          exit(0);
         },
         child: scaffold, 
       );
@@ -262,21 +211,11 @@ class _HomeScreenState extends State<HomeScreen> {
          appBar: AppBar(
             title: const Text('المتجر المحلي'),
             actions: [
-               IconButton(
-                 icon: const Icon(Icons.sync),
-                 tooltip: 'مزامنة',
-                 onPressed: () {
-                    SyncService.instance.syncNow();
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('جاري بدء المزامنة...')));
-                 },
-               ),
                PopupMenuButton<String>(
                  icon: const Icon(Icons.more_vert),
                  onSelected: (value) {
                    if (value == 'settings') {
                      Navigator.push(context, MaterialPageRoute(builder: (_) => ServerSettingsScreen()));
-                   } else if (value == 'logout') {
-                     _onDestinationSelected(destinations.indexWhere((d) => d['isExit'] == true));
                    }
                  },
                  itemBuilder: (context) {
@@ -287,9 +226,6 @@ class _HomeScreenState extends State<HomeScreen> {
                        children: [Icon(Icons.settings, size: 20), SizedBox(width: 8), Text('الإعدادات')],
                      )));
                    }
-                   items.add(const PopupMenuItem(value: 'logout', child: Row(
-                     children: [Icon(Icons.logout, size: 20, color: Colors.red), SizedBox(width: 8), Text('خروج', style: TextStyle(color: Colors.red))],
-                   )));
                    return items;
                  },
                ),
@@ -331,21 +267,11 @@ class _HomeScreenState extends State<HomeScreen> {
         appBar: AppBar(
           title: const Text('المتجر المحلي'),
           actions: [
-            IconButton(
-              icon: const Icon(Icons.sync),
-              tooltip: 'مزامنة',
-              onPressed: () {
-                SyncService.instance.syncNow();
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('جاري بدء المزامنة...')));
-              },
-            ),
             PopupMenuButton<String>(
               icon: const Icon(Icons.more_vert),
               onSelected: (value) {
                 if (value == 'settings') {
                   Navigator.push(context, MaterialPageRoute(builder: (_) => ServerSettingsScreen()));
-                } else if (value == 'logout') {
-                  _onDestinationSelected(destinations.indexWhere((d) => d['isExit'] == true));
                 }
               },
               itemBuilder: (context) {
@@ -355,9 +281,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     children: [Icon(Icons.settings, size: 20), SizedBox(width: 8), Text('الإعدادات')],
                   )));
                 }
-                items.add(const PopupMenuItem(value: 'logout', child: Row(
-                  children: [Icon(Icons.logout, size: 20, color: Colors.red), SizedBox(width: 8), Text('خروج', style: TextStyle(color: Colors.red))],
-                )));
                 return items;
               },
             ),
@@ -395,36 +318,24 @@ class _HomeScreenState extends State<HomeScreen> {
             extended: _isExtended,
             selectedIndex: _selectedIndex,
             onDestinationSelected: _onDestinationSelected,
-            leading: IconButton(
-              icon: Icon(_isExtended ? Icons.menu_open : Icons.menu),
-              onPressed: () {
-                setState(() {
-                  _isExtended = !_isExtended;
-                });
-              },
-            ),
             labelType: _isExtended ? NavigationRailLabelType.none : NavigationRailLabelType.selected,
             destinations: destinations.map((item) {
-               final isExit = item['isExit'] == true;
                final count = item['count'] as int? ?? 0;
                return NavigationRailDestination(
                  icon: Badge(
                    isLabelVisible: count > 0,
                    label: Text('$count'),
-                   child: Icon(item['icon'], color: isExit ? Colors.red : null)
+                   child: Icon(item['icon'])
                  ),
-                 label: Text(item['label'], style: TextStyle(color: isExit ? Colors.red : null)),
+                 label: Text(item['label']),
                );
             }).toList(),
             trailing: Padding(
                padding: const EdgeInsets.only(top: 20),
                child: IconButton(
-                 icon: const Icon(Icons.sync, color: Colors.blue),
-                 tooltip: 'مزامنة يدوية',
-                 onPressed: () {
-                    SyncService.instance.syncNow();
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('جاري بدء المزامنة...')));
-                 },
+                 icon: const Icon(Icons.refresh),
+                 tooltip: 'تحديث',
+                 onPressed: () => _refreshCounts()
                ),
              ),
           ),
@@ -495,7 +406,19 @@ class _DashboardViewState extends State<DashboardView> {
            print("  - Store: ${s.storeName}, ID: ${s.telegramId} (Exclude? ${s.telegramId == widget.currentUserId})");
          }
          // Filter out my own store (Buyer Logic: Don't buy from yourself)
-         return sellers.where((s) => s.telegramId != widget.currentUserId).toList();
+         var filtered = sellers.where((s) => s.telegramId != widget.currentUserId).toList();
+         
+         // ✨ ترتيب خاص: TELEBOT (TelegramID = 999999999) يظهر أولاً
+         filtered.sort((a, b) {
+           // TELEBOT يظهر أولاً
+           if (a.telegramId == 999999999) return -1;
+           if (b.telegramId == 999999999) return 1;
+           // بقية المتاجر حسب الاسم
+           return (a.storeName ?? '').compareTo(b.storeName ?? '');
+         });
+         
+         print("📊 ترتيب المتاجر بعد التصفية: ${filtered.map((s) => s.storeName).toList()}");
+         return filtered;
       });
     });
   }
@@ -518,40 +441,32 @@ class _DashboardViewState extends State<DashboardView> {
         isEdit: seller != null,
         onSave: (storeName, telegramId, userName, imagePath, requireCustomerRegistration) async {
           print("💾 HomeScreen.onSave: requireCustomerRegistration = $requireCustomerRegistration");
-          if (seller == null) {
-             await DatabaseHelper.instance.addSeller(storeName, telegramId, userName, imagePath: imagePath);
-          } else {
-             print("💾 HomeScreen.onSave: Updating seller #${seller.sellerId}");
-             print("💾 HomeScreen.onSave: Current seller.requireCustomerRegistration = ${seller.requireCustomerRegistration}");
-             // If editing, we typically keep the original TelegramID unless you want to allow changing it?
-             // Since ID is unique/key, changing it might require care.
-             // But DatabaseHelper.updateSeller uses SellerID (Primary Key) to find record, 
-             // but it DOES NOT update TelegramID column in the update query (Lines 191-195 in db_helper).
-             // So passing a new TelegramID here won't persist if we don't update DB helper.
-             // For now turn a blind eye to ID change or allow it if I update DB helper.
-             // Providing the updated fields:
-             final updatedSeller = seller.copyWith(
-               storeName: storeName,
-               userName: userName,
-               imagePath: imagePath,
-               requireCustomerRegistration: requireCustomerRegistration,
-               // ignoring telegramId change for now as updateSeller doesn't support it
-             );
-             print("💾 HomeScreen.onSave: Updated seller.requireCustomerRegistration = ${updatedSeller.requireCustomerRegistration}");
-             await DatabaseHelper.instance.updateSeller(updatedSeller);
-             print("✅ HomeScreen.onSave: Seller updated successfully");
-             
-             // Sync immediately after save
-             try {
-               print("🔄 HomeScreen.onSave: Starting immediate sync...");
-               await SyncService.instance.syncNow();
-               print("✅ HomeScreen.onSave: Sync completed successfully");
-             } catch (e) {
-               print("⚠️ HomeScreen.onSave: Sync failed (non-critical): $e");
-             }
+          try {
+            if (seller == null) {
+               await DatabaseHelper.instance.addSeller(storeName, telegramId, userName, imagePath: imagePath);
+               print("✅ HomeScreen.onSave: Seller added successfully");
+            } else {
+               print("💾 HomeScreen.onSave: Updating seller #${seller.sellerId}");
+               print("💾 HomeScreen.onSave: Current seller.requireCustomerRegistration = ${seller.requireCustomerRegistration}");
+               // Update only the editable fields
+               final updatedSeller = seller.copyWith(
+                 storeName: storeName,
+                 userName: userName,
+                 imagePath: imagePath,
+                 requireCustomerRegistration: requireCustomerRegistration,
+               );
+               print("💾 HomeScreen.onSave: Updated seller.requireCustomerRegistration = ${updatedSeller.requireCustomerRegistration}");
+               await DatabaseHelper.instance.updateSeller(updatedSeller);
+               print("✅ HomeScreen.onSave: Seller updated successfully");
+            }
+            // Refresh the list after successful save
+            if (mounted) {
+              _refreshSellers(force: true);
+            }
+          } catch (e) {
+            print("❌ HomeScreen.onSave: Error: $e");
+            rethrow; // Let StoreFormDialog handle the error display
           }
-           if (context.mounted) Navigator.pop(context); // Dialog handles pop? No, Dialog calls onSave and catches error. It does NOT pop. I must pop here on success.
-           if (mounted) _refreshSellers(force: true);
         },
       ),
     );
@@ -563,57 +478,6 @@ class _DashboardViewState extends State<DashboardView> {
       appBar: AppBar(
         title: const Text('مدير المتاجر (محلي)'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.cloud_sync, color: Colors.blueAccent),
-            tooltip: 'مزامنة مع السحابة',
-            onPressed: () {
-              showDialog(
-                context: context,
-                barrierDismissible: false,
-                builder: (context) {
-                  return AlertDialog(
-                    title: const Row(children: [CircularProgressIndicator(), SizedBox(width: 16), Text("جاري المزامنة...")]),
-                    content: StreamBuilder<String>(
-                      stream: SyncService.instance.statusStream,
-                      initialData: "البدء...",
-                      builder: (context, snapshot) {
-                        return Text(snapshot.data ?? "...");
-                      },
-                    ),
-                  );
-                },
-              );
-              
-              SyncService.instance.syncNow().then((_) {
-                 Navigator.pop(context); // Close dialog
-                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تمت المزامنة بنجاح ✅'), backgroundColor: Colors.green));
-                 _refreshSellers(force: true);
-              }).catchError((e) {
-                 Navigator.pop(context); // Close dialog
-                 ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('فشل المزامنة: $e'), backgroundColor: Colors.red));
-              });
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.folder, color: Colors.amber),
-            tooltip: 'إنشاء مجلد الصور',
-            onPressed: () async {
-              try {
-                // Get executable directory
-                final executablePath = Platform.resolvedExecutable;
-                final exeDir = p.dirname(executablePath);
-                final dir = Directory(p.join(exeDir, 'data', 'Images'));
-                if (!await dir.exists()) {
-                  await dir.create(recursive: true);
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تم إنشاء المجلد في:\n${dir.path}'), backgroundColor: Colors.green));
-                } else {
-                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('المجلد موجود مسبقاً في:\n${dir.path}'), backgroundColor: Colors.blue));
-                }
-              } catch (e) {
-                 ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('فشل إنشاء المجلد: $e'), backgroundColor: Colors.red));
-              }
-            },
-          ),
           IconButton(
             icon: const Icon(Icons.refresh), 
             onPressed: () => _refreshSellers(force: true)
@@ -667,7 +531,7 @@ class _DashboardViewState extends State<DashboardView> {
       ),
       bottomNavigationBar: FutureBuilder<List<String>>(
         future: Future.wait([
-          DatabaseHelper.instance.getDbPath(),
+          Future(() async => '✅ PostgreSQL Cloud Connected'),
           Future(() async {
             if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
               final executablePath = Platform.resolvedExecutable;
@@ -848,10 +712,18 @@ class _DashboardViewState extends State<DashboardView> {
     );
 
     if (confirm == true) {
-      await DatabaseHelper.instance.deleteSeller(seller.sellerId);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حذف المتجر بنجاح')));
-        _refreshSellers();
+      try {
+        await DatabaseHelper.instance.deleteSeller(seller.sellerId);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حذف المتجر بنجاح')));
+          _refreshSellers();
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('خطأ في الحذف: $e'), backgroundColor: Colors.red),
+          );
+        }
       }
     }
   }

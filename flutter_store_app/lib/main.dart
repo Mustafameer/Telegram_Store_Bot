@@ -1,24 +1,41 @@
-
 import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'services/sync_service.dart';
+import 'services/postgres_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
 
 // Conditional imports for desktop-only features
-import 'package:sqflite_common_ffi/sqflite_ffi.dart' if (dart.library.html) 'dart:html' as sqflite_ffi;
 import 'package:window_manager/window_manager.dart' if (dart.library.html) 'dart:html' as window_manager;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize FFI (Desktop Only)
+  // Load environment variables
+  try {
+    await dotenv.load(fileName: '.env');
+    print('✅ Loaded .env file');
+  } catch (e) {
+    print('⚠️ Could not load .env file: $e');
+  }
+
+  // Initialize PostgreSQL Service (Cloud Database)
+  try {
+    await PostgresService().initialize();
+    print('✅ PostgreSQL Cloud Database initialized');
+  } catch (e) {
+    print('❌ Failed to initialize PostgreSQL: $e');
+  }
+
+  // Initialize FFI (Desktop Only - for backward compatibility)
+  // Note: SQLite is no longer used; PostgreSQL is the primary database
   if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-    sqflite_ffi.sqfliteFfiInit();
-    sqflite_ffi.databaseFactory = sqflite_ffi.databaseFactoryFfi;
+    // sqflite_ffi.sqfliteFfiInit(); // No longer needed
+    // sqflite_ffi.databaseFactory = sqflite_ffi.databaseFactoryFfi; // No longer needed
   
     try {
       await window_manager.windowManager.ensureInitialized();

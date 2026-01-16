@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../database/database_helper.dart';
@@ -83,6 +84,17 @@ class _ProductsTabState extends State<ProductsTab> {
   }
 
   Future<void> _showProductForm({Product? product}) async {
+    // ⚠️ السماح فقط إذا كان المتجر قابلاً للتعديل
+    if (!widget.isEditable) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('🔒 هذا المتجر محجوز - لا يمكن تعديل المنتجات'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
     // الحصول على معلومات المتجر
     final seller = await DatabaseHelper.instance.getSellerById(widget.sellerId);
     final requireCustomerRegistration =
@@ -102,6 +114,17 @@ class _ProductsTabState extends State<ProductsTab> {
   }
 
   Future<void> _deleteProduct(int productId) async {
+    // ⚠️ السماح فقط إذا كان المتجر قابلاً للتعديل
+    if (!widget.isEditable) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('🔒 هذا المتجر محجوز - لا يمكن حذف المنتجات'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -121,8 +144,21 @@ class _ProductsTabState extends State<ProductsTab> {
     );
 
     if (confirm == true) {
-      await DatabaseHelper.instance.deleteProduct(productId);
-      _refreshData();
+      try {
+        await DatabaseHelper.instance.deleteProduct(productId);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('تم حذف المنتج بنجاح')),
+          );
+        }
+        _refreshData();
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('خطأ في الحذف: $e'), backgroundColor: Colors.red),
+          );
+        }
+      }
     }
   }
 
@@ -439,87 +475,169 @@ class _ProductsTabState extends State<ProductsTab> {
       clipBehavior: Clip.antiAlias,
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
           // Image Section - عرض الصور فقط للمتاجر المفتوحة أو وضع التعديل
           if (!isRestrictedStore)
             AspectRatio(
               aspectRatio: 1.0, // مربع مثالي للصورة
-              child: Container(
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  color: Colors.grey[100],
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(12),
-                    topRight: Radius.circular(12),
-                  ),
-                ),
-                child: product.imagePath != null &&
-                        File(product.imagePath!).existsSync()
-                    ? ClipRRect(
-                        borderRadius: const BorderRadius.only(
-                          topLeft: Radius.circular(12),
-                          topRight: Radius.circular(12),
-                        ),
-                        child: Image.file(
-                          File(product.imagePath!),
-                          fit: BoxFit.cover,
-                          width: double.infinity,
-                          height: double.infinity,
-                          errorBuilder: (context, error, stackTrace) {
-                            return Container(
-                              color: Colors.grey[200],
-                              child: const Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    Icons.broken_image,
-                                    size: 40,
-                                    color: Colors.grey,
-                                  ),
-                                  SizedBox(height: 8),
-                                  Text(
-                                    'خطأ في الصورة',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: Colors.grey,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
-                        ),
-                      )
-                    : Container(
-                        decoration: BoxDecoration(
-                          color: Colors.grey[100],
-                          borderRadius: const BorderRadius.only(
-                            topLeft: Radius.circular(12),
-                            topRight: Radius.circular(12),
-                          ),
-                        ),
-                        child: const Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.image,
-                              size: 50,
-                              color: Colors.grey,
+              child: FutureBuilder<List<ProductImage>>(
+                future: DatabaseHelper.instance.getProductImages(product.productId),
+                builder: (context, snapshot) {
+                  // تحميل أول صورة متوفرة
+                  if (snapshot.hasData && snapshot.data!.isNotEmpty) {
+                    final firstImage = snapshot.data!.first;
+                    // عرض الصورة من ImageStorage باستخدام اسم الملف
+                    print('🔍 [ProductTab] Loading image: ${firstImage.imagePath}');
+                    return FutureBuilder<Uint8List?>(
+                      future: DatabaseHelper.instance.getImageData(firstImage.imagePath),
+                      builder: (context, imageSnapshot) {
+                        if (imageSnapshot.hasData && imageSnapshot.data != null) {
+                          return ClipRRect(
+                            borderRadius: const BorderRadius.only(
+                              topLeft: Radius.circular(12),
+                              topRight: Radius.circular(12),
                             ),
-                            SizedBox(height: 8),
-                            Text(
-                              'لا توجد صورة',
-                              style: TextStyle(
-                                fontSize: 12,
+                            child: Image.memory(
+                              imageSnapshot.data!,
+                              fit: BoxFit.cover,
+                              width: double.infinity,
+                              height: double.infinity,
+                              errorBuilder: (context, error, stackTrace) {
+                                return Container(
+                                  color: Colors.grey[200],
+                                  child: const Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.broken_image,
+                                        size: 40,
+                                        color: Colors.grey,
+                                      ),
+                                      SizedBox(height: 8),
+                                      Text(
+                                        'خطأ في الصورة',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                          );
+                        }
+                        
+                        // لو لم تحمل الصورة من ImageStorage، عرض صورة محلية إن وجدت
+                        if (File(firstImage.imagePath).existsSync()) {
+                          return ClipRRect(
+                            borderRadius: const BorderRadius.only(
+                              topLeft: Radius.circular(12),
+                              topRight: Radius.circular(12),
+                            ),
+                            child: Image.file(
+                              File(firstImage.imagePath),
+                              fit: BoxFit.cover,
+                              width: double.infinity,
+                              height: double.infinity,
+                            ),
+                          );
+                        }
+                        
+                        // في الانتظار أو عدم وجود صورة
+                        return Container(
+                          decoration: BoxDecoration(
+                            color: Colors.grey[100],
+                            borderRadius: const BorderRadius.only(
+                              topLeft: Radius.circular(12),
+                              topRight: Radius.circular(12),
+                            ),
+                          ),
+                          child: const Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.image,
+                                size: 50,
                                 color: Colors.grey,
                               ),
-                            ),
-                          ],
-                        ),
+                              SizedBox(height: 8),
+                              Text(
+                                'لا توجد صورة',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    );
+                  }
+                  
+                  // لا توجد صور في ProductImages، عرض صورة من product.imagePath إن وجدت
+                  String? imageToShow;
+                  if (product.imagePath != null && File(product.imagePath!).existsSync()) {
+                    imageToShow = product.imagePath;
+                  }
+                  
+                  return Container(
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(12),
+                        topRight: Radius.circular(12),
                       ),
+                    ),
+                    child: imageToShow != null
+                        ? ClipRRect(
+                            borderRadius: const BorderRadius.only(
+                              topLeft: Radius.circular(12),
+                              topRight: Radius.circular(12),
+                            ),
+                            child: Image.file(
+                              File(imageToShow),
+                              fit: BoxFit.cover,
+                              width: double.infinity,
+                              height: double.infinity,
+                            ),
+                          )
+                        : Container(
+                            decoration: BoxDecoration(
+                              color: Colors.grey[100],
+                              borderRadius: const BorderRadius.only(
+                                topLeft: Radius.circular(12),
+                                topRight: Radius.circular(12),
+                              ),
+                            ),
+                            child: const Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.image,
+                                  size: 50,
+                                  color: Colors.grey,
+                                ),
+                                SizedBox(height: 8),
+                                Text(
+                                  'لا توجد صورة',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                  );
+                },
               ),
             ),
           Container(
@@ -769,6 +887,7 @@ class _ProductsTabState extends State<ProductsTab> {
               ),
             ),
         ],
+      ),
       ),
     );
   }
