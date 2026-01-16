@@ -7434,6 +7434,8 @@ def callback_handler(call):
             handle_select_new_category(call)
         elif call.data == "back_to_menu":
             handle_back_to_menu(call)
+        elif call.data == "seller_main_menu":
+            handle_back_to_menu(call)  # Same as back_to_menu for sellers
         elif call.data == "back_to_edit_product":
             handle_back_to_edit_product(call)
         elif call.data.startswith("contact_buyer_"):
