@@ -7816,17 +7816,20 @@ def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id, customer_tele
         bot.send_message(chat_id, f"⚠️ حدث خطأ في فتح المتجر: {str(e)}")
         return
     
-    if not seller or seller.status != 'active':
-        bot.send_message(chat_id, "⚠️ المتجر غير موجود أو معطل حالياً.")
+    # seller هو tuple: (SellerID, TelegramID, UserName, StoreName, ...)
+    # التحقق من أن البائع موجود
+    if not seller:
+        bot.send_message(chat_id, "⚠️ المتجر غير موجود.")
         return
     
-    seller_id = seller.seller_id
-    store_name = seller.store_name
-    username = seller.user_name or "بائع"
-    is_admin_store = (seller.telegram_id == BOT_ADMIN_ID)
-    
-    # التحقق من إعداد RequireCustomerRegistration
-    require_registration = bool(seller.require_registration)
+    # seller هو tuple: (SellerID, TelegramID, UserName, StoreName, Created, Status, ...)
+    # استخراج البيانات من tuple
+    seller_id = seller[0]
+    seller_telegram_id = seller[1]
+    username = seller[2] if len(seller) > 2 else "بائع"
+    store_name = seller[3] if len(seller) > 3 else "متجر"
+    # Status عادة في seller[5]، لكن RequireCustomerRegistration قد يكون في seller[9]
+    require_registration = seller[9] if len(seller) > 9 else 0
     
     print(f"🔐 متجر معرف: {store_name}, require_registration={require_registration}, customer_id={customer_telegram_id}, seller_id={seller_telegram_id}")
     print(f"🔐 المقارنة: customer_id({type(customer_telegram_id).__name__})={customer_telegram_id} != seller_id({type(seller_telegram_id).__name__})={seller_telegram_id}")
