@@ -3534,13 +3534,13 @@ def show_seller_menu(message):
     # Row 4
     markup.row("🔗 رابط المتجر", "🛍️ وضع المشتري", "🏠 الرئيسية")
     
-    welcome_msg = f"🏪 **مرحباً بصاحب المتجر!**\n"
+    welcome_msg = f"🏪 مرحباً بصاحب المتجر!\n"
     welcome_msg += f"🏪 متجرك: {store_name}"
     
     if pending_count > 0:
         welcome_msg += f"\n\nلديك {pending_count} طلبات جديدة!"
     
-    bot.send_message(message.chat.id, welcome_msg, reply_markup=markup, parse_mode='Markdown')
+    bot.send_message(message.chat.id, welcome_msg, reply_markup=markup)
 
 # ... (Existing code) ...
 
