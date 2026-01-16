@@ -53,6 +53,103 @@ class _CartScreenState extends State<CartScreen> {
       bySeller[sellerId]!.add(item);
     }
 
+    // 🔍 Check if all stores are closed (RequireCustomerRegistration = 1) 
+    // and user is registered in all of them
+    bool allStoresClosed = true;
+    bool userRegisteredInAll = true;
+    
+    for (var sellerId in bySeller.keys) {
+      try {
+        // Get seller info
+        final sellers = await DatabaseHelper.instance.getAllSellers(forceRefresh: true);
+        final seller = sellers.firstWhere((s) => s.sellerID == sellerId, orElse: () => null as dynamic);
+        
+        if (seller == null || !seller.requireCustomerRegistration) {
+          allStoresClosed = false;
+          break;
+        }
+        
+        // Check if user is registered as a credit customer
+        final creditCustomers = await DatabaseHelper.instance.getCreditCustomers(sellerId);
+        final isRegistered = creditCustomers.any((cc) => cc.telegramID == widget.userId);
+        
+        if (!isRegistered) {
+          userRegisteredInAll = false;
+          break;
+        }
+      } catch (e) {
+        print('⚠️ Error checking store status: $e');
+        allStoresClosed = false;
+        break;
+      }
+    }
+
+    // 🚀 If all stores are closed and user is registered in all, create order immediately
+    if (allStoresClosed && userRegisteredInAll) {
+      print('✅ جميع المتاجر مغلقة - إنشاء طلب مؤكد مباشرة');
+      setState(() => _isLoading = true);
+
+      try {
+        var totalAllOrders = 0.0;
+        
+        for (var entry in bySeller.entries) {
+          final sellerId = entry.key;
+          final sellerItems = entry.value;
+          final total = sellerItems.fold(0.0, (sum, item) => sum + (item['Price'] * item['Quantity']));
+
+          final orderId = await DatabaseHelper.instance.createOrder(
+            widget.userId,
+            sellerId,
+            total,
+            '', // No address needed for closed stores
+            'طلب مؤكد من زبون آجل', // Automatic notes
+            sellerItems,
+            status: 'Confirmed', // 🆕 Set status to Confirmed
+            paymentMethod: 'credit', // 🆕 Payment method is credit
+            fullyPaid: false // 🆕 Not fully paid
+          );
+
+          totalAllOrders += total;
+          await DatabaseHelper.instance.addMessage(orderId, sellerId, 'new_order', 'طلب جديد #$orderId - مؤكد');
+        }
+        
+        await DatabaseHelper.instance.clearCart(widget.userId);
+        
+        // Show Success Dialog
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Row(children: [Icon(Icons.check_circle, color: Colors.green), SizedBox(width: 8), Text("✅ تم إنزال طلبك")]),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text("تم إنزال طلبك بنجاح!"),
+                const SizedBox(height: 16),
+                Text("المبلغ المخصوم: ${formatPrice(totalAllOrders)} د.ع", style: const TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                const Text("سيتم معالجة الطلب من قبل صاحب المتجر", style: TextStyle(color: Colors.grey, fontSize: 12)),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx), 
+                child: const Text("حسناً")
+              )
+            ],
+          )
+        );
+        _refreshCart();
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('حدث خطأ: $e')));
+        }
+      } finally {
+        setState(() => _isLoading = false);
+      }
+      return;
+    }
+
+    // ❌ Otherwise, use regular checkout with delivery dialog
     final details = await _showDeliveryDialog();
     if (details == null) return;
 
@@ -74,8 +171,6 @@ class _CartScreenState extends State<CartScreen> {
         );
 
         await DatabaseHelper.instance.addMessage(orderId, sellerId, 'new_order', 'طلب جديد #$orderId');
-         // Here we would fetch actual Telegram ID of the seller to notify them
-         // For now, it stays in DB as notification.
       }
       
       await DatabaseHelper.instance.clearCart(widget.userId);

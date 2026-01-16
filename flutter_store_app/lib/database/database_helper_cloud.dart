@@ -509,16 +509,21 @@ class DatabaseHelperCloud {
   }
 
   Future<int> createOrder(int buyerId, int sellerId, double total,
-      String address, String notes, List<Map<String, dynamic>> items) async {
+      String address, String notes, List<Map<String, dynamic>> items, {
+      String status = 'pending',
+      String paymentMethod = 'cash',
+      bool fullyPaid = false
+    }) async {
     try {
       final orderId = await postgresService.createOrder(
         buyerId: buyerId,
         sellerId: sellerId,
         total: total,
-        status: 'pending',
-        paymentMethod: 'cash',
+        status: status,  // 🆕 Use provided status
+        paymentMethod: paymentMethod,  // 🆕 Use provided payment method
         deliveryAddress: address,
         notes: notes,
+        fullyPaid: fullyPaid,  // 🆕 Use provided fullyPaid flag
       );
 
       if (orderId != null) {

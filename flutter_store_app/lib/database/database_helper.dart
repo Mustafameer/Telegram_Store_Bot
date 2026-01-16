@@ -164,9 +164,16 @@ class DatabaseHelper {
   }
 
   Future<int> createOrder(int buyerId, int sellerId, double total,
-      String address, String notes, List<Map<String, dynamic>> items) async {
+      String address, String notes, List<Map<String, dynamic>> items, {
+      String status = 'pending',
+      String paymentMethod = 'cash',
+      bool fullyPaid = false
+    }) async {
     return await _cloudHelper.createOrder(
-        buyerId, sellerId, total, address, notes, items);
+        buyerId, sellerId, total, address, notes, items,
+        status: status,
+        paymentMethod: paymentMethod,
+        fullyPaid: fullyPaid);
   }
 
   Future<List<Map<String, dynamic>>> getItemsForOrder(int orderId) async {
