@@ -653,10 +653,11 @@ class _ProductsTabState extends State<ProductsTab> {
                   Text(
                     product.name,
                     style: TextStyle(
-                      fontWeight: FontWeight.bold,
+                      fontWeight: FontWeight.w900,
+                      color: const Color(0xFF0D47A1), // أزرق غامق جداً
                       fontSize: MediaQuery.of(context).size.width < 600
-                          ? 13
-                          : 16,
+                          ? 15
+                          : 18,
                     ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
