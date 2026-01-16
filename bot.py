@@ -9664,8 +9664,11 @@ def handle_skip_seller(call):
     
     bot.answer_callback_query(call.id)
 
-@bot.message_handler(func=lambda message: message.from_user.id in user_states and 
-                     "current_seller_payment" in user_states[message.from_user.id])
+# معالج منفصل ومحدد لإدخال عنوان التوصيل
+@bot.message_handler(func=lambda message: 
+                     message.from_user.id in user_states and 
+                     "current_seller_payment" in user_states[message.from_user.id] and
+                     "current_seller_id" in user_states[message.from_user.id])
 def process_delivery_address(message):
     telegram_id = message.from_user.id
     state = user_states[telegram_id]
@@ -9811,8 +9814,6 @@ def process_delivery_address(message):
         else:
             del user_states[telegram_id]
             show_buyer_main_menu(message)
-
-def create_confirmed_order_for_closed_store(message, telegram_id, seller_id, seller_data, user_info):
     """
     Create 'Confirmed' order immediately for closed stores with registered customers.
     
