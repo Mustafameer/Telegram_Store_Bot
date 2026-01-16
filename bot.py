@@ -9791,14 +9791,69 @@ def process_delivery_address(message):
     seller = get_seller_by_id(seller_id)
     seller_name = seller[3] if seller else "المتجر"
     
-    bot.send_message(message.chat.id,
-                    f"✅ **تم إنشاء الطلب بنجاح!**\n\n"
-                    f"🆔 رقم الطلب: {order_id}\n"
-                    f"🏪 المتجر: {seller_name}\n"
-                    f"💰 الإجمالي: {total} IQD\n"
-                    f"💳 طريقة الدفع: {'نقداً' if payment_method == 'cash' else 'على الحساب'}\n"
-                    f"💵 حالة الدفع: {'مدفوع بالكامل' if fully_paid else 'غير مدفوع بالكامل'}\n\n"
-                    f"سيقوم البائع بالتواصل معك قريباً.")
+    # For closed stores, generate and send receipt image instead of waiting message
+    if is_guest or (seller and seller[9] == 1):  # 1 = closed store
+        try:
+            from utils.receipt_generator import generate_order_card
+            
+            # Get buyer info
+            buyer_info = get_user(telegram_id)
+            buyer_name = buyer_info[2] if buyer_info and len(buyer_info) > 2 else "الزبون"
+            buyer_phone = buyer_info[4] if buyer_info and len(buyer_info) > 4 else "N/A"
+            
+            # Prepare order details for receipt
+            order_details = (order_id, 0, 0, total, "Confirmed", "", delivery_address, "")
+            
+            # Prepare items for receipt - need all details
+            items_full = []
+            for pid, qty, price, name in seller_data['items']:
+                items_full.append((pid, qty, price, name, "", "", "", "", "", "", ""))
+            
+            # Generate receipt image
+            receipt_img = generate_order_card(order_details, items_full, buyer_name, buyer_phone, seller_name)
+            
+            if receipt_img:
+                caption = (f"✅ **تم إنشاء الطلب بنجاح!**\n\n"
+                          f"🆔 رقم الطلب: {order_id}\n"
+                          f"🏪 المتجر: {seller_name}\n"
+                          f"💰 الإجمالي: {total} IQD\n"
+                          f"💳 طريقة الدفع: {'نقداً' if payment_method == 'cash' else 'على الحساب'}\n"
+                          f"💵 حالة الدفع: مؤكد وجاهز للتنفيذ\n\n"
+                          f"سيقوم البائع بمعالجة الطلب قريباً.")
+                
+                bot.send_photo(message.chat.id, receipt_img, caption=caption, parse_mode='Markdown')
+                print(f"✅ Receipt image sent for Order #{order_id}")
+            else:
+                # Fallback to text message if image generation fails
+                bot.send_message(message.chat.id,
+                                f"✅ **تم إنشاء الطلب بنجاح!**\n\n"
+                                f"🆔 رقم الطلب: {order_id}\n"
+                                f"🏪 المتجر: {seller_name}\n"
+                                f"💰 الإجمالي: {total} IQD\n"
+                                f"💳 طريقة الدفع: {'نقداً' if payment_method == 'cash' else 'على الحساب'}\n"
+                                f"💵 حالة الدفع: مؤكد وجاهز للتنفيذ\n\n"
+                                f"سيقوم البائع بمعالجة الطلب قريباً.")
+        except Exception as e:
+            print(f"⚠️ Error generating receipt image: {e}")
+            # Fallback to text message
+            bot.send_message(message.chat.id,
+                            f"✅ **تم إنشاء الطلب بنجاح!**\n\n"
+                            f"🆔 رقم الطلب: {order_id}\n"
+                            f"🏪 المتجر: {seller_name}\n"
+                            f"💰 الإجمالي: {total} IQD\n"
+                            f"💳 طريقة الدفع: {'نقداً' if payment_method == 'cash' else 'على الحساب'}\n"
+                            f"💵 حالة الدفع: مؤكد وجاهز للتنفيذ\n\n"
+                            f"سيقوم البائع بمعالجة الطلب قريباً.")
+    else:
+        # For open stores, send regular message
+        bot.send_message(message.chat.id,
+                        f"✅ **تم إنشاء الطلب بنجاح!**\n\n"
+                        f"🆔 رقم الطلب: {order_id}\n"
+                        f"🏪 المتجر: {seller_name}\n"
+                        f"💰 الإجمالي: {total} IQD\n"
+                        f"💳 طريقة الدفع: {'نقداً' if payment_method == 'cash' else 'على الحساب'}\n"
+                        f"💵 حالة الدفع: {'مدفوع بالكامل' if fully_paid else 'غير مدفوع بالكامل'}\n\n"
+                        f"سيقوم البائع بالتواصل معك قريباً.")
     
     # الانتقال للبائع التالي إن وجد
     if state["items_by_seller"]:
