@@ -11681,6 +11681,7 @@ def send_welcome(message):
         full_name = message.from_user.full_name
         
         text = message.text or ""
+        print(f"📍 /start handler - User: {telegram_id}, Text: {text}")
         
         # ===== معالجة رابط المتجر (store_SELLER_ID) =====
         if "store_" in text:
@@ -11733,10 +11734,12 @@ def send_welcome(message):
         
         user = get_user(telegram_id)
         user_type = user[3] if user else "customer"
+        print(f"📍 User Type: {user_type}")
         
         if user_type == 'bot_admin':
             show_bot_admin_menu(message)
         elif user_type == 'seller':
+            print(f"🏪 Showing seller menu for {telegram_id}")
             show_seller_menu(message)
         else:
             # عرض قائمة المشتري (أو خيار التسجيل للمستخدم الجديد)
@@ -11757,7 +11760,7 @@ def send_welcome(message):
                 show_buyer_main_menu(message=message)
         
     except Exception as e:
-        print(f"Error in start command: {e}")
+        print(f"❌ Error in start command: {e}")
         import traceback
         traceback.print_exc()
         bot.reply_to(message, "حدث خطأ بسيط، حاول مرة أخرى.")
