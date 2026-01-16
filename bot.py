@@ -9272,6 +9272,7 @@ def process_guest_checkout_phone(message):
 def start_checkout_for_seller(message, user_id, seller_id, seller_data):
     seller = get_seller_by_id(seller_id)
     seller_name = seller[3] if seller else seller_data['seller_name']
+    safe_seller_name = escape_markdown_v1(seller_name) if seller_name else "متجر"
     
     subtotal = seller_data['subtotal']
     
@@ -9281,7 +9282,7 @@ def start_checkout_for_seller(message, user_id, seller_id, seller_data):
     
     if is_guest:
         text = f"🏪 **إنهاء طلب من المتجر**\n\n"
-        text += f"المتجر: {seller_name}\n"
+        text += f"المتجر: {safe_seller_name}\n"
         text += f"💰 المجموع: {subtotal} IQD\n\n"
         text += "🔸 **وضع الزائر:**\n"
         text += "• يمكنك الشراء نقداً فقط\n"
@@ -9309,7 +9310,7 @@ def start_checkout_for_seller(message, user_id, seller_id, seller_data):
         limit_info = get_credit_limit_info(customer[0], seller_id)
     
     text = f"🏪 **إنهاء طلب من المتجر**\n\n"
-    text += f"المتجر: {seller_name}\n"
+    text += f"المتجر: {safe_seller_name}\n"
     text += f"💰 المجموع: {subtotal} IQD\n"
     
     if customer:
