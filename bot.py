@@ -9743,10 +9743,12 @@ def process_delivery_address(message):
                         return
         
         # إنشاء الطلب
+        # Extract only (product_id, quantity, price) from seller_data['items']
+        cart_items_for_order = [(pid, qty, price) for pid, qty, price, name in seller_data['items']]
         order_id, total = create_order(
             telegram_id, 
             seller_id, 
-            seller_data['items'], 
+            cart_items_for_order, 
             delivery_address, 
             None, 
             payment_method, 
@@ -9826,8 +9828,8 @@ def create_confirmed_order_for_closed_store(message, telegram_id, seller_id, sel
     try:
         print(f"🔄 Creating confirmed order for closed store {seller_id} for customer {telegram_id}")
         
-        # 1. Format items for order creation: [(product_id, quantity), ...]
-        items = [(int(product_id), int(quantity)) for product_id, quantity, price, name in seller_data['items']]
+        # 1. Format items for order creation: [(product_id, quantity, price), ...]
+        items = [(int(product_id), int(quantity), float(price)) for product_id, quantity, price, name in seller_data['items']]
         
         # 2. Create order with status='Confirmed' (آجل)
         # Using create_order with credit payment (آجل) and set to Confirmed
