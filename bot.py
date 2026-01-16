@@ -2605,6 +2605,70 @@ def create_order(buyer_id, seller_id, cart_items, delivery_address=None, notes=N
             if new_qty < 0:
                 new_qty = 0
             cursor_wrapper.execute("UPDATE Products SET Quantity=? WHERE ProductID=?", (new_qty, pid))
+            
+            # 🗑️ حذف الصور من ImageStorage (الصور ترسل للمشتري ثم تُحذف من TELEBOT)
+            if IS_POSTGRES:
+                # حذف صور هذا المنتج من ImageStorage
+                cursor_wrapper.execute("""
+                    SELECT ImagePath FROM "productimages" WHERE "productid"=%s
+                """, (pid,))
+            else:
+                cursor_wrapper.execute("""
+                    SELECT ImagePath FROM ProductImages WHERE ProductID=?
+                """, (pid,))
+            
+            image_paths = cursor_wrapper.fetchall()
+            for (img_path,) in image_paths:
+                if img_path:
+                    # استخراج اسم الملف من المسار
+                    filename = os.path.basename(img_path)
+                    try:
+                        if IS_POSTGRES:
+                            cursor_wrapper.execute("DELETE FROM ImageStorage WHERE FileName = %s", (filename,))
+                        else:
+                            cursor_wrapper.execute("DELETE FROM ImageStorage WHERE FileName = ?", (filename,))
+                        print(f"🗑️ حذفت صورة {filename} من ImageStorage بعد البيع")
+                    except Exception as del_err:
+                        print(f"⚠️ خطأ في حذف الصورة {filename}: {del_err}")
+            
+            # 📢 إشعار عندما تصبح الكمية صفر
+            if new_qty == 0:
+                try:
+                    # احصل على بيانات المنتج والبائع للإشعار
+                    cursor_wrapper.execute("SELECT ProductID, Name FROM Products WHERE ProductID = ?", (pid,))
+                    prod_info = cursor_wrapper.fetchone()
+                    
+                    cursor_wrapper.execute("SELECT StoreName, TelegramID FROM Sellers WHERE SellerID = ?", (seller_id,))
+                    seller_info = cursor_wrapper.fetchone()
+                    
+                    if prod_info and seller_info:
+                        product_name = prod_info[1]
+                        store_name = seller_info[0]
+                        seller_telegram = seller_info[1]
+                        
+                        # إشعار للبائع
+                        try:
+                            msg = f"⚠️ **تنبيه: انتهت الكمية!**\n\n"
+                            msg += f"🏪 المتجر: {store_name}\n"
+                            msg += f"📦 المنتج: {product_name}\n"
+                            msg += f"⏰ التاريخ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                            msg += f"الكمية أصبحت صفر - يرجى إضافة منتجات جديدة"
+                            bot.send_message(seller_telegram, msg, parse_mode='Markdown')
+                        except Exception as msg_err:
+                            print(f"⚠️ خطأ في إرسال إشعار البائع: {msg_err}")
+                        
+                        # إشعار للمشتري (اختياري)
+                        try:
+                            buyer_msg = f"✅ شكراً لشرائك!\n\n"
+                            buyer_msg += f"📦 المنتج: {product_name}\n"
+                            buyer_msg += f"🏪 المتجر: {store_name}\n\n"
+                            buyer_msg += f"⚠️ **ملاحظة:** المنتج انتهى من المخزون.\n"
+                            buyer_msg += f"سيتمكن صاحب المتجر من إضافة كمية جديدة قريباً."
+                            bot.send_message(buyer_id, buyer_msg, parse_mode='Markdown')
+                        except Exception as buyer_msg_err:
+                            print(f"⚠️ خطأ في إرسال إشعار المشتري: {buyer_msg_err}")
+                except Exception as notif_err:
+                    print(f"⚠️ خطأ في إرسال الإشعارات: {notif_err}")
     
         # تسجيل المعاملة في كشف الحساب حسب نوع الزبون وطريقة الدفع
         buyer_info = get_user(buyer_id)
@@ -5457,13 +5521,17 @@ def handle_edit_product_field(call):
                         reply_markup=markup)
     
     elif field == "img":
-        user_states[telegram_id]["step"] = "waiting_for_new_product_image"
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        markup.add("إلغاء")
+        # عرض رسالة توجيه بدلاً من طلب صورة مباشرة
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("📷 معرض الصور", callback_data=f"manage_product_images_{product_id}"),
+            types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_edit_product")
+        )
         
         bot.send_message(call.message.chat.id,
-                        f"📸 **تغيير صورة المنتج**\n\n"
-                        f"يرجى إرسال الصورة الجديدة الآن:",
+                        f"📸 **إدارة صور المنتج**\n\n"
+                        f"اضغط على آيقونة معرض الصور لإضافة الصور\n\n"
+                        f"💡 **ملاحظة:** الصور ترسل للمشتري فقط ثم تُحذف من النظام",
                         reply_markup=markup)
     
     bot.answer_callback_query(call.id)
@@ -10018,6 +10086,55 @@ def create_order_for_guest(buyer_id, seller_id, cart_items, delivery_address=Non
         if new_qty < 0:
             new_qty = 0
         cursor.execute("UPDATE Products SET Quantity=? WHERE ProductID=?", (new_qty, pid))
+        
+        # 🗑️ حذف الصور من ImageStorage (الصور ترسل للمشتري ثم تُحذف من TELEBOT)
+        if IS_POSTGRES:
+            cursor.execute("""
+                SELECT ImagePath FROM "productimages" WHERE "productid"=%s
+            """, (pid,))
+        else:
+            cursor.execute("""
+                SELECT ImagePath FROM ProductImages WHERE ProductID=?
+            """, (pid,))
+        
+        image_paths = cursor.fetchall()
+        for (img_path,) in image_paths:
+            if img_path:
+                filename = os.path.basename(img_path)
+                try:
+                    if IS_POSTGRES:
+                        cursor.execute("DELETE FROM ImageStorage WHERE FileName = %s", (filename,))
+                    else:
+                        cursor.execute("DELETE FROM ImageStorage WHERE FileName = ?", (filename,))
+                    print(f"🗑️ حذفت صورة {filename} من ImageStorage بعد البيع (guest order)")
+                except Exception as del_err:
+                    print(f"⚠️ خطأ في حذف الصورة {filename}: {del_err}")
+        
+        # 📢 إشعار عندما تصبح الكمية صفر
+        if new_qty == 0:
+            try:
+                cursor.execute("SELECT ProductID, Name FROM Products WHERE ProductID = ?", (pid,))
+                prod_info = cursor.fetchone()
+                
+                cursor.execute("SELECT StoreName, TelegramID FROM Sellers WHERE SellerID = ?", (seller_id,))
+                seller_info = cursor.fetchone()
+                
+                if prod_info and seller_info:
+                    product_name = prod_info[1]
+                    store_name = seller_info[0]
+                    seller_telegram = seller_info[1]
+                    
+                    try:
+                        msg = f"⚠️ **تنبيه: انتهت الكمية!**\n\n"
+                        msg += f"🏪 المتجر: {store_name}\n"
+                        msg += f"📦 المنتج: {product_name}\n"
+                        msg += f"⏰ التاريخ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                        msg += f"الكمية أصبحت صفر - يرجى إضافة منتجات جديدة"
+                        bot.send_message(seller_telegram, msg, parse_mode='Markdown')
+                    except Exception as msg_err:
+                        print(f"⚠️ خطأ في إرسال إشعار البائع: {msg_err}")
+            except Exception as notif_err:
+                print(f"⚠️ خطأ في إرسال الإشعارات: {notif_err}")
     
     conn.commit()
     conn.close()
