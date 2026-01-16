@@ -9224,14 +9224,31 @@ def handle_checkout_cart(call):
         if all_sellers_closed and user_info:
             print(f"✅ جميع المتاجر مغلقة - إنشاء طلب مؤكد مباشرة")
             # إنشاء طلب لكل متجر مقفول
+            total_amount_all = 0
             for seller_id, seller_data in items_by_seller.items():
                 create_confirmed_order_for_closed_store(call.message, telegram_id, seller_id, seller_data, user_info)
+                total_amount_all += seller_data.get('subtotal', 0)
             
             # حذف المنتجات من السلة
             clear_cart_db(telegram_id)
             
+            # الحصول على الرصيد الجديد من أول متجر (المتاجر المغلقة عادة واحد)
+            first_seller_id = list(items_by_seller.keys())[0]
+            customer = get_credit_customer(first_seller_id, user_info[4] if len(user_info) > 4 else None, user_info[2] if len(user_info) > 2 else None)
+            new_balance = 0
+            if customer:
+                new_balance = get_customer_balance(customer[0], first_seller_id)
+            
             bot.answer_callback_query(call.id, "✅ تم تأكيد طلبك!")
-            bot.send_message(call.message.chat.id, "✅ تم إنزال طلبك بنجاح!\n\nسيتم معالجة الطلب من قبل البائع.")
+            
+            # رسالة مفصلة تتضمن الرصيد الجديد
+            detail_msg = f"✅ تم إنزال طلبك بنجاح!\n\n"
+            detail_msg += f"💰 المبلغ المخصوم: {total_amount_all:,.0f} د.ع\n"
+            if new_balance != 0:
+                detail_msg += f"📊 الرصيد الحالي: {new_balance:,.0f} د.ع\n\n"
+            detail_msg += f"سيتم معالجة الطلب من قبل البائع."
+            
+            bot.send_message(call.message.chat.id, detail_msg)
             return
         
         # خلاف ذلك، استخدم النظام الحالي (خطوات إضافية للمتاجر المفتوحة)
@@ -9823,7 +9840,7 @@ def create_confirmed_order_for_closed_store(message, telegram_id, seller_id, sel
         
         # 2. Create order with status='Confirmed' (آجل)
         # Using create_order with credit payment (آجل) and set to Confirmed
-        order_id = create_order(
+        result = create_order(
             buyer_id=telegram_id,
             seller_id=seller_id,
             cart_items=items,
@@ -9831,6 +9848,13 @@ def create_confirmed_order_for_closed_store(message, telegram_id, seller_id, sel
             payment_method='credit',  # آجل (credit)
             fully_paid=False
         )
+        
+        # Handle both tuple (order_id, total) and single value responses
+        if isinstance(result, tuple):
+            order_id, total_amount = result
+        else:
+            order_id = result
+            total_amount = seller_data.get('subtotal', 0)
         
         if not order_id:
             print(f"❌ Failed to create order for closed store {seller_id}")
