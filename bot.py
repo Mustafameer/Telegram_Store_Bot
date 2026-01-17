@@ -9130,21 +9130,24 @@ def delete_product_image_db(image_id):
     """حذف صورة من المنتج"""
     try:
         conn = get_db_connection()
-        cursor = conn.cursor()
+        cursor_wrapper = conn.cursor()
         
-        if IS_POSTGRES:
-            cursor.execute('DELETE FROM productimages WHERE imageid=%s', (image_id,))
-        else:
-            cursor.execute("DELETE FROM ProductImages WHERE ImageID=?", (image_id,))
-        
-        conn.commit()
-        deleted = cursor.rowcount > 0
-        conn.close()
-        return deleted
+        try:
+            if IS_POSTGRES:
+                cursor_wrapper.execute('DELETE FROM productimages WHERE imageid=%s', (image_id,))
+            else:
+                cursor_wrapper.execute("DELETE FROM ProductImages WHERE ImageID=?", (image_id,))
+            
+            conn.commit()
+            deleted = cursor_wrapper.rowcount > 0
+            return deleted
+        finally:
+            cursor_wrapper.close()
+            conn.close()
     except Exception as e:
         print(f"Error deleting product image: {e}")
-        if 'conn' in locals():
-            conn.close()
+        import traceback
+        traceback.print_exc()
         return False
 
 def handle_manage_product_images(call):
