@@ -9425,8 +9425,15 @@ def handle_save_product_image(message):
             bot.send_message(message.chat.id,
                 f"✅ **تم إضافة الصورة بنجاح!**\n\n"
                 f"📸 تم حفظ الصورة: {os.path.basename(image_path)}\n\n"
-                f"يمكنك إضافة المزيد من الصور أو استخدم /my_products للعودة إلى منتجاتك.",
+                f"يمكنك إضافة المزيد من الصور",
                 parse_mode='Markdown')
+            
+            # إضافة زر العودة للرئيسية
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("🏠 العودة للرئيسية", callback_data="main_menu"))
+            bot.send_message(message.chat.id,
+                "اختر:",
+                reply_markup=markup)
         else:
             print(f"[ERROR] add_product_image_db returned None - image not saved")
             bot.send_message(message.chat.id, "❌ حدث خطأ في إضافة الصورة لقاعدة البيانات")
