@@ -9499,17 +9499,17 @@ def handle_delete_product_image(call):
         try:
             if IS_POSTGRES:
                 cursor_wrapper.execute("""
-                    SELECT is.imageid, is.productid, is.filename, p.sellerid, p.name
-                    FROM imagestorage is
-                    JOIN products p ON is.productid = p.productid
-                    WHERE is.imageid = %s
+                    SELECT img.imageid, img.productid, img.filename, p.sellerid, p.name
+                    FROM imagestorage img
+                    JOIN products p ON img.productid = p.productid
+                    WHERE img.imageid = %s
                 """, (image_id,))
             else:
                 cursor_wrapper.execute("""
-                    SELECT is.imageid, is.productid, is.filename, p.sellerid, p.name
-                    FROM imagestorage is
-                    JOIN products p ON is.productid = p.productid
-                    WHERE is.imageid = ?
+                    SELECT img.imageid, img.productid, img.filename, p.sellerid, p.name
+                    FROM imagestorage img
+                    JOIN products p ON img.productid = p.productid
+                    WHERE img.imageid = ?
                 """, (image_id,))
             
             result = cursor_wrapper.fetchone()
