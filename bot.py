@@ -9108,8 +9108,8 @@ def add_product_image_db(product_id, image_path, image_order=0):
             
             try:
                 cursor_wrapper.execute("""
-                    INSERT INTO imagestorage (filename, imageid, productid, imageorder, updatedat)
-                    VALUES (%s, DEFAULT, %s, %s, NOW())
+                    INSERT INTO imagestorage (filename, productid, imageorder, updatedat)
+                    VALUES (%s, %s, %s, NOW())
                     RETURNING imageid
                 """, (unique_filename, product_id, image_order))
                 result = cursor_wrapper.fetchone()
@@ -9343,9 +9343,12 @@ def handle_save_product_image(message):
         images = get_product_images(product_id)
         image_order = len(images)  # ترتيب الصورة الجديدة
         
+        print(f"[DEBUG] Calling add_product_image_db - product_id={product_id}, image_order={image_order}")
         image_id = add_product_image_db(product_id, image_path, image_order)
+        print(f"[DEBUG] add_product_image_db returned: image_id={image_id}")
         
         if image_id:
+            print(f"[DEBUG] Image saved successfully with ID: {image_id}")
             # تحديث كمية المنتج تلقائياً إذا كان المتجر مقفول
             product = get_product_by_id(product_id)
             if product:
@@ -9392,6 +9395,7 @@ def handle_save_product_image(message):
                 f"يمكنك إضافة المزيد من الصور أو استخدم /my_products للعودة إلى منتجاتك.",
                 parse_mode='Markdown')
         else:
+            print(f"[ERROR] add_product_image_db returned None - image not saved")
             bot.send_message(message.chat.id, "❌ حدث خطأ في إضافة الصورة لقاعدة البيانات")
         
         # إزالة الحالة
