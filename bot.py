@@ -9223,81 +9223,60 @@ def handle_manage_product_images(call):
         # الآن إرسال الصور واحدة تلو الأخرى مع أزرار التحكم
         for idx, (img_id, img_path, img_order) in enumerate(images, 1):
             try:
-                # محاولة الحصول على بيانات الصورة من ImageStorage
                 image_data = None
                 
+                # محاولة الحصول على بيانات الصورة من ImageStorage
                 if IS_POSTGRES:
                     conn = get_db_connection()
                     cursor_wrapper = conn.cursor()
                     try:
-                        # البحث عن الصورة في ImageStorage بناءً على المسار
+                        # البحث عن الصورة في ImageStorage بناءً على اسم الملف
                         img_filename = os.path.basename(img_path)
+                        print(f"[DEBUG] Looking for image: {img_filename}")
+                        
                         cursor_wrapper.execute(
-                            'SELECT filedata FROM imagestorage WHERE filename = %s LIMIT 1',
+                            'SELECT filedata FROM imagestorage WHERE filename = %s',
                             (img_filename,)
                         )
                         result = cursor_wrapper.fetchone()
                         if result:
                             image_data = result[0]
-                            print(f"[DEBUG] Image data found from ImageStorage: {img_filename}")
+                            print(f"[DEBUG] Image data found: {img_filename} - size: {len(image_data) if image_data else 0} bytes")
+                        else:
+                            print(f"[DEBUG] Image not found in ImageStorage: {img_filename}")
+                            # حاول البحث بـ lowercase
+                            cursor_wrapper.execute(
+                                'SELECT filedata FROM imagestorage WHERE LOWER(filename) = LOWER(%s)',
+                                (img_filename,)
+                            )
+                            result = cursor_wrapper.fetchone()
+                            if result:
+                                image_data = result[0]
+                                print(f"[DEBUG] Image found with LOWER: {img_filename}")
                     except Exception as e:
-                        print(f"[DEBUG] Could not get image from ImageStorage: {e}")
+                        print(f"[DEBUG] Error querying ImageStorage: {e}")
                     finally:
                         cursor_wrapper.close()
                         conn.close()
                 
-                # إرسال الصورة إذا وجدناها في ImageStorage
+                # إرسال الصورة إذا وجدناها
                 if image_data:
                     try:
-                        # إرسال الصورة كملف
-                        img_caption = f"صورة {idx} من {len(images)}"
                         bot.send_photo(
                             call.message.chat.id,
                             image_data,
-                            caption=img_caption
+                            caption=f"صورة {idx} من {len(images)}"
                         )
+                        print(f"[DEBUG] Sent image {idx} successfully")
                     except Exception as e:
-                        print(f"[DEBUG] Could not send image as file: {e}")
-                        # إذا فشل، حاول إرسال من المسار المحلي
-                        if os.path.exists(img_path):
-                            try:
-                                with open(img_path, 'rb') as photo:
-                                    bot.send_photo(
-                                        call.message.chat.id,
-                                        photo,
-                                        caption=f"صورة {idx} من {len(images)}"
-                                    )
-                            except Exception as e2:
-                                print(f"[DEBUG] Could not send image from path: {e2}")
-                                # إذا فشل الكل، أرسل نص فقط
-                                bot.send_message(
-                                    call.message.chat.id,
-                                    f"📷 صورة {idx}: {os.path.basename(img_path)}"
-                                )
+                        print(f"[ERROR] Failed to send image {idx}: {e}")
+                        bot.send_message(call.message.chat.id, f"⚠️ لم تتمكن من عرض الصورة {idx}")
                 else:
-                    # لم نجد الصورة في ImageStorage، حاول من المسار المحلي
-                    if os.path.exists(img_path):
-                        try:
-                            with open(img_path, 'rb') as photo:
-                                bot.send_photo(
-                                    call.message.chat.id,
-                                    photo,
-                                    caption=f"صورة {idx} من {len(images)}"
-                                )
-                        except Exception as e:
-                            print(f"[DEBUG] Could not send image from path: {e}")
-                            bot.send_message(
-                                call.message.chat.id,
-                                f"📷 صورة {idx}: {os.path.basename(img_path)}"
-                            )
-                    else:
-                        print(f"[DEBUG] Image file not found: {img_path}")
-                        bot.send_message(
-                            call.message.chat.id,
-                            f"⚠️ الصورة {idx} غير موجودة"
-                        )
+                    print(f"[ERROR] No image data found for image {idx}: {img_path}")
+                    bot.send_message(call.message.chat.id, f"⚠️ الصورة {idx} غير متاحة")
+                    
             except Exception as e:
-                print(f"[ERROR] Error processing image {img_id}: {e}")
+                print(f"[ERROR] Error processing image {idx}: {e}")
                 import traceback
                 traceback.print_exc()
         
