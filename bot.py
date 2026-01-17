@@ -9527,26 +9527,6 @@ def handle_delete_product_image(call):
         import traceback
         traceback.print_exc()
         bot.answer_callback_query(call.id, "❌ حدث خطأ في حذف الصورة")
-                conn.commit()
-                conn.close()
-            
-            bot.answer_callback_query(call.id, "✅ تم حذف الصورة")
-            
-            # إعادة عرض قائمة إدارة الصور
-            call_data = f"manage_product_images_{product_id}"
-            fake_call = type('obj', (object,), {
-                'data': call_data,
-                'from_user': call.from_user,
-                'message': call.message
-            })()
-            handle_manage_product_images(fake_call)
-        else:
-            bot.answer_callback_query(call.id, "❌ فشل حذف الصورة")
-    except Exception as e:
-        print(f"Error in handle_delete_product_image: {e}")
-        import traceback
-        traceback.print_exc()
-        bot.answer_callback_query(call.id, "❌ حدث خطأ")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("addtocart_"))
 def handle_add_to_cart(call):
