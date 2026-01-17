@@ -9162,20 +9162,28 @@ def handle_manage_product_images(call):
         
         print(f"[DEBUG] Product found: {product}")
         
-        # الحصول على بيانات البائع
-        seller = get_seller_by_telegram(telegram_id)
+        # الحصول على بيانات المتجر (البائع)
+        seller = get_seller_by_id(product[1])  # الحصول على بائع المنتج
         if not seller:
-            print(f"[DEBUG] Seller not found for telegram_id={telegram_id}")
-            bot.answer_callback_query(call.id, "⛔ ليس لديك متجر مسجل")
+            print(f"[DEBUG] Seller not found for seller_id={product[1]}")
+            bot.answer_callback_query(call.id, "⛔ المتجر غير موجود")
             return
         
-        print(f"[DEBUG] Seller found: seller_id={seller[0]}, product seller_id={product[1]}")
+        print(f"[DEBUG] Product seller: seller_id={seller[0]}")
         
-        # التحقق من أن البائع يملك المنتج
-        if product[1] != seller[0]:
-            print(f"[DEBUG] Permission denied: product seller_id={product[1]} != seller_id={seller[0]}")
-            bot.answer_callback_query(call.id, "⛔ ليس لديك صلاحية لتعديل هذا المنتج")
-            return
+        # للمتاجر العادية: تحقق من الملكية
+        # للمتجر TELEBOT: السماح للجميع بالعرض
+        is_telebot = seller[0] == 27  # SellerID من TELEBOT
+        
+        if not is_telebot:
+            # هذا متجر عادي - تحقق من الملكية
+            user_seller = get_seller_by_telegram(telegram_id)
+            if not user_seller or product[1] != user_seller[0]:
+                print(f"[DEBUG] Permission denied: not the owner")
+                bot.answer_callback_query(call.id, "⛔ ليس لديك صلاحية لتعديل هذا المنتج")
+                return
+        else:
+            print(f"[DEBUG] TELEBOT product - allowing view without restrictions")
         
         # الحصول على الصور
         product_name = product[3]
