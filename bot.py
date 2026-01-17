@@ -9098,41 +9098,51 @@ def add_product_image_db(product_id, image_path, image_order=0):
     """إضافة صورة للمنتج في قاعدة البيانات"""
     try:
         conn = get_db_connection()
-        cursor = conn.cursor()
+        cursor_wrapper = conn.cursor()
         
         if IS_POSTGRES:
             # 1️⃣ إضافة الصورة في جدول productimages
-            cursor.execute("""
+            cursor_wrapper.execute("""
                 INSERT INTO productimages (productid, imagepath, imageorder)
                 VALUES (%s, %s, %s)
                 RETURNING imageid
             """, (product_id, image_path, image_order))
-            result = cursor.fetchone()
+            result = cursor_wrapper.fetchone()
             image_id = result[0] if result else None
+            print(f"[DEBUG] Image ID from productimages: {image_id}")
             
             # 2️⃣ حفظ الصورة في جدول imagestorage
             if image_id:
-                cursor.execute("""
-                    INSERT INTO imagestorage (imageid, imagepath, uploadtime)
-                    VALUES (%s, %s, NOW())
-                """, (image_id, image_path))
-                print(f"✅ تم حفظ الصورة في imagestorage برقم: {image_id}")
+                try:
+                    cursor_wrapper.execute("""
+                        INSERT INTO imagestorage (imageid, imagepath, uploadtime)
+                        VALUES (%s, %s, NOW())
+                    """, (image_id, image_path))
+                    print(f"✅ تم حفظ الصورة في imagestorage برقم: {image_id}")
+                except Exception as img_storage_err:
+                    print(f"[WARNING] Failed to save to imagestorage: {img_storage_err}")
+                    # لا نوقف العملية إذا فشل حفظ imagestorage
         else:
-            cursor.execute("""
+            cursor_wrapper.execute("""
                 INSERT INTO ProductImages (ProductID, ImagePath, ImageOrder)
                 VALUES (?, ?, ?)
             """, (product_id, image_path, image_order))
-            image_id = cursor.lastrowid
+            image_id = cursor_wrapper.lastrowid
+            print(f"[DEBUG] Image ID from ProductImages: {image_id}")
             
             # حفظ في imagestorage (SQLite)
             if image_id:
-                cursor.execute("""
-                    INSERT INTO ImageStorage (ImageID, ImagePath, UploadTime)
-                    VALUES (?, ?, CURRENT_TIMESTAMP)
-                """, (image_id, image_path))
-                print(f"✅ تم حفظ الصورة في ImageStorage برقم: {image_id}")
+                try:
+                    cursor_wrapper.execute("""
+                        INSERT INTO ImageStorage (ImageID, ImagePath, UploadTime)
+                        VALUES (?, ?, CURRENT_TIMESTAMP)
+                    """, (image_id, image_path))
+                    print(f"✅ تم حفظ الصورة في ImageStorage برقم: {image_id}")
+                except Exception as img_storage_err:
+                    print(f"[WARNING] Failed to save to ImageStorage: {img_storage_err}")
         
         conn.commit()
+        cursor_wrapper.close()
         conn.close()
         return image_id
     except Exception as e:
