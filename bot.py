@@ -2276,20 +2276,20 @@ def get_products(seller_id=None, category_id=None):
         conn.close()
 
 def get_product_images(product_id):
-    """الحصول على جميع صور المنتج"""
+    """الحصول على جميع صور المنتج من imagestorage"""
     conn = get_db_connection()
     cursor = conn.cursor()
     if IS_POSTGRES:
         cursor.execute("""
-            SELECT imageid, imagepath, imageorder 
-            FROM productimages 
+            SELECT imageid, filename, imageorder 
+            FROM imagestorage 
             WHERE productid=%s 
             ORDER BY imageorder, imageid
         """, (product_id,))
     else:
         cursor.execute("""
-            SELECT ImageID, ImagePath, ImageOrder 
-            FROM ProductImages 
+            SELECT ImageID, FileName, ImageOrder 
+            FROM ImageStorage 
             WHERE ProductID=? 
             ORDER BY ImageOrder, ImageID
         """, (product_id,))
@@ -9095,72 +9095,59 @@ def handle_cancel_image_selection(call):
         pass
 
 def add_product_image_db(product_id, image_path, image_order=0):
-    """إضافة صورة للمنتج في قاعدة البيانات"""
+    """إضافة صورة للمنتج مباشرة إلى imagestorage"""
     try:
         conn = get_db_connection()
         cursor_wrapper = conn.cursor()
         
+        original_filename = os.path.basename(image_path)
+        unique_filename = f"{product_id}_{image_order}_{original_filename}"
+        
         if IS_POSTGRES:
-            print(f"[DEBUG] PostgreSQL - Adding image for product {product_id}, path: {image_path}")
+            print(f"[DEBUG] PostgreSQL - Adding image for product {product_id}")
             
-            # 1️⃣ إضافة الصورة في جدول productimages
             try:
                 cursor_wrapper.execute("""
-                    INSERT INTO productimages (productid, imagepath, imageorder)
-                    VALUES (%s, %s, %s)
+                    INSERT INTO imagestorage (filename, imageid, productid, imageorder, updatedat)
+                    VALUES (%s, DEFAULT, %s, %s, NOW())
                     RETURNING imageid
-                """, (product_id, image_path, image_order))
+                """, (unique_filename, product_id, image_order))
                 result = cursor_wrapper.fetchone()
                 image_id = result[0] if result else None
-                print(f"[DEBUG] ✅ Inserted into productimages - Image ID: {image_id}")
+                print(f"[DEBUG] ✅ Inserted into imagestorage - Image ID: {image_id}, filename: {unique_filename}")
             except Exception as e:
-                print(f"[ERROR] Failed to insert into productimages: {e}")
+                print(f"[ERROR] Failed to insert into imagestorage: {e}")
                 import traceback
                 traceback.print_exc()
                 conn.close()
                 return None
-            
-            # 2️⃣ حفظ الصورة في جدول imagestorage
-            if image_id:
-                try:
-                    original_filename = os.path.basename(image_path)
-                    unique_filename = f"{image_id}_{original_filename}"
-                    
-                    print(f"[DEBUG] Inserting into imagestorage - filename: {unique_filename}, imageid: {image_id}")
-                    
-                    cursor_wrapper.execute("""
-                        INSERT INTO imagestorage (filename, imageid, updatedat)
-                        VALUES (%s, %s, NOW())
-                        ON CONFLICT (imageid) 
-                        DO UPDATE SET filename = EXCLUDED.filename, updatedat = NOW()
-                    """, (unique_filename, image_id))
-                    
-                    print(f"✅ تم حفظ الصورة في imagestorage برقم: {image_id}, اسم: {unique_filename}")
-                except Exception as img_storage_err:
-                    print(f"[WARNING] Failed to save to imagestorage: {img_storage_err}")
-                    import traceback
-                    traceback.print_exc()
         else:
-            cursor_wrapper.execute("""
-                INSERT INTO ProductImages (ProductID, ImagePath, ImageOrder)
-                VALUES (?, ?, ?)
-            """, (product_id, image_path, image_order))
-            image_id = cursor_wrapper.lastrowid
-            print(f"[DEBUG] Image ID from ProductImages: {image_id}")
-            
-            # حفظ في imagestorage (SQLite)
-            if image_id:
-                try:
-                    original_filename = os.path.basename(image_path)
-                    unique_filename = f"{image_id}_{original_filename}"
-                    
-                    cursor_wrapper.execute("""
-                        INSERT INTO ImageStorage (ImageID, FileName)
-                        VALUES (?, ?)
-                    """, (image_id, unique_filename))
-                    print(f"✅ تم حفظ الصورة في ImageStorage برقم: {image_id}, اسم: {unique_filename}")
-                except Exception as img_storage_err:
-                    print(f"[WARNING] Failed to save to ImageStorage: {img_storage_err}")
+            try:
+                cursor_wrapper.execute("""
+                    INSERT INTO ImageStorage (FileName, ProductID, ImageOrder)
+                    VALUES (?, ?, ?)
+                """, (unique_filename, product_id, image_order))
+                image_id = cursor_wrapper.lastrowid
+                print(f"[DEBUG] ✅ Inserted into ImageStorage - Image ID: {image_id}, filename: {unique_filename}")
+            except Exception as e:
+                print(f"[ERROR] Failed to insert into ImageStorage: {e}")
+                import traceback
+                traceback.print_exc()
+                conn.close()
+                return None
+        
+        conn.commit()
+        cursor_wrapper.close()
+        conn.close()
+        print(f"[DEBUG] ✅ Image saved successfully. Returning image_id: {image_id}")
+        return image_id
+    except Exception as e:
+        print(f"[ERROR] Error adding product image: {e}")
+        import traceback
+        traceback.print_exc()
+        if 'conn' in locals():
+            conn.close()
+        return None
         
         conn.commit()
         cursor_wrapper.close()
@@ -9375,9 +9362,9 @@ def handle_save_product_image(message):
                     cursor_wrapper = conn.cursor()
                     try:
                         if IS_POSTGRES:
-                            cursor_wrapper.execute('SELECT COUNT(*) FROM productimages WHERE productid=%s', (product_id,))
+                            cursor_wrapper.execute('SELECT COUNT(*) FROM imagestorage WHERE productid=%s', (product_id,))
                         else:
-                            cursor_wrapper.execute("SELECT COUNT(*) FROM ProductImages WHERE ProductID=?", (product_id,))
+                            cursor_wrapper.execute("SELECT COUNT(*) FROM ImageStorage WHERE ProductID=?", (product_id,))
                         result = cursor_wrapper.fetchone()
                         image_count = result[0] if result else 0
                         
