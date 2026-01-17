@@ -9114,11 +9114,14 @@ def add_product_image_db(product_id, image_path, image_order=0):
             # 2️⃣ حفظ الصورة في جدول imagestorage
             if image_id:
                 try:
-                    filename = os.path.basename(image_path)
+                    # إنشاء اسم ملف فريد باستخدام image_id
+                    original_filename = os.path.basename(image_path)
+                    unique_filename = f"{image_id}_{original_filename}"
+                    
                     # التحقق من عدم وجود الملف بالفعل في imagestorage
                     cursor_wrapper.execute("""
                         SELECT imageid FROM imagestorage WHERE filename = %s
-                    """, (filename,))
+                    """, (unique_filename,))
                     
                     existing = cursor_wrapper.fetchone()
                     if not existing:
@@ -9126,12 +9129,14 @@ def add_product_image_db(product_id, image_path, image_order=0):
                         cursor_wrapper.execute("""
                             INSERT INTO imagestorage (filename, imageid, updatedat)
                             VALUES (%s, %s, NOW())
-                        """, (filename, image_id))
-                        print(f"✅ تم حفظ الصورة في imagestorage برقم: {image_id}, اسم: {filename}")
+                        """, (unique_filename, image_id))
+                        print(f"✅ تم حفظ الصورة في imagestorage برقم: {image_id}, اسم: {unique_filename}")
                     else:
                         print(f"⚠️ الصورة موجودة بالفعل في imagestorage (ID: {existing[0]})")
                 except Exception as img_storage_err:
                     print(f"[WARNING] Failed to save to imagestorage: {img_storage_err}")
+                    import traceback
+                    traceback.print_exc()
         else:
             cursor_wrapper.execute("""
                 INSERT INTO ProductImages (ProductID, ImagePath, ImageOrder)
@@ -9143,12 +9148,15 @@ def add_product_image_db(product_id, image_path, image_order=0):
             # حفظ في imagestorage (SQLite)
             if image_id:
                 try:
-                    filename = os.path.basename(image_path)
+                    # إنشاء اسم ملف فريد باستخدام image_id
+                    original_filename = os.path.basename(image_path)
+                    unique_filename = f"{image_id}_{original_filename}"
+                    
                     cursor_wrapper.execute("""
                         INSERT INTO ImageStorage (ImageID, FileName)
                         VALUES (?, ?)
-                    """, (image_id, filename))
-                    print(f"✅ تم حفظ الصورة في ImageStorage برقم: {image_id}, اسم: {filename}")
+                    """, (image_id, unique_filename))
+                    print(f"✅ تم حفظ الصورة في ImageStorage برقم: {image_id}, اسم: {unique_filename}")
                 except Exception as img_storage_err:
                     print(f"[WARNING] Failed to save to ImageStorage: {img_storage_err}")
         
