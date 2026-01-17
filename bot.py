@@ -9193,12 +9193,13 @@ def handle_manage_product_images(call):
             bot.answer_callback_query(call.id, "❌ خطأ في تحميل الصور")
             return
         
-        text = f"🖼️ **إدارة صور المنتج**\n\n"
+        # تجنب مشاكل Markdown - لا تستخدم parse_mode='Markdown'
+        text = "🖼️ إدارة صور المنتج\n\n"
         text += f"📦 المنتج: {product_name}\n"
         text += f"📸 عدد الصور الحالية: {len(images)}\n\n"
         
         if images:
-            text += "**الصور الحالية:**\n"
+            text += "الصور الحالية:\n"
             markup = types.InlineKeyboardMarkup(row_width=2)
             
             for img_id, img_path, img_order in images:
@@ -9213,7 +9214,8 @@ def handle_manage_product_images(call):
             markup.add(types.InlineKeyboardButton("➕ إضافة صورة جديدة", callback_data=f"add_product_image_{product_id}"))
             markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data=f"edit_product_{product_id}"))
         
-        bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode='Markdown')
+        # إرسال بدون parse_mode لتجنب مشاكل Markdown
+        bot.send_message(call.message.chat.id, text, reply_markup=markup)
         bot.answer_callback_query(call.id)
         
     except Exception as e:
