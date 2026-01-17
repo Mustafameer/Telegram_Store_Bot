@@ -9320,25 +9320,32 @@ def handle_save_product_image(message):
                 if require_registration:
                     # حساب عدد الصور بعد إضافة الصورة الجديدة وتحديث الكمية
                     conn = get_db_connection()
-                    cursor = conn.cursor()
-                    if IS_POSTGRES:
-                        cursor.execute('SELECT COUNT(*) FROM productimages WHERE productid=%s', (product_id,))
-                    else:
-                        cursor.execute("SELECT COUNT(*) FROM ProductImages WHERE ProductID=?", (product_id,))
-                    result = cursor.fetchone()
-                    image_count = result[0] if result else 0
-                    
-                    print(f"📊 تم إضافة صورة جديدة. عدد الصور الآن: {image_count}")
-                    
-                    # تحديث الكمية
-                    if IS_POSTGRES:
-                        cursor.execute("UPDATE Products SET Quantity=%s WHERE ProductID=%s", (image_count, product_id))
-                    else:
-                        cursor.execute("UPDATE Products SET Quantity=? WHERE ProductID=?", (image_count, product_id))
-                    conn.commit()
-                    conn.close()
-                    
-                    print(f"✅ تم تحديث الكمية إلى: {image_count}")
+                    cursor_wrapper = conn.cursor()
+                    try:
+                        if IS_POSTGRES:
+                            cursor_wrapper.execute('SELECT COUNT(*) FROM productimages WHERE productid=%s', (product_id,))
+                        else:
+                            cursor_wrapper.execute("SELECT COUNT(*) FROM ProductImages WHERE ProductID=?", (product_id,))
+                        result = cursor_wrapper.fetchone()
+                        image_count = result[0] if result else 0
+                        
+                        print(f"📊 تم إضافة صورة جديدة. عدد الصور الآن: {image_count}")
+                        
+                        # تحديث الكمية
+                        if IS_POSTGRES:
+                            cursor_wrapper.execute("UPDATE products SET quantity=%s WHERE productid=%s", (image_count, product_id))
+                        else:
+                            cursor_wrapper.execute("UPDATE Products SET Quantity=? WHERE ProductID=?", (image_count, product_id))
+                        conn.commit()
+                        
+                        print(f"✅ تم تحديث الكمية إلى: {image_count}")
+                    except Exception as e:
+                        print(f"[ERROR] Error updating product quantity: {e}")
+                        import traceback
+                        traceback.print_exc()
+                    finally:
+                        cursor_wrapper.close()
+                        conn.close()
             
             bot.send_message(message.chat.id,
                 f"✅ **تم إضافة الصورة بنجاح!**\n\n"
