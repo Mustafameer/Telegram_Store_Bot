@@ -9118,21 +9118,14 @@ def add_product_image_db(product_id, image_path, image_order=0):
                     original_filename = os.path.basename(image_path)
                     unique_filename = f"{image_id}_{original_filename}"
                     
-                    # التحقق من عدم وجود الملف بالفعل في imagestorage
+                    # استخدام UPSERT (INSERT ... ON CONFLICT) لتجنب مشكلة UNIQUE constraint
                     cursor_wrapper.execute("""
-                        SELECT imageid FROM imagestorage WHERE filename = %s
-                    """, (unique_filename,))
-                    
-                    existing = cursor_wrapper.fetchone()
-                    if not existing:
-                        # إدراج جديد فقط إذا لم يكن موجوداً
-                        cursor_wrapper.execute("""
-                            INSERT INTO imagestorage (filename, imageid, updatedat)
-                            VALUES (%s, %s, NOW())
-                        """, (unique_filename, image_id))
-                        print(f"✅ تم حفظ الصورة في imagestorage برقم: {image_id}, اسم: {unique_filename}")
-                    else:
-                        print(f"⚠️ الصورة موجودة بالفعل في imagestorage (ID: {existing[0]})")
+                        INSERT INTO imagestorage (filename, imageid, updatedat)
+                        VALUES (%s, %s, NOW())
+                        ON CONFLICT (imageid) 
+                        DO UPDATE SET filename = EXCLUDED.filename, updatedat = NOW()
+                    """, (unique_filename, image_id))
+                    print(f"✅ تم حفظ الصورة في imagestorage برقم: {image_id}, اسم: {unique_filename}")
                 except Exception as img_storage_err:
                     print(f"[WARNING] Failed to save to imagestorage: {img_storage_err}")
                     import traceback
