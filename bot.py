@@ -9146,7 +9146,7 @@ def delete_product_image_db(image_id):
         return False
 
 def handle_manage_product_images(call):
-    """إدارة صور المنتج"""
+    """إدارة صور المنتج - عرض صور حقيقية"""
     try:
         product_id = int(call.data.split("_")[3])
         telegram_id = call.from_user.id
@@ -9193,29 +9193,114 @@ def handle_manage_product_images(call):
             bot.answer_callback_query(call.id, "❌ خطأ في تحميل الصور")
             return
         
-        # تجنب مشاكل Markdown - لا تستخدم parse_mode='Markdown'
+        # إنشء الرسالة الأولى مع معلومات المنتج والصور
         text = "🖼️ إدارة صور المنتج\n\n"
         text += f"📦 المنتج: {product_name}\n"
-        text += f"📸 عدد الصور الحالية: {len(images)}\n\n"
+        text += f"📸 عدد الصور: {len(images)}"
+        
+        # إنشاء لوحة التحكم
+        markup = types.InlineKeyboardMarkup(row_width=2)
         
         if images:
-            text += "الصور الحالية:\n"
-            markup = types.InlineKeyboardMarkup(row_width=2)
-            
+            # إضافة أزرار الحذف لكل صورة
             for img_id, img_path, img_order in images:
-                img_name = os.path.basename(img_path) if img_path else "بدون اسم"
-                text += f"• {img_name}\n"
-            
-            markup.add(types.InlineKeyboardButton("➕ إضافة صورة جديدة", callback_data=f"add_product_image_{product_id}"))
-            markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data=f"edit_product_{product_id}"))
-        else:
-            text += "لا توجد صور حالياً.\n"
-            markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("➕ إضافة صورة جديدة", callback_data=f"add_product_image_{product_id}"))
-            markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data=f"edit_product_{product_id}"))
+                img_name = os.path.basename(img_path) if img_path else f"صورة_{img_id}"
+                # زر حذف لكل صورة - اضغط عليه لحذف
+                markup.add(types.InlineKeyboardButton(
+                    f"🗑️ حذف", 
+                    callback_data=f"delete_product_image_{product_id}_{img_id}"
+                ))
         
-        # إرسال بدون parse_mode لتجنب مشاكل Markdown
+        # أزرار الإضافة والرجوع في أسفل الصفحة
+        markup.add(
+            types.InlineKeyboardButton("➕ إضافة صورة", callback_data=f"add_product_image_{product_id}"),
+            types.InlineKeyboardButton("🔙 رجوع", callback_data=f"edit_product_{product_id}")
+        )
+        
+        # إرسال رسالة المعلومات بدون صور
         bot.send_message(call.message.chat.id, text, reply_markup=markup)
+        
+        # الآن إرسال الصور واحدة تلو الأخرى مع أزرار التحكم
+        for idx, (img_id, img_path, img_order) in enumerate(images, 1):
+            try:
+                # محاولة الحصول على بيانات الصورة من ImageStorage
+                image_data = None
+                
+                if IS_POSTGRES:
+                    conn = get_db_connection()
+                    cursor_wrapper = conn.cursor()
+                    try:
+                        # البحث عن الصورة في ImageStorage بناءً على المسار
+                        img_filename = os.path.basename(img_path)
+                        cursor_wrapper.execute(
+                            'SELECT filedata FROM imagestorage WHERE filename = %s LIMIT 1',
+                            (img_filename,)
+                        )
+                        result = cursor_wrapper.fetchone()
+                        if result:
+                            image_data = result[0]
+                            print(f"[DEBUG] Image data found from ImageStorage: {img_filename}")
+                    except Exception as e:
+                        print(f"[DEBUG] Could not get image from ImageStorage: {e}")
+                    finally:
+                        cursor_wrapper.close()
+                        conn.close()
+                
+                # إرسال الصورة إذا وجدناها في ImageStorage
+                if image_data:
+                    try:
+                        # إرسال الصورة كملف
+                        img_caption = f"صورة {idx} من {len(images)}"
+                        bot.send_photo(
+                            call.message.chat.id,
+                            image_data,
+                            caption=img_caption
+                        )
+                    except Exception as e:
+                        print(f"[DEBUG] Could not send image as file: {e}")
+                        # إذا فشل، حاول إرسال من المسار المحلي
+                        if os.path.exists(img_path):
+                            try:
+                                with open(img_path, 'rb') as photo:
+                                    bot.send_photo(
+                                        call.message.chat.id,
+                                        photo,
+                                        caption=f"صورة {idx} من {len(images)}"
+                                    )
+                            except Exception as e2:
+                                print(f"[DEBUG] Could not send image from path: {e2}")
+                                # إذا فشل الكل، أرسل نص فقط
+                                bot.send_message(
+                                    call.message.chat.id,
+                                    f"📷 صورة {idx}: {os.path.basename(img_path)}"
+                                )
+                else:
+                    # لم نجد الصورة في ImageStorage، حاول من المسار المحلي
+                    if os.path.exists(img_path):
+                        try:
+                            with open(img_path, 'rb') as photo:
+                                bot.send_photo(
+                                    call.message.chat.id,
+                                    photo,
+                                    caption=f"صورة {idx} من {len(images)}"
+                                )
+                        except Exception as e:
+                            print(f"[DEBUG] Could not send image from path: {e}")
+                            bot.send_message(
+                                call.message.chat.id,
+                                f"📷 صورة {idx}: {os.path.basename(img_path)}"
+                            )
+                    else:
+                        print(f"[DEBUG] Image file not found: {img_path}")
+                        bot.send_message(
+                            call.message.chat.id,
+                            f"⚠️ الصورة {idx} غير موجودة"
+                        )
+            except Exception as e:
+                print(f"[ERROR] Error processing image {img_id}: {e}")
+                import traceback
+                traceback.print_exc()
+        
         bot.answer_callback_query(call.id)
         
     except Exception as e:
@@ -9364,55 +9449,84 @@ def handle_cancel_add_image(message):
 def handle_delete_product_image(call):
     """حذف صورة من المنتج"""
     try:
-        image_id = int(call.data.split("_")[3])
+        # يدعم صيغتين:
+        # delete_product_image_{product_id}_{img_id} (الصيغة الجديدة)
+        # delete_product_image_{img_id} (الصيغة القديمة)
+        parts = call.data.split("_")
+        
+        if len(parts) == 5:  # delete_product_image_{product_id}_{img_id}
+            product_id = int(parts[3])
+            image_id = int(parts[4])
+        else:  # delete_product_image_{img_id}
+            image_id = int(parts[3])
+            product_id = None
+        
+        telegram_id = call.from_user.id
+        
+        print(f"[DEBUG] Deleting image - image_id={image_id}, product_id={product_id}, telegram_id={telegram_id}")
         
         # الحصول على معلومات الصورة
         conn = get_db_connection()
-        cursor = conn.cursor()
-        if IS_POSTGRES:
-            cursor.execute("""
-                SELECT pi.ImageID, pi.ProductID, pi.ImagePath, p.SellerID, p.Name
-                FROM ProductImages pi
-                JOIN Products p ON pi.ProductID = p.ProductID
-                WHERE pi.ImageID = %s
-            """, (image_id,))
-        else:
-            cursor.execute("""
-                SELECT pi.ImageID, pi.ProductID, pi.ImagePath, p.SellerID, p.Name
-                FROM ProductImages pi
-                JOIN Products p ON pi.ProductID = p.ProductID
-                WHERE pi.ImageID = ?
-            """, (image_id,))
+        cursor_wrapper = conn.cursor()
         
-        result = cursor.fetchone()
-        conn.close()
+        try:
+            if IS_POSTGRES:
+                cursor_wrapper.execute("""
+                    SELECT pi.imageid, pi.productid, pi.imagepath, p.sellerid, p.name
+                    FROM productimages pi
+                    JOIN products p ON pi.productid = p.productid
+                    WHERE pi.imageid = %s
+                """, (image_id,))
+            else:
+                cursor_wrapper.execute("""
+                    SELECT pi.ImageID, pi.ProductID, pi.ImagePath, p.SellerID, p.Name
+                    FROM ProductImages pi
+                    JOIN Products p ON pi.ProductID = p.ProductID
+                    WHERE pi.ImageID = ?
+                """, (image_id,))
+            
+            result = cursor_wrapper.fetchone()
+        finally:
+            cursor_wrapper.close()
+            conn.close()
         
         if not result:
+            print(f"[DEBUG] Image {image_id} not found")
             bot.answer_callback_query(call.id, "⚠️ الصورة غير موجودة")
             return
         
-        img_id, product_id, img_path, seller_id, product_name = result
+        img_id, product_id_db, img_path, seller_id, product_name = result
+        product_id = product_id or product_id_db  # استخدم من النتيجة إذا لم يكن معطى
+        
+        print(f"[DEBUG] Image found: product_id={product_id}, seller_id={seller_id}")
         
         # التحقق من أن البائع يملك المنتج
-        telegram_id = call.from_user.id
         seller = get_seller_by_telegram(telegram_id)
         if not seller or seller[0] != seller_id:
+            print(f"[DEBUG] Permission denied: seller_id={seller[0] if seller else None} != {seller_id}")
             bot.answer_callback_query(call.id, "⛔ ليس لديك صلاحية لحذف هذه الصورة")
             return
         
         # حذف الصورة
+        print(f"[DEBUG] Deleting image {image_id}")
         if delete_product_image_db(image_id):
-            # تحديث كمية المنتج تلقائياً إذا كان المتجر مقفول
-            seller = get_seller_by_id(seller_id)
-            require_registration = False
-            if seller and len(seller) > 10:
-                # المعامل 10 = RequireCustomerRegistration (بعد إضافة ImagePath)
-                require_registration = seller[10] == 1 if not IS_POSTGRES else (seller[10] if seller[10] is not None else False)
+            print(f"[DEBUG] Image deleted successfully")
             
-            if require_registration:
-                # حساب عدد الصور المتبقية وتحديث الكمية
-                conn = get_db_connection()
-                cursor = conn.cursor()
+            # حذف الرسائل السابقة وإعادة عرض المعرض
+            bot.answer_callback_query(call.id, "✅ تم حذف الصورة بنجاح")
+            
+            # إعادة تحميل معرض الصور
+            call.data = f"manage_product_images_{product_id}"
+            handle_manage_product_images(call)
+        else:
+            print(f"[DEBUG] Failed to delete image from database")
+            bot.answer_callback_query(call.id, "❌ فشل حذف الصورة")
+            
+    except Exception as e:
+        print(f"[ERROR] Error in handle_delete_product_image: {e}")
+        import traceback
+        traceback.print_exc()
+        bot.answer_callback_query(call.id, "❌ حدث خطأ في حذف الصورة")
                 if IS_POSTGRES:
                     cursor.execute("SELECT COUNT(*) FROM ProductImages WHERE ProductID=%s", (product_id,))
                 else:
