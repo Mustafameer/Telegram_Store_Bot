@@ -9115,14 +9115,23 @@ def add_product_image_db(product_id, image_path, image_order=0):
             if image_id:
                 try:
                     filename = os.path.basename(image_path)
+                    # التحقق من عدم وجود الملف بالفعل في imagestorage
                     cursor_wrapper.execute("""
-                        INSERT INTO imagestorage (imageid, filename, updatedat)
-                        VALUES (%s, %s, NOW())
-                    """, (image_id, filename))
-                    print(f"✅ تم حفظ الصورة في imagestorage برقم: {image_id}, اسم: {filename}")
+                        SELECT imageid FROM imagestorage WHERE filename = %s
+                    """, (filename,))
+                    
+                    existing = cursor_wrapper.fetchone()
+                    if not existing:
+                        # إدراج جديد فقط إذا لم يكن موجوداً
+                        cursor_wrapper.execute("""
+                            INSERT INTO imagestorage (filename, imageid, updatedat)
+                            VALUES (%s, %s, NOW())
+                        """, (filename, image_id))
+                        print(f"✅ تم حفظ الصورة في imagestorage برقم: {image_id}, اسم: {filename}")
+                    else:
+                        print(f"⚠️ الصورة موجودة بالفعل في imagestorage (ID: {existing[0]})")
                 except Exception as img_storage_err:
                     print(f"[WARNING] Failed to save to imagestorage: {img_storage_err}")
-                    # لا نوقف العملية إذا فشل حفظ imagestorage
         else:
             cursor_wrapper.execute("""
                 INSERT INTO ProductImages (ProductID, ImagePath, ImageOrder)
