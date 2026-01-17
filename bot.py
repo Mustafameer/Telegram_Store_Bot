@@ -9452,17 +9452,17 @@ def handle_cancel_add_image(message):
 def handle_delete_product_image(call):
     """حذف صورة من المنتج"""
     try:
-        # يدعم صيغتين:
-        # delete_product_image_{product_id}_{img_id} (الصيغة الجديدة)
-        # delete_product_image_{img_id} (الصيغة القديمة)
-        parts = call.data.split("_")
+        # استخرج product_id و image_id من callback_data
+        # الصيغة: delete_product_image_{product_id}_{img_id}
+        data_parts = call.data.replace("delete_product_image_", "").split("_")
         
-        if len(parts) == 5:  # delete_product_image_{product_id}_{img_id}
-            product_id = int(parts[3])
-            image_id = int(parts[4])
-        else:  # delete_product_image_{img_id}
-            image_id = int(parts[3])
-            product_id = None
+        if len(data_parts) >= 2:
+            product_id = int(data_parts[0])
+            image_id = int(data_parts[1])
+        else:
+            print(f"[ERROR] Invalid callback_data format: {call.data}")
+            bot.answer_callback_query(call.id, "❌ خطأ في البيانات")
+            return
         
         telegram_id = call.from_user.id
         
