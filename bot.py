@@ -9101,30 +9101,40 @@ def add_product_image_db(product_id, image_path, image_order=0):
         cursor_wrapper = conn.cursor()
         
         if IS_POSTGRES:
+            print(f"[DEBUG] PostgreSQL - Adding image for product {product_id}, path: {image_path}")
+            
             # 1️⃣ إضافة الصورة في جدول productimages
-            cursor_wrapper.execute("""
-                INSERT INTO productimages (productid, imagepath, imageorder)
-                VALUES (%s, %s, %s)
-                RETURNING imageid
-            """, (product_id, image_path, image_order))
-            result = cursor_wrapper.fetchone()
-            image_id = result[0] if result else None
-            print(f"[DEBUG] Image ID from productimages: {image_id}")
+            try:
+                cursor_wrapper.execute("""
+                    INSERT INTO productimages (productid, imagepath, imageorder)
+                    VALUES (%s, %s, %s)
+                    RETURNING imageid
+                """, (product_id, image_path, image_order))
+                result = cursor_wrapper.fetchone()
+                image_id = result[0] if result else None
+                print(f"[DEBUG] ✅ Inserted into productimages - Image ID: {image_id}")
+            except Exception as e:
+                print(f"[ERROR] Failed to insert into productimages: {e}")
+                import traceback
+                traceback.print_exc()
+                conn.close()
+                return None
             
             # 2️⃣ حفظ الصورة في جدول imagestorage
             if image_id:
                 try:
-                    # إنشاء اسم ملف فريد باستخدام image_id
                     original_filename = os.path.basename(image_path)
                     unique_filename = f"{image_id}_{original_filename}"
                     
-                    # استخدام UPSERT (INSERT ... ON CONFLICT) لتجنب مشكلة UNIQUE constraint
+                    print(f"[DEBUG] Inserting into imagestorage - filename: {unique_filename}, imageid: {image_id}")
+                    
                     cursor_wrapper.execute("""
                         INSERT INTO imagestorage (filename, imageid, updatedat)
                         VALUES (%s, %s, NOW())
                         ON CONFLICT (imageid) 
                         DO UPDATE SET filename = EXCLUDED.filename, updatedat = NOW()
                     """, (unique_filename, image_id))
+                    
                     print(f"✅ تم حفظ الصورة في imagestorage برقم: {image_id}, اسم: {unique_filename}")
                 except Exception as img_storage_err:
                     print(f"[WARNING] Failed to save to imagestorage: {img_storage_err}")
@@ -9141,7 +9151,6 @@ def add_product_image_db(product_id, image_path, image_order=0):
             # حفظ في imagestorage (SQLite)
             if image_id:
                 try:
-                    # إنشاء اسم ملف فريد باستخدام image_id
                     original_filename = os.path.basename(image_path)
                     unique_filename = f"{image_id}_{original_filename}"
                     
@@ -9156,9 +9165,10 @@ def add_product_image_db(product_id, image_path, image_order=0):
         conn.commit()
         cursor_wrapper.close()
         conn.close()
+        print(f"[DEBUG] ✅ All operations completed successfully. Returning image_id: {image_id}")
         return image_id
     except Exception as e:
-        print(f"Error adding product image: {e}")
+        print(f"[ERROR] Error adding product image: {e}")
         import traceback
         traceback.print_exc()
         if 'conn' in locals():
