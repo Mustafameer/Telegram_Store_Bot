@@ -9151,19 +9151,47 @@ def handle_manage_product_images(call):
         product_id = int(call.data.split("_")[3])
         telegram_id = call.from_user.id
         
+        print(f"[DEBUG] handle_manage_product_images: product_id={product_id}, telegram_id={telegram_id}")
+        
+        # الحصول على بيانات المنتج
         product = get_product_by_id(product_id)
         if not product:
+            print(f"[DEBUG] Product {product_id} not found")
             bot.answer_callback_query(call.id, "⚠️ المنتج غير موجود")
             return
         
-        # التحقق من أن البائع يملك المنتج
+        print(f"[DEBUG] Product found: {product}")
+        
+        # الحصول على بيانات البائع
         seller = get_seller_by_telegram(telegram_id)
-        if not seller or product[1] != seller[0]:
+        if not seller:
+            print(f"[DEBUG] Seller not found for telegram_id={telegram_id}")
+            bot.answer_callback_query(call.id, "⛔ ليس لديك متجر مسجل")
+            return
+        
+        print(f"[DEBUG] Seller found: seller_id={seller[0]}, product seller_id={product[1]}")
+        
+        # التحقق من أن البائع يملك المنتج
+        if product[1] != seller[0]:
+            print(f"[DEBUG] Permission denied: product seller_id={product[1]} != seller_id={seller[0]}")
             bot.answer_callback_query(call.id, "⛔ ليس لديك صلاحية لتعديل هذا المنتج")
             return
         
+        # الحصول على الصور
         product_name = product[3]
-        images = get_product_images(product_id)
+        print(f"[DEBUG] Fetching images for product_id={product_id}")
+        
+        try:
+            images = get_product_images(product_id)
+            print(f"[DEBUG] Images fetched: {len(images)} images found")
+            for img in images:
+                print(f"[DEBUG] Image: {img}")
+        except Exception as e:
+            print(f"[ERROR] Failed to get_product_images: {e}")
+            import traceback
+            traceback.print_exc()
+            bot.answer_callback_query(call.id, "❌ خطأ في تحميل الصور")
+            return
         
         text = f"🖼️ **إدارة صور المنتج**\n\n"
         text += f"📦 المنتج: {product_name}\n"
@@ -9174,7 +9202,7 @@ def handle_manage_product_images(call):
             markup = types.InlineKeyboardMarkup(row_width=2)
             
             for img_id, img_path, img_order in images:
-                img_name = os.path.basename(img_path)
+                img_name = os.path.basename(img_path) if img_path else "بدون اسم"
                 text += f"• {img_name}\n"
             
             markup.add(types.InlineKeyboardButton("➕ إضافة صورة جديدة", callback_data=f"add_product_image_{product_id}"))
@@ -9187,11 +9215,12 @@ def handle_manage_product_images(call):
         
         bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode='Markdown')
         bot.answer_callback_query(call.id)
+        
     except Exception as e:
-        print(f"Error in handle_manage_product_images: {e}")
+        print(f"[ERROR] Error in handle_manage_product_images: {e}")
         import traceback
         traceback.print_exc()
-        bot.answer_callback_query(call.id, "❌ حدث خطأ")
+        bot.answer_callback_query(call.id, "❌ حدث خطأ في تحميل الصور")
 
 def handle_add_product_image(call):
     """بدء عملية إضافة صورة جديدة للمنتج"""
