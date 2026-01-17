@@ -9140,8 +9140,15 @@ def add_product_image_db(product_id, image_path, image_order=0):
                     VALUES (%s, %s, %s, %s, NOW())
                     RETURNING imageid
                 """, (unique_filename, psycopg2.Binary(file_data), product_id, image_order))
-                result = cursor_wrapper.fetchone()
-                image_id = result[0] if result else None
+                
+                # CursorWrapper already calls fetchone() for RETURNING queries
+                # so we get image_id from lastrowid
+                image_id = cursor_wrapper.lastrowid
+                if not image_id:
+                    # Fallback: try fetchone if lastrowid didn't work
+                    result = cursor_wrapper.fetchone()
+                    image_id = result[0] if result else None
+                    
                 print(f"[DEBUG] ✅ Inserted into imagestorage - Image ID: {image_id}, filesize: {len(file_data)} bytes")
             except Exception as e:
                 print(f"[ERROR] Failed to insert into imagestorage: {e}")
