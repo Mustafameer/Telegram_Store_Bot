@@ -9220,60 +9220,76 @@ def handle_manage_product_images(call):
         # إرسال رسالة المعلومات بدون صور
         bot.send_message(call.message.chat.id, text, reply_markup=markup)
         
-        # الآن إرسال الصور واحدة تلو الأخرى مع أزرار التحكم
+        # الآن إرسال الصور واحدة تلو الأخرى
         for idx, (img_id, img_path, img_order) in enumerate(images, 1):
             try:
-                image_data = None
+                print(f"[DEBUG] Processing image {idx}: {img_path}")
                 
-                # محاولة الحصول على بيانات الصورة من ImageStorage
-                if IS_POSTGRES:
-                    conn = get_db_connection()
-                    cursor_wrapper = conn.cursor()
+                # حاول قراءة الصورة من المسار المحلي أولاً
+                image_sent = False
+                
+                if os.path.exists(img_path):
                     try:
-                        # البحث عن الصورة في ImageStorage بناءً على اسم الملف
+                        print(f"[DEBUG] Reading image from path: {img_path}")
+                        with open(img_path, 'rb') as photo:
+                            bot.send_photo(
+                                call.message.chat.id,
+                                photo,
+                                caption=f"صورة {idx} من {len(images)}"
+                            )
+                            print(f"[DEBUG] Sent image {idx} from local path")
+                            image_sent = True
+                    except Exception as e:
+                        print(f"[DEBUG] Failed to send from local path: {e}")
+                
+                # إذا فشل من المسار المحلي، جرب قراءتها من ImageStorage
+                if not image_sent and IS_POSTGRES:
+                    try:
                         img_filename = os.path.basename(img_path)
-                        print(f"[DEBUG] Looking for image: {img_filename}")
+                        print(f"[DEBUG] Trying ImageStorage for: {img_filename}")
                         
+                        conn = get_db_connection()
+                        cursor_wrapper = conn.cursor()
+                        
+                        # ابحث عن الصورة في ImageStorage
                         cursor_wrapper.execute(
                             'SELECT filedata FROM imagestorage WHERE filename = %s',
                             (img_filename,)
                         )
                         result = cursor_wrapper.fetchone()
-                        if result:
-                            image_data = result[0]
-                            print(f"[DEBUG] Image data found: {img_filename} - size: {len(image_data) if image_data else 0} bytes")
-                        else:
-                            print(f"[DEBUG] Image not found in ImageStorage: {img_filename}")
-                            # حاول البحث بـ lowercase
+                        
+                        if not result:
+                            # جرب مع LOWER
                             cursor_wrapper.execute(
                                 'SELECT filedata FROM imagestorage WHERE LOWER(filename) = LOWER(%s)',
                                 (img_filename,)
                             )
                             result = cursor_wrapper.fetchone()
-                            if result:
-                                image_data = result[0]
-                                print(f"[DEBUG] Image found with LOWER: {img_filename}")
-                    except Exception as e:
-                        print(f"[DEBUG] Error querying ImageStorage: {e}")
-                    finally:
+                        
                         cursor_wrapper.close()
                         conn.close()
-                
-                # إرسال الصورة إذا وجدناها
-                if image_data:
-                    try:
-                        bot.send_photo(
-                            call.message.chat.id,
-                            image_data,
-                            caption=f"صورة {idx} من {len(images)}"
-                        )
-                        print(f"[DEBUG] Sent image {idx} successfully")
+                        
+                        if result:
+                            image_data = result[0]
+                            print(f"[DEBUG] Found image in ImageStorage: {img_filename}")
+                            bot.send_photo(
+                                call.message.chat.id,
+                                image_data,
+                                caption=f"صورة {idx} من {len(images)}"
+                            )
+                            image_sent = True
+                        else:
+                            print(f"[DEBUG] Image not found in ImageStorage: {img_filename}")
                     except Exception as e:
-                        print(f"[ERROR] Failed to send image {idx}: {e}")
-                        bot.send_message(call.message.chat.id, f"⚠️ لم تتمكن من عرض الصورة {idx}")
-                else:
-                    print(f"[ERROR] No image data found for image {idx}: {img_path}")
-                    bot.send_message(call.message.chat.id, f"⚠️ الصورة {idx} غير متاحة")
+                        print(f"[DEBUG] Error reading from ImageStorage: {e}")
+                
+                # إذا فشل الكل
+                if not image_sent:
+                    print(f"[ERROR] Could not retrieve image {idx}")
+                    bot.send_message(
+                        call.message.chat.id,
+                        f"⚠️ الصورة {idx} غير متاحة"
+                    )
                     
             except Exception as e:
                 print(f"[ERROR] Error processing image {idx}: {e}")
