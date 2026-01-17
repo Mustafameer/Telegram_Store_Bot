@@ -9389,22 +9389,13 @@ def handle_save_product_image(message):
             bot.send_message(message.chat.id,
                 f"✅ **تم إضافة الصورة بنجاح!**\n\n"
                 f"📸 تم حفظ الصورة: {os.path.basename(image_path)}\n\n"
-                f"يمكنك إضافة المزيد من الصور أو العودة لإدارة المنتج.",
+                f"يمكنك إضافة المزيد من الصور أو استخدم /my_products للعودة إلى منتجاتك.",
                 parse_mode='Markdown')
         else:
             bot.send_message(message.chat.id, "❌ حدث خطأ في إضافة الصورة لقاعدة البيانات")
         
         # إزالة الحالة
         del user_states[telegram_id]
-        
-        # إعادة عرض قائمة إدارة الصور
-        call_data = f"manage_product_images_{product_id}"
-        fake_call = type('obj', (object,), {
-            'data': call_data,
-            'from_user': message.from_user,
-            'message': message
-        })()
-        handle_manage_product_images(fake_call)
     except Exception as e:
         print(f"Error in handle_save_product_image: {e}")
         import traceback
