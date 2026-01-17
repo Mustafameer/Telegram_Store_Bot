@@ -9228,81 +9228,14 @@ def handle_manage_product_images(call):
         # إرسال رسالة المعلومات بدون صور
         bot.send_message(call.message.chat.id, text, reply_markup=markup)
         
-        # الآن إرسال الصور واحدة تلو الأخرى
-        for idx, (img_id, img_path, img_order) in enumerate(images, 1):
-            try:
-                print(f"[DEBUG] Processing image {idx}: {img_path}")
-                
-                # حاول قراءة الصورة من المسار المحلي أولاً
-                image_sent = False
-                
-                if os.path.exists(img_path):
-                    try:
-                        print(f"[DEBUG] Reading image from path: {img_path}")
-                        with open(img_path, 'rb') as photo:
-                            bot.send_photo(
-                                call.message.chat.id,
-                                photo,
-                                caption=f"صورة {idx} من {len(images)}"
-                            )
-                            print(f"[DEBUG] Sent image {idx} from local path")
-                            image_sent = True
-                    except Exception as e:
-                        print(f"[DEBUG] Failed to send from local path: {e}")
-                
-                # إذا فشل من المسار المحلي، جرب قراءتها من ImageStorage
-                if not image_sent and IS_POSTGRES:
-                    try:
-                        img_filename = os.path.basename(img_path)
-                        print(f"[DEBUG] Trying ImageStorage for: {img_filename}")
-                        
-                        conn = get_db_connection()
-                        cursor_wrapper = conn.cursor()
-                        
-                        # ابحث عن الصورة في ImageStorage
-                        cursor_wrapper.execute(
-                            'SELECT filedata FROM imagestorage WHERE filename = %s',
-                            (img_filename,)
-                        )
-                        result = cursor_wrapper.fetchone()
-                        
-                        if not result:
-                            # جرب مع LOWER
-                            cursor_wrapper.execute(
-                                'SELECT filedata FROM imagestorage WHERE LOWER(filename) = LOWER(%s)',
-                                (img_filename,)
-                            )
-                            result = cursor_wrapper.fetchone()
-                        
-                        cursor_wrapper.close()
-                        conn.close()
-                        
-                        if result:
-                            image_data = result[0]
-                            print(f"[DEBUG] Found image in ImageStorage: {img_filename}")
-                            bot.send_photo(
-                                call.message.chat.id,
-                                image_data,
-                                caption=f"صورة {idx} من {len(images)}"
-                            )
-                            image_sent = True
-                        else:
-                            print(f"[DEBUG] Image not found in ImageStorage: {img_filename}")
-                    except Exception as e:
-                        print(f"[DEBUG] Error reading from ImageStorage: {e}")
-                
-                # إذا فشل الكل
-                if not image_sent:
-                    print(f"[ERROR] Could not retrieve image {idx}")
-                    bot.send_message(
-                        call.message.chat.id,
-                        f"⚠️ الصورة {idx} غير متاحة"
-                    )
-                    
-            except Exception as e:
-                print(f"[ERROR] Error processing image {idx}: {e}")
-                import traceback
-                traceback.print_exc()
+        # الآن إرسال قائمة الصور
+        if images:
+            text_images = "📸 **الصور الحالية:**\n\n"
+            for idx, (img_id, img_path, img_order) in enumerate(images, 1):
+                img_name = os.path.basename(img_path) if img_path else f"صورة_{img_id}"
+                text_images += f"{idx}️⃣ {img_name}\n"
+            
+            bot.send_message(call.message.chat.id, text_images)
         
         bot.answer_callback_query(call.id)
         
