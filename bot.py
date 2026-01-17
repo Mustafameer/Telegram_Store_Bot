@@ -7974,6 +7974,8 @@ def callback_handler(call):
             handle_manage_product_images(call)
         elif call.data.startswith("add_product_image_"):
             handle_add_product_image(call)
+        elif call.data.startswith("del_img_"):
+            handle_delete_product_image(call)
         elif call.data.startswith("delete_product_image_"):
             handle_delete_product_image(call)
         elif call.data.startswith("addtocart_"):
@@ -9212,11 +9214,10 @@ def handle_manage_product_images(call):
         if images:
             # إضافة أزرار الحذف لكل صورة
             for img_id, img_path, img_order in images:
-                img_name = os.path.basename(img_path) if img_path else f"صورة_{img_id}"
-                # زر حذف لكل صورة - اضغط عليه لحذف
+                print(f"[DEBUG] Creating delete button: product_id={product_id}, img_id={img_id}")
                 markup.add(types.InlineKeyboardButton(
-                    f"🗑️ حذف", 
-                    callback_data=f"delete_product_image_{product_id}_{img_id}"
+                    "🗑️ حذف", 
+                    callback_data=f"del_img_{product_id}_{img_id}"  # استخدام اختصار أقصر
                 ))
         
         # أزرار الإضافة والرجوع في أسفل الصفحة
@@ -9385,16 +9386,28 @@ def handle_cancel_add_image(message):
 def handle_delete_product_image(call):
     """حذف صورة من المنتج"""
     try:
-        # استخرج product_id و image_id من callback_data
-        # الصيغة: delete_product_image_{product_id}_{img_id}
-        data_parts = call.data.replace("delete_product_image_", "").split("_")
+        # دعم صيغتين:
+        # del_img_{product_id}_{img_id} (الصيغة الجديدة المختصرة)
+        # delete_product_image_{product_id}_{img_id} (الصيغة القديمة)
         
-        if len(data_parts) >= 2:
-            product_id = int(data_parts[0])
-            image_id = int(data_parts[1])
+        if call.data.startswith("del_img_"):
+            data_str = call.data.replace("del_img_", "")
         else:
-            print(f"[ERROR] Invalid callback_data format: {call.data}")
+            data_str = call.data.replace("delete_product_image_", "")
+        
+        parts = data_str.split("_")
+        
+        if len(parts) < 2:
+            print(f"[ERROR] Invalid callback_data: {call.data}")
             bot.answer_callback_query(call.id, "❌ خطأ في البيانات")
+            return
+        
+        try:
+            product_id = int(parts[0])
+            image_id = int(parts[1])
+        except ValueError as e:
+            print(f"[ERROR] Failed to parse IDs: {e}, data={call.data}")
+            bot.answer_callback_query(call.id, "❌ خطأ في معالجة البيانات")
             return
         
         telegram_id = call.from_user.id
