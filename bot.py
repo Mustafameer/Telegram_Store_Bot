@@ -9101,6 +9101,7 @@ def add_product_image_db(product_id, image_path, image_order=0):
         cursor = conn.cursor()
         
         if IS_POSTGRES:
+            # 1️⃣ إضافة الصورة في جدول productimages
             cursor.execute("""
                 INSERT INTO productimages (productid, imagepath, imageorder)
                 VALUES (%s, %s, %s)
@@ -9108,12 +9109,28 @@ def add_product_image_db(product_id, image_path, image_order=0):
             """, (product_id, image_path, image_order))
             result = cursor.fetchone()
             image_id = result[0] if result else None
+            
+            # 2️⃣ حفظ الصورة في جدول imagestorage
+            if image_id:
+                cursor.execute("""
+                    INSERT INTO imagestorage (imageid, imagepath, uploadtime)
+                    VALUES (%s, %s, NOW())
+                """, (image_id, image_path))
+                print(f"✅ تم حفظ الصورة في imagestorage برقم: {image_id}")
         else:
             cursor.execute("""
                 INSERT INTO ProductImages (ProductID, ImagePath, ImageOrder)
                 VALUES (?, ?, ?)
             """, (product_id, image_path, image_order))
             image_id = cursor.lastrowid
+            
+            # حفظ في imagestorage (SQLite)
+            if image_id:
+                cursor.execute("""
+                    INSERT INTO ImageStorage (ImageID, ImagePath, UploadTime)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                """, (image_id, image_path))
+                print(f"✅ تم حفظ الصورة في ImageStorage برقم: {image_id}")
         
         conn.commit()
         conn.close()
