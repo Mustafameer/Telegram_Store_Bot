@@ -9100,13 +9100,27 @@ def add_product_image_db(product_id, image_path, image_order=0):
         conn = get_db_connection()
         cursor_wrapper = conn.cursor()
         
+        # image_path قد يكون اسم ملف فقط، نحتاج إلى المسار الكامل
+        if not os.path.isabs(image_path):
+            # إذا كان اسم ملف فقط، أضف مسار المجلد
+            full_image_path = os.path.join(IMAGES_FOLDER, image_path)
+        else:
+            full_image_path = image_path
+        
+        print(f"[DEBUG] Attempting to read image from: {full_image_path}")
+        
         # قراءة بيانات الصورة
         try:
-            with open(image_path, 'rb') as f:
+            if not os.path.exists(full_image_path):
+                print(f"[ERROR] Image file not found: {full_image_path}")
+                conn.close()
+                return None
+                
+            with open(full_image_path, 'rb') as f:
                 file_data = f.read()
-            print(f"[DEBUG] Read image file: {image_path}, size: {len(file_data)} bytes")
+            print(f"[DEBUG] Read image file: {full_image_path}, size: {len(file_data)} bytes")
         except Exception as e:
-            print(f"[ERROR] Failed to read image file {image_path}: {e}")
+            print(f"[ERROR] Failed to read image file {full_image_path}: {e}")
             conn.close()
             return None
         
@@ -9117,11 +9131,12 @@ def add_product_image_db(product_id, image_path, image_order=0):
             print(f"[DEBUG] PostgreSQL - Adding image for product {product_id}")
             
             try:
+                import psycopg2
                 cursor_wrapper.execute("""
                     INSERT INTO imagestorage (filename, filedata, productid, imageorder, updatedat)
                     VALUES (%s, %s, %s, %s, NOW())
                     RETURNING imageid
-                """, (unique_filename, file_data, product_id, image_order))
+                """, (unique_filename, psycopg2.Binary(file_data), product_id, image_order))
                 result = cursor_wrapper.fetchone()
                 image_id = result[0] if result else None
                 print(f"[DEBUG] ✅ Inserted into imagestorage - Image ID: {image_id}, filesize: {len(file_data)} bytes")
