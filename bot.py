@@ -9097,9 +9097,6 @@ def handle_cancel_image_selection(call):
 def add_product_image_db(product_id, image_path, image_order=0):
     """إضافة صورة للمنتج مباشرة إلى imagestorage مع بيانات الصورة"""
     try:
-        conn = get_db_connection()
-        cursor_wrapper = conn.cursor()
-        
         # image_path قد يكون اسم ملف فقط، نحتاج إلى المسار الكامل
         if not os.path.isabs(image_path):
             # إذا كان اسم ملف فقط، أضف مسار المجلد
@@ -9108,21 +9105,27 @@ def add_product_image_db(product_id, image_path, image_order=0):
             full_image_path = image_path
         
         print(f"[DEBUG] Attempting to read image from: {full_image_path}")
+        print(f"[DEBUG] IMAGES_FOLDER: {IMAGES_FOLDER}")
+        print(f"[DEBUG] Folder exists: {os.path.exists(IMAGES_FOLDER)}")
+        print(f"[DEBUG] File exists: {os.path.exists(full_image_path)}")
         
         # قراءة بيانات الصورة
         try:
             if not os.path.exists(full_image_path):
                 print(f"[ERROR] Image file not found: {full_image_path}")
-                conn.close()
                 return None
                 
             with open(full_image_path, 'rb') as f:
                 file_data = f.read()
-            print(f"[DEBUG] Read image file: {full_image_path}, size: {len(file_data)} bytes")
+            print(f"[DEBUG] ✅ Read image file: {full_image_path}, size: {len(file_data)} bytes")
         except Exception as e:
             print(f"[ERROR] Failed to read image file {full_image_path}: {e}")
-            conn.close()
+            import traceback
+            traceback.print_exc()
             return None
+        
+        conn = get_db_connection()
+        cursor_wrapper = conn.cursor()
         
         original_filename = os.path.basename(image_path)
         unique_filename = f"{product_id}_{image_order}_{original_filename}"
@@ -9170,8 +9173,6 @@ def add_product_image_db(product_id, image_path, image_order=0):
         print(f"[ERROR] Error adding product image: {e}")
         import traceback
         traceback.print_exc()
-        if 'conn' in locals():
-            conn.close()
         return None
         
         conn.commit()
