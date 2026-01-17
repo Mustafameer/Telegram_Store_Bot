@@ -9541,10 +9541,13 @@ def handle_delete_product_image(call):
             
             bot.answer_callback_query(call.id, "✅ تم حذف الصورة بنجاح")
             
-            # إرسال رسالة تأكيد بدلاً من استدعاء الدالة مرة أخرى
+            # إرسال رسالة تأكيد مع زر العودة للرئيسية
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("🏠 العودة للرئيسية", callback_data="main_menu"))
             bot.send_message(
                 call.message.chat.id,
-                "✅ تم حذف الصورة!\n\nاستخدم الأمر /my_products لعرض منتجاتك مجدداً"
+                "✅ تم حذف الصورة!",
+                reply_markup=markup
             )
         else:
             print(f"[DEBUG] Failed to delete image from database")
