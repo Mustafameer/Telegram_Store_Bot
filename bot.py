@@ -9423,10 +9423,9 @@ def handle_save_product_image(message):
                         conn.close()
             
             bot.send_message(message.chat.id,
-                f"✅ **تم إضافة الصورة بنجاح!**\n\n"
+                f"✅ تم إضافة الصورة بنجاح!\n\n"
                 f"📸 تم حفظ الصورة: {os.path.basename(image_path)}\n\n"
-                f"يمكنك إضافة المزيد من الصور",
-                parse_mode='Markdown')
+                f"يمكنك إضافة المزيد من الصور")
             
             # إضافة زر العودة للرئيسية
             markup = types.InlineKeyboardMarkup()
