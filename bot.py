@@ -9515,12 +9515,13 @@ def handle_delete_product_image(call):
         if delete_product_image_db(image_id):
             print(f"[DEBUG] Image deleted successfully")
             
-            # حذف الرسائل السابقة وإعادة عرض المعرض
             bot.answer_callback_query(call.id, "✅ تم حذف الصورة بنجاح")
             
-            # إعادة تحميل معرض الصور
-            call.data = f"manage_product_images_{product_id}"
-            handle_manage_product_images(call)
+            # إرسال رسالة تأكيد بدلاً من استدعاء الدالة مرة أخرى
+            bot.send_message(
+                call.message.chat.id,
+                "✅ تم حذف الصورة!\n\nاستخدم الأمر /my_products لعرض منتجاتك مجدداً"
+            )
         else:
             print(f"[DEBUG] Failed to delete image from database")
             bot.answer_callback_query(call.id, "❌ فشل حذف الصورة")
