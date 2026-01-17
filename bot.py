@@ -9527,17 +9527,6 @@ def handle_delete_product_image(call):
         import traceback
         traceback.print_exc()
         bot.answer_callback_query(call.id, "❌ حدث خطأ في حذف الصورة")
-                if IS_POSTGRES:
-                    cursor.execute("SELECT COUNT(*) FROM ProductImages WHERE ProductID=%s", (product_id,))
-                else:
-                    cursor.execute("SELECT COUNT(*) FROM ProductImages WHERE ProductID=?", (product_id,))
-                image_count = cursor.fetchone()[0] or 0
-                
-                # تحديث الكمية
-                if IS_POSTGRES:
-                    cursor.execute("UPDATE Products SET Quantity=%s WHERE ProductID=%s", (image_count, product_id))
-                else:
-                    cursor.execute("UPDATE Products SET Quantity=? WHERE ProductID=?", (image_count, product_id))
                 conn.commit()
                 conn.close()
             
