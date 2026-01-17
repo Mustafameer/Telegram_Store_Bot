@@ -9203,9 +9203,9 @@ def delete_product_image_db(image_id):
         
         try:
             if IS_POSTGRES:
-                cursor_wrapper.execute('DELETE FROM productimages WHERE imageid=%s', (image_id,))
+                cursor_wrapper.execute('DELETE FROM imagestorage WHERE imageid=%s', (image_id,))
             else:
-                cursor_wrapper.execute("DELETE FROM ProductImages WHERE ImageID=?", (image_id,))
+                cursor_wrapper.execute("DELETE FROM imagestorage WHERE imageid=?", (image_id,))
             
             conn.commit()
             deleted = cursor_wrapper.rowcount > 0
@@ -9499,17 +9499,17 @@ def handle_delete_product_image(call):
         try:
             if IS_POSTGRES:
                 cursor_wrapper.execute("""
-                    SELECT pi.imageid, pi.productid, pi.imagepath, p.sellerid, p.name
-                    FROM productimages pi
-                    JOIN products p ON pi.productid = p.productid
-                    WHERE pi.imageid = %s
+                    SELECT is.imageid, is.productid, is.filename, p.sellerid, p.name
+                    FROM imagestorage is
+                    JOIN products p ON is.productid = p.productid
+                    WHERE is.imageid = %s
                 """, (image_id,))
             else:
                 cursor_wrapper.execute("""
-                    SELECT pi.ImageID, pi.ProductID, pi.ImagePath, p.SellerID, p.Name
-                    FROM ProductImages pi
-                    JOIN Products p ON pi.ProductID = p.ProductID
-                    WHERE pi.ImageID = ?
+                    SELECT is.imageid, is.productid, is.filename, p.sellerid, p.name
+                    FROM imagestorage is
+                    JOIN products p ON is.productid = p.productid
+                    WHERE is.imageid = ?
                 """, (image_id,))
             
             result = cursor_wrapper.fetchone()
