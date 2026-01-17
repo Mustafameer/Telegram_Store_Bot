@@ -9426,10 +9426,14 @@ def handle_save_product_image(message):
         # إزالة الحالة
         del user_states[telegram_id]
     except Exception as e:
-        print(f"Error in handle_save_product_image: {e}")
+        print(f"[ERROR] Error in handle_save_product_image: {e}")
         import traceback
         traceback.print_exc()
-        bot.send_message(message.chat.id, "❌ حدث خطأ في حفظ الصورة")
+        telegram_id = message.from_user.id
+        try:
+            bot.send_message(message.chat.id, f"⚠️ حدث خطأ غير متوقع:\n\n`{str(e)}`", parse_mode='Markdown')
+        except:
+            pass
         if telegram_id in user_states:
             del user_states[telegram_id]
 
