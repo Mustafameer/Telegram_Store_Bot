@@ -4804,6 +4804,18 @@ def handle_back_to_menu(call):
         show_buyer_main_menu(call.message)
     bot.answer_callback_query(call.id)
 
+@bot.callback_query_handler(func=lambda call: call.data == "main_menu")
+def handle_main_menu_callback(call):
+    """معالج زر العودة للرئيسية"""
+    telegram_id = call.from_user.id
+    if is_bot_admin(telegram_id):
+        show_bot_admin_menu(call.message)
+    elif is_seller(telegram_id):
+        show_seller_menu(call.message)
+    else:
+        show_buyer_main_menu(call.message)
+    bot.answer_callback_query(call.id)
+
 @bot.message_handler(func=lambda message: message.text == "📁 الأقسام" and is_seller(message.from_user.id))
 def view_categories(message):
     telegram_id = message.from_user.id
