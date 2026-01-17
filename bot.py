@@ -9114,11 +9114,12 @@ def add_product_image_db(product_id, image_path, image_order=0):
             # 2️⃣ حفظ الصورة في جدول imagestorage
             if image_id:
                 try:
+                    filename = os.path.basename(image_path)
                     cursor_wrapper.execute("""
-                        INSERT INTO imagestorage (imageid, imagepath, uploadtime)
+                        INSERT INTO imagestorage (imageid, filename, updatedat)
                         VALUES (%s, %s, NOW())
-                    """, (image_id, image_path))
-                    print(f"✅ تم حفظ الصورة في imagestorage برقم: {image_id}")
+                    """, (image_id, filename))
+                    print(f"✅ تم حفظ الصورة في imagestorage برقم: {image_id}, اسم: {filename}")
                 except Exception as img_storage_err:
                     print(f"[WARNING] Failed to save to imagestorage: {img_storage_err}")
                     # لا نوقف العملية إذا فشل حفظ imagestorage
@@ -9133,11 +9134,12 @@ def add_product_image_db(product_id, image_path, image_order=0):
             # حفظ في imagestorage (SQLite)
             if image_id:
                 try:
+                    filename = os.path.basename(image_path)
                     cursor_wrapper.execute("""
-                        INSERT INTO ImageStorage (ImageID, ImagePath, UploadTime)
-                        VALUES (?, ?, CURRENT_TIMESTAMP)
-                    """, (image_id, image_path))
-                    print(f"✅ تم حفظ الصورة في ImageStorage برقم: {image_id}")
+                        INSERT INTO ImageStorage (ImageID, FileName)
+                        VALUES (?, ?)
+                    """, (image_id, filename))
+                    print(f"✅ تم حفظ الصورة في ImageStorage برقم: {image_id}, اسم: {filename}")
                 except Exception as img_storage_err:
                     print(f"[WARNING] Failed to save to ImageStorage: {img_storage_err}")
         
