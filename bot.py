@@ -9095,10 +9095,20 @@ def handle_cancel_image_selection(call):
         pass
 
 def add_product_image_db(product_id, image_path, image_order=0):
-    """إضافة صورة للمنتج مباشرة إلى imagestorage"""
+    """إضافة صورة للمنتج مباشرة إلى imagestorage مع بيانات الصورة"""
     try:
         conn = get_db_connection()
         cursor_wrapper = conn.cursor()
+        
+        # قراءة بيانات الصورة
+        try:
+            with open(image_path, 'rb') as f:
+                file_data = f.read()
+            print(f"[DEBUG] Read image file: {image_path}, size: {len(file_data)} bytes")
+        except Exception as e:
+            print(f"[ERROR] Failed to read image file {image_path}: {e}")
+            conn.close()
+            return None
         
         original_filename = os.path.basename(image_path)
         unique_filename = f"{product_id}_{image_order}_{original_filename}"
@@ -9108,13 +9118,13 @@ def add_product_image_db(product_id, image_path, image_order=0):
             
             try:
                 cursor_wrapper.execute("""
-                    INSERT INTO imagestorage (filename, productid, imageorder, updatedat)
-                    VALUES (%s, %s, %s, NOW())
+                    INSERT INTO imagestorage (filename, filedata, productid, imageorder, updatedat)
+                    VALUES (%s, %s, %s, %s, NOW())
                     RETURNING imageid
-                """, (unique_filename, product_id, image_order))
+                """, (unique_filename, file_data, product_id, image_order))
                 result = cursor_wrapper.fetchone()
                 image_id = result[0] if result else None
-                print(f"[DEBUG] ✅ Inserted into imagestorage - Image ID: {image_id}, filename: {unique_filename}")
+                print(f"[DEBUG] ✅ Inserted into imagestorage - Image ID: {image_id}, filesize: {len(file_data)} bytes")
             except Exception as e:
                 print(f"[ERROR] Failed to insert into imagestorage: {e}")
                 import traceback
@@ -9124,11 +9134,11 @@ def add_product_image_db(product_id, image_path, image_order=0):
         else:
             try:
                 cursor_wrapper.execute("""
-                    INSERT INTO ImageStorage (FileName, ProductID, ImageOrder)
-                    VALUES (?, ?, ?)
-                """, (unique_filename, product_id, image_order))
+                    INSERT INTO ImageStorage (FileName, FileData, ProductID, ImageOrder)
+                    VALUES (?, ?, ?, ?)
+                """, (unique_filename, file_data, product_id, image_order))
                 image_id = cursor_wrapper.lastrowid
-                print(f"[DEBUG] ✅ Inserted into ImageStorage - Image ID: {image_id}, filename: {unique_filename}")
+                print(f"[DEBUG] ✅ Inserted into ImageStorage - Image ID: {image_id}, filesize: {len(file_data)} bytes")
             except Exception as e:
                 print(f"[ERROR] Failed to insert into ImageStorage: {e}")
                 import traceback
@@ -9139,7 +9149,7 @@ def add_product_image_db(product_id, image_path, image_order=0):
         conn.commit()
         cursor_wrapper.close()
         conn.close()
-        print(f"[DEBUG] ✅ Image saved successfully. Returning image_id: {image_id}")
+        print(f"[DEBUG] ✅ Image saved successfully with data. Returning image_id: {image_id}")
         return image_id
     except Exception as e:
         print(f"[ERROR] Error adding product image: {e}")
