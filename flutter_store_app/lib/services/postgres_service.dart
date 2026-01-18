@@ -300,6 +300,14 @@ class PostgresService {
         );
       }
       
+      print('📦 [getProducts] Seller: $sellerId, Category: $categoryId');
+      print('   جلب ${results.length} منتج من السحابة');
+      
+      if (results.isNotEmpty) {
+        final firstRow = results.first.toColumnMap();
+        print('   عينة من أول صف: ${firstRow.keys.toList()}');
+      }
+      
       return results.map((row) {
         final map = row.toColumnMap();
         return Product(
