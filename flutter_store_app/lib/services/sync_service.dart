@@ -331,7 +331,7 @@ class SyncService {
 
   Future<void> _pullInventory(Connection conn, DatabaseHelper dbHelper, {bool prune = false}) async {
        // Sellers
-      await _syncTable(conn, dbHelper, 'Sellers', 'sellerid', {
+      await _syncTable(conn, dbHelper, 'Sellers', 'sellerid', 'Sellers', {
         'sellerid': 'SellerID',
         'telegramid': 'TelegramID',
         'username': 'UserName',
@@ -341,7 +341,7 @@ class SyncService {
         'imagepath': 'ImagePath'
       }, prune: prune);
        // Categories
-      await _syncTable(conn, dbHelper, 'Categories', 'categoryid', {
+      await _syncTable(conn, dbHelper, 'Categories', 'categoryid', 'Categories', {
         'categoryid': 'CategoryID',
         'sellerid': 'SellerID',
         'name': 'Name',
@@ -349,7 +349,7 @@ class SyncService {
         'imagepath': 'ImagePath'
       }, prune: prune);
        // Products
-      await _syncTable(conn, dbHelper, 'products', 'productid', {
+      await _syncTable(conn, dbHelper, 'products', 'productid', 'Products', {
          'productid': 'ProductID',
          'sellerid': 'SellerID',
          'categoryid': 'CategoryID',
@@ -365,7 +365,7 @@ class SyncService {
 
   Future<void> _pullOrders(Connection conn, DatabaseHelper dbHelper, {bool prune = false}) async {
        // Users
-      await _syncTable(conn, dbHelper, 'Users', 'userid', {
+      await _syncTable(conn, dbHelper, 'Users', 'userid', 'Users', {
          'userid': 'UserID',
          'telegramid': 'TelegramID',
          'username': 'UserName',
@@ -374,7 +374,7 @@ class SyncService {
          'createdat': 'CreatedAt'
       });
        // Orders
-      await _syncTable(conn, dbHelper, 'Orders', 'orderid', {
+      await _syncTable(conn, dbHelper, 'Orders', 'orderid', 'Orders', {
          'orderid': 'OrderID',
          'buyerid': 'BuyerID',
          'sellerid': 'SellerID',
@@ -387,7 +387,7 @@ class SyncService {
          'fullypaid': 'FullyPaid'
       }, prune: prune);
        // Order Items
-      await _syncTable(conn, dbHelper, 'OrderItems', 'orderitemid', {
+      await _syncTable(conn, dbHelper, 'OrderItems', 'orderitemid', 'OrderItems', {
          'orderitemid': 'OrderItemID',
          'orderid': 'OrderID',
          'productid': 'ProductID',
@@ -404,7 +404,7 @@ class SyncService {
 
   Future<void> _syncMessages(Connection conn, DatabaseHelper dbHelper, {bool prune = false}) async {
       // Messages
-      await _syncTable(conn, dbHelper, 'Messages', 'messageid', {
+      await _syncTable(conn, dbHelper, 'Messages', 'messageid', 'Messages', {
         'messageid': 'MessageID',
         'orderid': 'OrderID',
         'sellerid': 'SellerID',
@@ -417,7 +417,7 @@ class SyncService {
   
   Future<void> _syncCredit(Connection conn, DatabaseHelper dbHelper, {bool prune = false}) async {
       // CreditCustomers
-      await _syncTable(conn, dbHelper, 'CreditCustomers', 'customerid', {
+      await _syncTable(conn, dbHelper, 'CreditCustomers', 'customerid', 'CreditCustomers', {
         'customerid': 'CustomerID',
         'sellerid': 'SellerID',
         'fullname': 'FullName',
@@ -426,7 +426,7 @@ class SyncService {
       }, prune: prune);
 
        // CustomerCredit
-      await _syncTable(conn, dbHelper, 'CustomerCredit', 'creditid', {
+      await _syncTable(conn, dbHelper, 'CustomerCredit', 'creditid', 'CustomerCredit', {
         'creditid': 'CreditID',
         'customerid': 'CustomerID',
         'sellerid': 'SellerID',
@@ -582,7 +582,8 @@ class SyncService {
       Connection conn, 
       DatabaseHelper dbHelper, 
       String pgTableName, 
-      String pgPrimaryKey, 
+      String pgPrimaryKey,
+      String localTableName,
       Map<String, String> colMap,
       {bool prune = false}
   ) async {
@@ -642,7 +643,7 @@ class SyncService {
                    }
                } else {
                    // Default Generic Pruning (Users, etc)
-                   final localTable = pgTableName; 
+                   final localTable = localTableName; 
                    final localRows = await db.query(localTable, columns: [localPrimaryKey]);
                    final batchDelete = db.batch();
                    int deletedCount = 0;
@@ -690,7 +691,7 @@ class SyncService {
              localMap['IsSynced'] = 1;
           }
           
-          batch.insert(pgTableName, localMap, conflictAlgorithm: ConflictAlgorithm.replace);
+          batch.insert(localTableName, localMap, conflictAlgorithm: ConflictAlgorithm.replace);
        }
        
        await batch.commit(noResult: true);
