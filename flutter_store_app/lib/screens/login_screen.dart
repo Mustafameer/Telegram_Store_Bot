@@ -41,9 +41,10 @@ class _LoginScreenState extends State<LoginScreen> {
     }
     
     // Start Sync Immediately on Launch (Startup Sync)
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-       SyncService.instance.startSyncTimer();
-    });
+    // DISABLED: Auto-sync causes app slowness. User must trigger manually via button.
+    // WidgetsBinding.instance.addPostFrameCallback((_) {
+    //    SyncService.instance.startSyncTimer();
+    // });
   }
   
   Future<void> _initWindowCloseHandler() async {

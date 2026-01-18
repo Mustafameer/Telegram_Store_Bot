@@ -39,6 +39,13 @@ class SyncService {
 
   // Start the background timer
   void startSyncTimer() {
+    // DISABLED FOR PERFORMANCE: Auto-sync every 15 minutes causes slowdown
+    // Users can trigger sync manually via button
+    print("⏭️ Auto-sync timer disabled for performance");
+    _timer?.cancel();
+    return;
+    
+    /* Original code:
     _timer?.cancel();
     // Run immediately (Startup Logic: Pull All)
     syncStartup(); 
@@ -47,6 +54,7 @@ class SyncService {
        syncNow();
     });
     print("🔄 Sync Timer Started (15 min interval)");
+    */
   }
 
   void stop() {
@@ -166,6 +174,13 @@ class SyncService {
        return;
     }
     
+    // DISABLED FOR PERFORMANCE: Startup sync causes major slowdown
+    // Users can trigger manual sync when needed
+    print("⏭️ Startup Sync disabled for performance. Enable manual sync in settings if needed.");
+    return;
+    
+    // Original code commented out:
+    /*
     _isSyncing = true; 
     print("☁️ Starting Startup Sync (Pull All & Prune)...");
     _statusController.add("جاري بدء المزامنة التلقائية (سحب)...");
@@ -183,6 +198,7 @@ class SyncService {
       await _pullInventory(conn, dbHelper, prune: true);
       // DO NOT PRUNE ORDERS - Risk of deleting local unsynced orders!
       await _pullOrders(conn, dbHelper, prune: false);
+    
       
       // Sync Images with Prune (Delete local files if not in cloud)
       // Upload: False (Trust Cloud as Master on Startup)
@@ -198,6 +214,7 @@ class SyncService {
       await conn?.close();
       _isSyncing = false;
     }
+    */
   }
 
   Future<Connection> _connectToPostgres() async {
