@@ -310,14 +310,34 @@ class PostgresService {
       
       return results.map((row) {
         final map = row.toColumnMap();
+        
+        // تحويل الأسعار من String إلى double إذا لزم الأمر
+        double price = 0.0;
+        if (map['price'] != null) {
+          if (map['price'] is String) {
+            price = double.tryParse(map['price'] as String) ?? 0.0;
+          } else {
+            price = (map['price'] as num).toDouble();
+          }
+        }
+        
+        double? wholesalePrice;
+        if (map['wholesaleprice'] != null) {
+          if (map['wholesaleprice'] is String) {
+            wholesalePrice = double.tryParse(map['wholesaleprice'] as String);
+          } else {
+            wholesalePrice = (map['wholesaleprice'] as num).toDouble();
+          }
+        }
+        
         return Product(
           productId: map['productid'] as int,
           sellerId: map['sellerid'] as int,
           categoryId: map['categoryid'] as int?,
           name: map['name'] as String,
           description: map['description'] as String?,
-          price: (map['price'] as num).toDouble(),
-          wholesalePrice: map['wholesaleprice'] != null ? (map['wholesaleprice'] as num).toDouble() : null,
+          price: price,
+          wholesalePrice: wholesalePrice,
           quantity: map['quantity'] as int,
           imagePath: map['imagepath'] as String?,
           status: map['status'] as String? ?? 'active',
@@ -341,14 +361,34 @@ class PostgresService {
       if (results.isEmpty) return null;
       
       final map = results.first.toColumnMap();
+      
+      // تحويل الأسعار من String إلى double إذا لزم الأمر
+      double price = 0.0;
+      if (map['price'] != null) {
+        if (map['price'] is String) {
+          price = double.tryParse(map['price'] as String) ?? 0.0;
+        } else {
+          price = (map['price'] as num).toDouble();
+        }
+      }
+      
+      double? wholesalePrice;
+      if (map['wholesaleprice'] != null) {
+        if (map['wholesaleprice'] is String) {
+          wholesalePrice = double.tryParse(map['wholesaleprice'] as String);
+        } else {
+          wholesalePrice = (map['wholesaleprice'] as num).toDouble();
+        }
+      }
+      
       return Product(
         productId: map['productid'] as int,
         sellerId: map['sellerid'] as int,
         categoryId: map['categoryid'] as int?,
         name: map['name'] as String,
         description: map['description'] as String?,
-        price: (map['price'] as num).toDouble(),
-        wholesalePrice: map['wholesaleprice'] != null ? (map['wholesaleprice'] as num).toDouble() : null,
+        price: price,
+        wholesalePrice: wholesalePrice,
         quantity: map['quantity'] as int,
         imagePath: map['imagepath'] as String?,
         status: map['status'] as String? ?? 'active',
