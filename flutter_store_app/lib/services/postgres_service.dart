@@ -2,6 +2,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:postgres/postgres.dart' as postgres;
 import 'dart:typed_data';
 import 'dart:convert';
+import 'dart:async';
 import '../models/database_models.dart';
 
 /// خدمة الاتصال ببقاعدة بيانات PostgreSQL السحابية
@@ -124,16 +125,16 @@ class PostgresService {
     try {
       await _ensureConnection();
       
-      final results = await _connection!.execute(
-        'SELECT "sellerid", "telegramid", "username", "storename", "status", "imagepath", "requirecustomerregistration" FROM sellers WHERE "telegramid" = \$1',
-        parameters: [telegramId],
-      ).timeout(
-        const Duration(seconds: 10),
-        onTimeout: () {
-          print('⏱️ Timeout fetching seller');
-          return [];
-        }
-      );
+      late final List<postgres.ResultRow> results;
+      try {
+        results = await _connection!.execute(
+          'SELECT "sellerid", "telegramid", "username", "storename", "status", "imagepath", "requirecustomerregistration" FROM sellers WHERE "telegramid" = \$1',
+          parameters: [telegramId],
+        ).timeout(const Duration(seconds: 10));
+      } on TimeoutException {
+        print('⏱️ Timeout fetching seller');
+        return null;
+      }
       
       if (results.isEmpty) return null;
       
@@ -194,16 +195,16 @@ class PostgresService {
     try {
       await _ensureConnection();
       
-      final results = await _connection!.execute(
-        'SELECT "CategoryID", "SellerID", "Name", "OrderIndex", "ImagePath" FROM "Categories" WHERE "SellerID" = \$1 ORDER BY "OrderIndex" LIMIT 100',
-        parameters: [sellerId],
-      ).timeout(
-        const Duration(seconds: 10),
-        onTimeout: () {
-          print('⏱️ Timeout fetching categories');
-          return [];
-        }
-      );
+      late final List<postgres.ResultRow> results;
+      try {
+        results = await _connection!.execute(
+          'SELECT "CategoryID", "SellerID", "Name", "OrderIndex", "ImagePath" FROM "Categories" WHERE "SellerID" = \$1 ORDER BY "OrderIndex" LIMIT 100',
+          parameters: [sellerId],
+        ).timeout(const Duration(seconds: 10));
+      } on TimeoutException {
+        print('⏱️ Timeout fetching categories');
+        return [];
+      }
       
       return results.map((row) {
         final map = row.toColumnMap();
@@ -306,28 +307,21 @@ class PostgresService {
       
       late final List<postgres.ResultRow> results;
       
-      if (categoryId != null) {
-        results = await _connection!.execute(
-          'SELECT "productid", "sellerid", "categoryid", "name", "description", "price", "wholesaleprice", "quantity", "imagepath", "status" FROM products WHERE "sellerid" = \$1 AND "categoryid" = \$2 ORDER BY "productid" LIMIT 500',
-          parameters: [sellerId, categoryId],
-        ).timeout(
-          const Duration(seconds: 15),
-          onTimeout: () {
-            print('⏱️ Timeout fetching products');
-            return [];
-          }
-        );
-      } else {
-        results = await _connection!.execute(
-          'SELECT "productid", "sellerid", "categoryid", "name", "description", "price", "wholesaleprice", "quantity", "imagepath", "status" FROM products WHERE "sellerid" = \$1 ORDER BY "productid" LIMIT 500',
-          parameters: [sellerId],
-        ).timeout(
-          const Duration(seconds: 15),
-          onTimeout: () {
-            print('⏱️ Timeout fetching products');
-            return [];
-          }
-        );
+      try {
+        if (categoryId != null) {
+          results = await _connection!.execute(
+            'SELECT "productid", "sellerid", "categoryid", "name", "description", "price", "wholesaleprice", "quantity", "imagepath", "status" FROM products WHERE "sellerid" = \$1 AND "categoryid" = \$2 ORDER BY "productid" LIMIT 500',
+            parameters: [sellerId, categoryId],
+          ).timeout(const Duration(seconds: 15));
+        } else {
+          results = await _connection!.execute(
+            'SELECT "productid", "sellerid", "categoryid", "name", "description", "price", "wholesaleprice", "quantity", "imagepath", "status" FROM products WHERE "sellerid" = \$1 ORDER BY "productid" LIMIT 500',
+            parameters: [sellerId],
+          ).timeout(const Duration(seconds: 15));
+        }
+      } on TimeoutException {
+        print('⏱️ Timeout fetching products');
+        return [];
       }
       
       print('📦 [getProducts] Seller: $sellerId, Category: $categoryId');
