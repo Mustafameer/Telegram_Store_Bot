@@ -43,8 +43,10 @@ class _SelectImagesScreenState extends State<SelectImagesScreen> {
     setState(() => _isLoading = true);
     try {
       final images = await DatabaseHelper.instance.getProductImages(widget.product.productId);
+      // تصفية الصور ذات imagePath الفارغ
+      final validImages = images.where((img) => img.imagePath.isNotEmpty).toList();
       setState(() {
-        _images = images;
+        _images = validImages;
         _isLoading = false;
       });
     } catch (e) {

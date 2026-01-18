@@ -2,16 +2,13 @@ import 'package:path/path.dart' as p;
 import 'package:flutter/material.dart';
 import 'dart:io';
 import 'dart:async';
-import 'package:file_picker/file_picker.dart';
 
-import 'dart:io';
 import '../models/database_models.dart';
 import '../database/database_helper.dart';
-import '../services/telegram_service.dart';
 import 'store_detail_screen.dart';
-import 'login_screen.dart';
 import 'cart_screen.dart';
 import 'messages_screen.dart';
+import 'orders_screen.dart';
 import 'components/store_form_dialog.dart';
 import 'server_settings_screen.dart';
 
@@ -37,7 +34,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
   bool _isExtended = true;
-  Map<String, int> _counts = {'products': 0, 'messages': 0, 'cart': 0};
+  Map<String, int> _counts = {'products': 0, 'messages': 0, 'cart': 0, 'orders': 0};
   
   @override
   void initState() {
@@ -89,7 +86,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  @override
   Future<void> _refreshCounts() async {
     // Assuming main user/admin ID for now. In multi-user app, this would use logged-in ID.
     const targetId = 1041977029; 
@@ -103,16 +99,18 @@ class _HomeScreenState extends State<HomeScreen> {
     int pCount = 0;
     int mCount = 0;
     int cCount = 0;
+    int oCount = 0;
     
     if (seller != null) {
       pCount = await DatabaseHelper.instance.getProductsCount(seller.sellerId);
       mCount = await DatabaseHelper.instance.getMessagesCount(seller.sellerId); // Total messages
+      oCount = await DatabaseHelper.instance.getOrdersCount(seller.sellerId); // Total orders
     }
     cCount = await DatabaseHelper.instance.getCartCount(targetId);
 
     if (mounted) {
       setState(() {
-        _counts = {'products': pCount, 'messages': mCount, 'cart': cCount};
+        _counts = {'products': pCount, 'messages': mCount, 'cart': cCount, 'orders': oCount};
       });
     }
   }
@@ -125,6 +123,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (widget.isAdmin || widget.isSeller) {'icon': Icons.store, 'label': 'متجري', 'count': _counts['products']},
       {'icon': Icons.shopping_cart, 'label': 'سلة المشتريات 🛒', 'count': _counts['cart']},
       {'icon': Icons.settings, 'label': 'الاعدادات'},
+      if (widget.isAdmin || widget.isSeller) {'icon': Icons.shopping_bag, 'label': 'الطلبات', 'count': _counts['orders']},
       if (widget.isAdmin || widget.isSeller) {'icon': Icons.message, 'label': 'الرسائل', 'count': _counts['messages']},
     ];
   }
@@ -356,6 +355,8 @@ class _HomeScreenState extends State<HomeScreen> {
     } else if (_selectedIndex == 2) {
       return CartScreen(userId: widget.currentUserId); 
     } else if (_selectedIndex == 4 && (widget.isAdmin || widget.isSeller)) {
+      return AdminOrdersLoader(currentUserId: widget.currentUserId);
+    } else if (_selectedIndex == 5 && (widget.isAdmin || widget.isSeller)) {
       return AdminMessagesLoader(currentUserId: widget.currentUserId);
     }
     return const Center(child: Text('جاري العمل...'));
@@ -753,6 +754,28 @@ class AdminStoreLoader extends StatelessWidget {
                  const Text('يرجى إنشاؤه من لوحة التحكم'),
                ],
              ),
+           );
+        }
+      },
+    );
+  }
+}
+
+class AdminOrdersLoader extends StatelessWidget {
+  final int currentUserId;
+  const AdminOrdersLoader({super.key, required this.currentUserId});
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Seller?>(
+      future: DatabaseHelper.instance.getSellerByTelegramId(currentUserId), 
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+        if (snapshot.hasData && snapshot.data != null) {
+          return OrdersScreen(sellerId: snapshot.data!.sellerId);
+        } else {
+           return const Center(
+             child: Text('يجب إنشاء متجر أولاً لعرض الطلبات')
            );
         }
       },

@@ -32,11 +32,17 @@ class _ManageProductImagesScreenState extends State<ManageProductImagesScreen> {
       print('🔍 جاري تحميل الصور للمنتج: ${widget.product.productId}');
       final images = await DatabaseHelper.instance.getProductImages(widget.product.productId);
       print('✅ تم تحميل ${images.length} صورة للمنتج ${widget.product.productId}');
-      for (var img in images) {
+      
+      // تصفية الصور ذات imagePath الفارغ
+      final validImages = images.where((img) => img.imagePath.isNotEmpty).toList();
+      print('📊 عدد الصور الصحيحة بعد التصفية: ${validImages.length} (تم تجاهل ${images.length - validImages.length} صور فارغة)');
+      
+      for (var img in validImages) {
         print('   - صورة ID: ${img.imageId}, المسار: ${img.imagePath}');
       }
+      
       setState(() {
-        _images = images;
+        _images = validImages;
         _isLoading = false;
       });
     } catch (e, stackTrace) {
@@ -76,19 +82,34 @@ class _ManageProductImagesScreenState extends State<ManageProductImagesScreen> {
                 file.path!,
                 imageOrder: imageOrder++,
               );
+              print('📍 تم استقبال imageId: $imageId من قاعدة البيانات');
               if (imageId > 0) {
                 print('✅ تم إضافة الصورة بنجاح: ${file.name} (ID: $imageId)');
                 addedCount++;
               } else {
-                print('❌ فشل إضافة الصورة: ${file.name}');
+                print('❌ فشل إضافة الصورة: ${file.name} - imageId كان: $imageId (يجب أن يكون > 0)');
               }
-            } catch (e) {
+            } catch (e, stackTrace) {
               print('❌ خطأ في إضافة الصورة ${file.name}: $e');
+              print('📍 Stack Trace: $stackTrace');
             }
           }
         }
         
         print('📊 تم إضافة $addedCount صورة من أصل ${result.files.length}');
+        
+        if (addedCount == 0) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('❌ فشل إضافة جميع الصور. تحقق من السجلات للمزيد من المعلومات.'),
+                backgroundColor: Colors.red,
+                duration: Duration(seconds: 3),
+              ),
+            );
+          }
+          return;
+        }
         
         // تحديث كمية المنتج تلقائياً
         if (addedCount > 0) {
@@ -118,8 +139,9 @@ class _ManageProductImagesScreenState extends State<ManageProductImagesScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('تم إضافة $addedCount صورة بنجاح'),
+              content: Text('✅ تم إضافة $addedCount صورة بنجاح من أصل ${result.files.length}'),
               backgroundColor: Colors.green,
+              duration: const Duration(seconds: 2),
             ),
           );
           await Future.delayed(const Duration(milliseconds: 500));
@@ -283,17 +305,48 @@ class _ManageProductImagesScreenState extends State<ManageProductImagesScreen> {
                       : GridView.builder(
                           padding: const EdgeInsets.all(16),
                           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 3,
-                            crossAxisSpacing: 16,
-                            mainAxisSpacing: 16,
+                            crossAxisCount: 9,
+                            crossAxisSpacing: 8,
+                            mainAxisSpacing: 8,
                             childAspectRatio: 1.0,
                           ),
                           itemCount: _images.length,
                           itemBuilder: (context, index) {
                             final image = _images[index];
                             
-                            // حساب الحجم: 4×4 سم = ~454×454 pixels (عند 96 DPI)
-                            final imageSize = 454.0;
+                            // حساب الحجم: 25% من 4×4 سم = ~113×113 pixels (عند 96 DPI)
+                            final imageSize = 113.5;
+                            
+                            // التحقق من أن المسار ليس فارغاً
+                            if (image.imagePath.isEmpty) {
+                              print('❌ مسار الصورة فارغ للصورة ID: ${image.imageId}');
+                              return Container(
+                                width: imageSize,
+                                height: imageSize,
+                                child: Card(
+                                  clipBehavior: Clip.antiAlias,
+                                  child: Container(
+                                    color: Colors.grey[200],
+                                    child: const Column(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.error,
+                                          size: 30,
+                                          color: Colors.red,
+                                        ),
+                                        SizedBox(height: 4),
+                                        Text(
+                                          'مسار فارغ',
+                                          style: TextStyle(fontSize: 10, color: Colors.red),
+                                          textAlign: TextAlign.center,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }
                             
                             return Container(
                               width: imageSize,

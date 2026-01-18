@@ -79,20 +79,20 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
       // استخدام Future.wait لتحميل البيانات بشكل متوازي مع timeouts
       final results = await Future.wait([
         DatabaseHelper.instance.getProductsCount(sellerId).timeout(
-          const Duration(seconds: 5),
+          const Duration(seconds: 30),
           onTimeout: () => 0,
         ),
         DatabaseHelper.instance.getCategoriesCount(sellerId).timeout(
-          const Duration(seconds: 5),
+          const Duration(seconds: 30),
           onTimeout: () => 0,
         ),
         if (widget.isSellerMode) ...[
           DatabaseHelper.instance.getOrdersCount(sellerId).timeout(
-            const Duration(seconds: 5),
+            const Duration(seconds: 30),
             onTimeout: () => 0,
           ),
           DatabaseHelper.instance.getCustomersCount(sellerId).timeout(
-            const Duration(seconds: 5),
+            const Duration(seconds: 30),
             onTimeout: () => 0,
           ),
         ] else ...[

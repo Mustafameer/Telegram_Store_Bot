@@ -82,7 +82,7 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
         // تحديد الكمية
         int quantity;
         if (widget.requireCustomerRegistration) {
-          // للمتاجر المقفولة: الكمية = عدد الصور في ProductImages
+          // للمتاجر المغلقة: الكمية = عدد الصور في ProductImages
           if (widget.product != null) {
             // عند التعديل: حساب الكمية من الصور الموجودة
             final images = await DatabaseHelper.instance.getProductImages(widget.product!.productId);
@@ -167,33 +167,6 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                GestureDetector(
-                  onTap: _pickImage,
-                  child: Container(
-                    // للمتاجر المقفولة: استخدام أبعاد مربع 4.97 * 4.97 سم (186 * 186 بكسل)
-                    // للمتاجر المفتوحة: استخدام ارتفاع أكبر قليلاً (150 بكسل)
-                    height: widget.requireCustomerRegistration ? 186 : 150,
-                    width: widget.requireCustomerRegistration ? 186 : double.infinity,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[200],
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.grey),
-                    ),
-                    child: _imagePath != null
-                        ? ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: Image.file(File(_imagePath!), fit: BoxFit.cover),
-                          )
-                        : const Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.add_a_photo, size: 40, color: Colors.grey),
-                              Text('اضغط لإضافة صورة'),
-                            ],
-                          ),
-                  ),
-                ),
-                const SizedBox(height: 16),
                 TextFormField(
                   controller: _nameController,
                   decoration: const InputDecoration(labelText: 'اسم المنتج', border: OutlineInputBorder()),
@@ -233,12 +206,17 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
                           style: const TextStyle(fontSize: 16),
                         ),
                         const SizedBox(height: 12),
-                        // كل المتاجر مفتوحة - حقل الكمية مرئي دائماً
+                        // الكمية تُحدّث تلقائياً من معرج الصور (read-only)
                         TextFormField(
                           controller: _qtyController,
-                          decoration: const InputDecoration(labelText: 'الكمية', border: OutlineInputBorder()),
+                          enabled: false,
+                          decoration: InputDecoration(
+                            labelText: 'الكمية (محدثة من المعرج)',
+                            border: const OutlineInputBorder(),
+                            disabledBorder: const OutlineInputBorder(borderSide: BorderSide(color: Colors.grey)),
+                            hintText: 'يتم التحديث من معرج الصور تلقائياً',
+                          ),
                           keyboardType: TextInputType.number,
-                          validator: (v) => v!.isEmpty ? 'مطلوب' : null,
                           style: const TextStyle(fontSize: 16),
                         ),
                       ],
@@ -272,16 +250,22 @@ class _ProductFormDialogState extends State<ProductFormDialog> {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        // كل المتاجر مفتوحة - حقل الكمية مرئي دائماً
-                        Expanded(
-                          child: TextFormField(
-                            controller: _qtyController,
-                            decoration: const InputDecoration(labelText: 'الكمية', border: OutlineInputBorder()),
-                            keyboardType: TextInputType.number,
-                            validator: (v) => v!.isEmpty ? 'مطلوب' : null,
-                            style: const TextStyle(fontSize: 16),
+                        // للمتاجر المفتوحة فقط: عرض حقل الكمية
+                        if (!widget.requireCustomerRegistration)
+                          Expanded(
+                            child: TextFormField(
+                              controller: _qtyController,
+                              enabled: false,
+                              decoration: InputDecoration(
+                                labelText: 'الكمية (محدثة)',
+                                border: const OutlineInputBorder(),
+                                disabledBorder: const OutlineInputBorder(borderSide: BorderSide(color: Colors.grey)),
+                                hintText: 'من المعرج',
+                              ),
+                              keyboardType: TextInputType.number,
+                              style: const TextStyle(fontSize: 16),
+                            ),
                           ),
-                        ),
                       ],
                     ),
                 const SizedBox(height: 12),

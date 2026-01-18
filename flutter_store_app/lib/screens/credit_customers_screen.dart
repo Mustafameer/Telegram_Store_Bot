@@ -17,10 +17,12 @@ class _CreditCustomersScreenState extends State<CreditCustomersScreen> {
   @override
   void initState() {
     super.initState();
+    print('📱 CreditCustomersScreen initialized for seller: ${widget.sellerId}');
     _refresh();
   }
 
   void _refresh() {
+    print('🔄 Refreshing credit customers list for seller: ${widget.sellerId}');
     setState(() {
       _customersFuture = DatabaseHelper.instance.getCreditCustomers(widget.sellerId);
     });
@@ -28,7 +30,7 @@ class _CreditCustomersScreenState extends State<CreditCustomersScreen> {
 
   Future<void> _addCustomer() async {
     final nameController = TextEditingController();
-    final phoneController = TextEditingController();
+    final telegramIdController = TextEditingController();
     await showDialog(
       context: context,
       builder: (_) => AlertDialog(
@@ -38,7 +40,7 @@ class _CreditCustomersScreenState extends State<CreditCustomersScreen> {
           children: [
             TextField(controller: nameController, decoration: const InputDecoration(labelText: 'الاسم الكامل')),
             const SizedBox(height: 8),
-            TextField(controller: phoneController, decoration: const InputDecoration(labelText: 'رقم الهاتف')),
+            TextField(controller: telegramIdController, decoration: const InputDecoration(labelText: 'آيدي التلكرام'), keyboardType: TextInputType.number),
           ],
         ),
         actions: [
@@ -46,7 +48,8 @@ class _CreditCustomersScreenState extends State<CreditCustomersScreen> {
           FilledButton(
             onPressed: () async {
               if (nameController.text.isNotEmpty) {
-                await DatabaseHelper.instance.addCreditCustomer(widget.sellerId, nameController.text, phoneController.text);
+                final telegramId = telegramIdController.text.isNotEmpty ? int.tryParse(telegramIdController.text) : null;
+                await DatabaseHelper.instance.addCreditCustomer(widget.sellerId, nameController.text, '', telegramId: telegramId);
                 if (mounted) {
                   Navigator.pop(context);
                   _refresh();
@@ -62,7 +65,7 @@ class _CreditCustomersScreenState extends State<CreditCustomersScreen> {
 
   Future<void> _editCustomer(CreditCustomer customer) async {
     final nameController = TextEditingController(text: customer.fullName);
-    final phoneController = TextEditingController(text: customer.phoneNumber ?? '');
+    final telegramIdController = TextEditingController(text: customer.telegramId?.toString() ?? '');
     
     await showDialog(
       context: context,
@@ -73,7 +76,7 @@ class _CreditCustomersScreenState extends State<CreditCustomersScreen> {
           children: [
             TextField(controller: nameController, decoration: const InputDecoration(labelText: 'الاسم الكامل')),
             const SizedBox(height: 8),
-            TextField(controller: phoneController, decoration: const InputDecoration(labelText: 'رقم الهاتف')),
+            TextField(controller: telegramIdController, decoration: const InputDecoration(labelText: 'آيدي التلكرام'), keyboardType: TextInputType.number),
           ],
         ),
         actions: [
@@ -85,7 +88,7 @@ class _CreditCustomersScreenState extends State<CreditCustomersScreen> {
                   customer.customerId,
                   widget.sellerId,
                   nameController.text,
-                  phoneController.text.isEmpty ? null : phoneController.text,
+                  null,
                 );
                 if (mounted) {
                   Navigator.pop(context);
@@ -164,7 +167,7 @@ class _CreditCustomersScreenState extends State<CreditCustomersScreen> {
               return ListTile(
                 leading: CircleAvatar(child: Text(c.fullName[0])),
                 title: Text(c.fullName),
-                subtitle: Text(c.phoneNumber ?? 'لا يوجد رقم'),
+                subtitle: Text(c.telegramId != null ? 'آيدي: ${c.telegramId}' : 'بدون آيدي تلكرام'),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -289,6 +292,120 @@ class _CustomerStatementScreenState extends State<CustomerStatementScreen> {
     );
   }
 
+  Future<void> _editTransaction(CustomerCreditTransaction transaction) async {
+    final amountController = TextEditingController(text: transaction.amount.toString());
+    final descController = TextEditingController(text: transaction.description ?? '');
+    final typeController = transaction.transactionType;
+    
+    await showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('تعديل المعاملة'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: amountController, 
+              decoration: const InputDecoration(labelText: 'المبلغ'),
+              keyboardType: TextInputType.number,
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: descController, 
+              decoration: const InputDecoration(labelText: 'ملاحظات / وصف'),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'النوع: ${typeController == 'payment' ? 'تسديد' : 'شراء آجل'}',
+              style: const TextStyle(color: Colors.grey, fontSize: 14),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+          FilledButton(
+            onPressed: () async {
+              final amount = double.tryParse(amountController.text);
+              if (amount != null && amount > 0) {
+                double balanceBefore = transaction.balanceBefore ?? 0;
+                double balanceAfter = balanceBefore;
+                
+                if (typeController == 'credit') {
+                  balanceAfter = balanceBefore + amount;
+                } else if (typeController == 'payment') {
+                  balanceAfter = balanceBefore - amount;
+                }
+                
+                final success = await DatabaseHelper.instance.updateCreditTransaction(
+                  creditId: transaction.creditId,
+                  transactionType: typeController,
+                  amount: amount,
+                  description: descController.text.isEmpty ? (typeController == 'payment' ? 'تسديد نقدي' : 'شراء آجل') : descController.text,
+                  balanceBefore: balanceBefore,
+                  balanceAfter: balanceAfter,
+                );
+                
+                if (mounted) {
+                  Navigator.pop(context);
+                  if (success) {
+                    _refresh();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('تم التعديل بنجاح')),
+                    );
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('فشل التعديل')),
+                    );
+                  }
+                }
+              }
+            },
+            child: const Text('حفظ'),
+          )
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteTransaction(CustomerCreditTransaction transaction) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('تأكيد الحذف'),
+        content: Text(
+          'هل أنت متأكد من حذف هذه المعاملة؟\n${transaction.description}\n${intl.NumberFormat('#,###').format(transaction.amount)} دينار'
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('حذف'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      final success = await DatabaseHelper.instance.deleteCreditTransaction(transaction.creditId);
+      if (mounted) {
+        if (success) {
+          _refresh();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('تم الحذف بنجاح')),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('فشل الحذف')),
+          );
+        }
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -328,22 +445,43 @@ class _CustomerStatementScreenState extends State<CustomerStatementScreen> {
                 
                 final transactions = snapshot.data ?? [];
                 
-                // Calculate current balance (BalanceAfter of the latest transaction)
                 double balance = 0;
                 if (transactions.isNotEmpty) {
-                   balance = transactions.first.balanceAfter ?? 0;
+                  final latestTransaction = transactions.first;
+                  balance = latestTransaction.balanceAfter ?? 0;
+                  print('💰 الرصيد من آخر معاملة: $balance');
                 }
 
                 return Column(
                   children: [
                     Container(
                       padding: const EdgeInsets.all(16),
-                      color: Colors.blue.shade50,
+                      color: balance >= 0 ? Colors.green.shade50 : Colors.red.shade50,
                       width: double.infinity,
-                      child: Text(
-                        'الرصيد الحالي: ${intl.NumberFormat('#,###').format(balance)}',
-                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.blue),
-                        textAlign: TextAlign.center,
+                      child: Column(
+                        children: [
+                          const Text(
+                            'الرصيد الحالي',
+                            style: TextStyle(fontSize: 14, color: Colors.grey),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '${intl.NumberFormat('#,###').format(balance)}',
+                            style: TextStyle(
+                              fontSize: 28, 
+                              fontWeight: FontWeight.bold, 
+                              color: balance >= 0 ? Colors.green : Colors.red
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            balance >= 0 ? 'للزبون حساب دائن' : 'الزبون مدين',
+                            style: TextStyle(
+                              fontSize: 12, 
+                              color: balance >= 0 ? Colors.green : Colors.red
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                     Expanded(
@@ -359,17 +497,49 @@ class _CustomerStatementScreenState extends State<CustomerStatementScreen> {
                             leading: Icon(isPayment ? Icons.arrow_downward : Icons.arrow_upward, color: color),
                             title: Text(t.description ?? ''),
                             subtitle: Text(t.transactionDate?.substring(0, 16).replaceFirst('T', ' ') ?? ''),
-                            trailing: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              crossAxisAlignment: CrossAxisAlignment.end,
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              mainAxisAlignment: MainAxisAlignment.end,
                               children: [
-                                Text(
-                                  '${isPayment ? '-' : '+'}${intl.NumberFormat('#,###').format(t.amount)}',
-                                  style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 16),
+                                Flexible(
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(right: 8.0),
+                                    child: Column(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      crossAxisAlignment: CrossAxisAlignment.end,
+                                      children: [
+                                        Text(
+                                          '${isPayment ? '-' : '+'}${intl.NumberFormat('###').format(t.amount)}',
+                                          style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 13),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        Text(
+                                          'ر: ${intl.NumberFormat('###').format(t.balanceAfter ?? 0)}',
+                                          style: const TextStyle(fontSize: 10, color: Colors.grey),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
                                 ),
-                                Text(
-                                  'الرصيد: ${intl.NumberFormat('#,###').format(t.balanceAfter ?? 0)}',
-                                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                                SizedBox(
+                                  width: 48,
+                                  height: 48,
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      InkWell(
+                                        onTap: () => _editTransaction(t),
+                                        child: const Icon(Icons.edit, size: 16, color: Colors.blue),
+                                      ),
+                                      InkWell(
+                                        onTap: () => _deleteTransaction(t),
+                                        child: const Icon(Icons.delete, size: 16, color: Colors.red),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ],
                             ),

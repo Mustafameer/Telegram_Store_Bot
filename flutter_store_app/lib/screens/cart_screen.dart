@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../database/database_helper.dart';
 import '../../services/telegram_service.dart';
+import '../../models/database_models.dart';
 
 // دالة لتنسيق المبالغ مع فاصلة الآلاف وإزالة الكسور
 String formatPrice(dynamic price) {
@@ -37,6 +38,69 @@ class _CartScreenState extends State<CartScreen> {
     });
   }
 
+  // عرض صور المنتجات المشتراة في dialog
+  Future<void> _showPurchasedImages(List<Map<String, dynamic>> items) async {
+    List<Map<String, dynamic>> itemsWithImages = [];
+
+    for (var item in items) {
+      final productId = item['ProductID'];
+      final productImages = await DatabaseHelper.instance.getProductImages(productId);
+      if (productImages.isNotEmpty) {
+        itemsWithImages.add({'item': item, 'images': productImages});
+      }
+    }
+
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("📸 صور المنتجات المشتراة"),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ...itemsWithImages.map((itemData) {
+                final item = itemData['item'] as Map<String, dynamic>;
+                final images = itemData['images'] as List<ProductImage>;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(item['Name'] ?? 'منتج', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                    SizedBox(
+                      height: 150,
+                      child: ListView.builder(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: images.length,
+                        itemBuilder: (ctx, idx) {
+                          final img = images[idx];
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 8.0),
+                            child: img.imagePath != null && img.imagePath!.isNotEmpty
+                                ? Image.file(File(img.imagePath!), width: 120, height: 120, fit: BoxFit.cover)
+                                : Container(
+                                    width: 120,
+                                    height: 120,
+                                    color: Colors.grey[300],
+                                    child: const Icon(Icons.image_not_supported),
+                                  ),
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                );
+              }).toList(),
+            ],
+          ),
+        ),
+        actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text("حسناً"))],
+      ),
+    );
+  }
+
   Future<void> _placeOrder(List<Map<String, dynamic>> items) async {
     if (items.isEmpty) return;
 
@@ -44,35 +108,35 @@ class _CartScreenState extends State<CartScreen> {
     Map<int, List<Map<String, dynamic>>> bySeller = {};
     for (var item in items) {
       if (item['SellerID'] == null) {
-         // Skip orphaned items, user should delete them manually or we auto-clean?
-         // For now just skip to prevent crash.
-         continue; 
+        // Skip orphaned items, user should delete them manually or we auto-clean?
+        // For now just skip to prevent crash.
+        continue;
       }
       final sellerId = item['SellerID'] as int;
       if (!bySeller.containsKey(sellerId)) bySeller[sellerId] = [];
       bySeller[sellerId]!.add(item);
     }
 
-    // 🔍 Check if all stores are closed (RequireCustomerRegistration = 1) 
+    // 🔍 Check if all stores are closed (RequireCustomerRegistration = 1)
     // and user is registered in all of them
     bool allStoresClosed = true;
     bool userRegisteredInAll = true;
-    
+
     for (var sellerId in bySeller.keys) {
       try {
         // Get seller info
         final sellers = await DatabaseHelper.instance.getAllSellers(forceRefresh: true);
         final seller = sellers.firstWhere((s) => s.sellerId == sellerId, orElse: () => null as dynamic);
-        
+
         if (seller == null || !seller.requireCustomerRegistration) {
           allStoresClosed = false;
           break;
         }
-        
+
         // Check if user is registered as a credit customer
         final creditCustomers = await DatabaseHelper.instance.getCreditCustomers(sellerId);
         final isRegistered = creditCustomers.any((cc) => cc.telegramId == widget.userId);
-        
+
         if (!isRegistered) {
           userRegisteredInAll = false;
           break;
@@ -91,7 +155,7 @@ class _CartScreenState extends State<CartScreen> {
 
       try {
         var totalAllOrders = 0.0;
-        
+
         for (var entry in bySeller.entries) {
           final sellerId = entry.key;
           final sellerItems = entry.value;
@@ -106,37 +170,56 @@ class _CartScreenState extends State<CartScreen> {
             sellerItems,
             status: 'Confirmed', // 🆕 Set status to Confirmed
             paymentMethod: 'credit', // 🆕 Payment method is credit
-            fullyPaid: false // 🆕 Not fully paid
+            fullyPaid: false, // 🆕 Not fully paid
           );
 
           totalAllOrders += total;
+
+          // ✅ Add credit transaction (deduct from customer account)
+          await DatabaseHelper.instance.addCreditTransaction(
+            customerId: widget.userId,
+            sellerId: sellerId,
+            transactionType: 'purchase',
+            amount: total,
+            description: 'شراء آجل - طلب #$orderId',
+          );
+
           await DatabaseHelper.instance.addMessage(orderId, sellerId, 'new_order', 'طلب جديد #$orderId - مؤكد');
         }
-        
+
         await DatabaseHelper.instance.clearCart(widget.userId);
-        
+
+        // ✅ عرض صور المنتجات المشتراة
+        await _showPurchasedImages(items);
+
         // Show Success Dialog
         showDialog(
           context: context,
           builder: (ctx) => AlertDialog(
-            title: const Row(children: [Icon(Icons.check_circle, color: Colors.green), SizedBox(width: 8), Text("✅ تم إنزال طلبك")]),
+            title: const Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.green),
+                SizedBox(width: 8),
+                Text("✅ تم إنزال طلبك"),
+              ],
+            ),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Text("تم إنزال طلبك بنجاح!"),
                 const SizedBox(height: 16),
-                Text("المبلغ المخصوم: ${formatPrice(totalAllOrders)} د.ع", style: const TextStyle(fontWeight: FontWeight.bold)),
+                Text(
+                  "المبلغ المخصوم: ${formatPrice(totalAllOrders)} د.ع",
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                const Text("✅ تم تطبيق المبلغ على حسابك الآجل", style: TextStyle(color: Colors.green, fontSize: 12)),
                 const SizedBox(height: 8),
                 const Text("سيتم معالجة الطلب من قبل صاحب المتجر", style: TextStyle(color: Colors.grey, fontSize: 12)),
               ],
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx), 
-                child: const Text("حسناً")
-              )
-            ],
-          )
+            actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("حسناً"))],
+          ),
         );
         _refreshCart();
       } catch (e) {
@@ -167,29 +250,30 @@ class _CartScreenState extends State<CartScreen> {
           total,
           details['address']!,
           details['notes']!,
-          sellerItems
+          sellerItems,
         );
 
         await DatabaseHelper.instance.addMessage(orderId, sellerId, 'new_order', 'طلب جديد #$orderId');
       }
-      
+
       await DatabaseHelper.instance.clearCart(widget.userId);
-      
-        // Show Success Dialog
-        showDialog(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Row(children: [Icon(Icons.check_circle, color: Colors.green), SizedBox(width: 8), Text("تم الارسال")]),
-            content: const Text("تم استلام طلبك بنجاح وسيتم معالجته قريباً."),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx), 
-                child: const Text("حسناً")
-              )
+
+      // Show Success Dialog
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.check_circle, color: Colors.green),
+              SizedBox(width: 8),
+              Text("تم الارسال"),
             ],
-          )
-        );
-        _refreshCart();
+          ),
+          content: const Text("تم استلام طلبك بنجاح وسيتم معالجته قريباً."),
+          actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("حسناً"))],
+        ),
+      );
+      _refreshCart();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('حدث خطأ: $e')));
@@ -202,7 +286,7 @@ class _CartScreenState extends State<CartScreen> {
   Future<Map<String, String>?> _showDeliveryDialog() async {
     final addressController = TextEditingController();
     final notesController = TextEditingController();
-    
+
     return showDialog<Map<String, String>>(
       context: context,
       builder: (context) => AlertDialog(
@@ -226,10 +310,7 @@ class _CartScreenState extends State<CartScreen> {
           FilledButton(
             onPressed: () {
               if (addressController.text.isNotEmpty) {
-                Navigator.pop(context, {
-                  'address': addressController.text,
-                  'notes': notesController.text
-                });
+                Navigator.pop(context, {'address': addressController.text, 'notes': notesController.text});
               }
             },
             child: const Text('تأكيد'),
@@ -246,17 +327,21 @@ class _CartScreenState extends State<CartScreen> {
       body: FutureBuilder<List<Map<String, dynamic>>>(
         future: _cartFuture,
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+          if (snapshot.connectionState == ConnectionState.waiting)
+            return const Center(child: CircularProgressIndicator());
           if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text('السلة فارغة'));
 
           final items = snapshot.data!;
-          final total = items.fold(0.0, (sum, item) => sum + (double.parse(item['Price'].toString()) * int.parse(item['Quantity'].toString())));
-          
+          final total = items.fold(
+            0.0,
+            (sum, item) => sum + (double.parse(item['Price'].toString()) * int.parse(item['Quantity'].toString())),
+          );
+
           Map<String, List<Map<String, dynamic>>> byStoreName = {};
           for (var item in items) {
-             final storeName = (item['StoreName'] as String?) ?? 'متجر غير معروف';
-             if (!byStoreName.containsKey(storeName)) byStoreName[storeName] = [];
-             byStoreName[storeName]!.add(item);
+            final storeName = (item['StoreName'] as String?) ?? 'متجر غير معروف';
+            if (!byStoreName.containsKey(storeName)) byStoreName[storeName] = [];
+            byStoreName[storeName]!.add(item);
           }
 
           return Column(
@@ -268,72 +353,90 @@ class _CartScreenState extends State<CartScreen> {
                   itemBuilder: (context, index) {
                     final storeName = byStoreName.keys.elementAt(index);
                     final storeItems = byStoreName[storeName]!;
-                    
+
                     return Card(
                       margin: const EdgeInsets.only(bottom: 16),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                           Container(
-                             width: double.infinity,
-                             padding: const EdgeInsets.all(12),
-                             decoration: BoxDecoration(
-                               color: Theme.of(context).primaryColor.withOpacity(0.1),
-                               borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-                             ),
-                             child: Text(storeName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                           ),
-                           ...storeItems.map((item) => ListTile(
-                             title: Text(item['Name'] ?? 'منتج محذوف', 
-                               style: const TextStyle(
-                                 fontWeight: FontWeight.w900,
-                                 color: Color(0xFF0D47A1), // أزرق غامق جداً
-                                 fontSize: 18
-                               )),
-                             subtitle: Text('السعر: ${formatPrice(item['Price'])} د.ع'),
-                             leading: item['ImagePath'] != null 
-                              ? CircleAvatar(backgroundImage: FileImage(File(item['ImagePath']))) 
-                              : const CircleAvatar(child: Icon(Icons.image)),
-                             trailing: Row(
-                               mainAxisSize: MainAxisSize.min,
-                               children: [
-                                 // Quantity Controls
-                                 IconButton(
-                                   icon: const Icon(Icons.remove_circle_outline),
-                                   onPressed: () async {
-                                     final currentQty = int.parse(item['Quantity'].toString());
-                                     if (currentQty > 1) {
-                                       await DatabaseHelper.instance.updateCartQuantity(item['CartID'], currentQty - 1);
-                                       _refreshCart();
-                                     }
-                                   },
-                                 ),
-                                 Text('${item['Quantity']}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                                 IconButton(
-                                   icon: const Icon(Icons.add_circle_outline),
-                                   onPressed: () async {
-                                      final currentQty = int.parse(item['Quantity'].toString());
-                                      await DatabaseHelper.instance.updateCartQuantity(item['CartID'], currentQty + 1);
-                                      _refreshCart();
-                                   },
-                                 ),
-                                 const SizedBox(width: 8),
-                                 // Total Price for Item
-                                 Text('${formatPrice(double.parse(item['Price'].toString()) * int.parse(item['Quantity'].toString()))} د.ع', style: const TextStyle(color: Colors.grey)),
-                                 const SizedBox(width: 8),
-                                 // Delete Button
-                                 IconButton(
-                                   icon: const Icon(Icons.delete, color: Colors.red),
-                                   tooltip: 'حذف',
-                                   onPressed: () async {
-                                     await DatabaseHelper.instance.removeFromCart(item['CartID']);
-                                     _refreshCart();
-                                   },
-                                 )
-                               ],
-                             ),
-                           )).toList(),
-                           // Subtotal per store could be here
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).primaryColor.withOpacity(0.1),
+                              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                            ),
+                            child: Text(storeName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                          ),
+                          ...storeItems
+                              .map(
+                                (item) => ListTile(
+                                  title: Text(
+                                    item['Name'] ?? 'منتج محذوف',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w900,
+                                      color: Color(0xFF0D47A1), // أزرق غامق جداً
+                                      fontSize: 18,
+                                    ),
+                                  ),
+                                  subtitle: Text('السعر: ${formatPrice(item['Price'])} د.ع'),
+                                  leading: item['ImagePath'] != null
+                                      ? CircleAvatar(backgroundImage: FileImage(File(item['ImagePath'])))
+                                      : const CircleAvatar(child: Icon(Icons.image)),
+                                  trailing: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      // Quantity Controls
+                                      IconButton(
+                                        icon: const Icon(Icons.remove_circle_outline),
+                                        onPressed: () async {
+                                          final currentQty = int.parse(item['Quantity'].toString());
+                                          if (currentQty > 1) {
+                                            await DatabaseHelper.instance.updateCartQuantity(
+                                              item['CartID'],
+                                              currentQty - 1,
+                                            );
+                                            _refreshCart();
+                                          }
+                                        },
+                                      ),
+                                      Text(
+                                        '${item['Quantity']}',
+                                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.add_circle_outline),
+                                        onPressed: () async {
+                                          final currentQty = int.parse(item['Quantity'].toString());
+                                          await DatabaseHelper.instance.updateCartQuantity(
+                                            item['CartID'],
+                                            currentQty + 1,
+                                          );
+                                          _refreshCart();
+                                        },
+                                      ),
+                                      const SizedBox(width: 8),
+                                      // Total Price for Item
+                                      Text(
+                                        '${formatPrice(double.parse(item['Price'].toString()) * int.parse(item['Quantity'].toString()))} د.ع',
+                                        style: const TextStyle(color: Colors.grey),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      // Delete Button
+                                      IconButton(
+                                        icon: const Icon(Icons.delete, color: Colors.red),
+                                        tooltip: 'حذف',
+                                        onPressed: () async {
+                                          await DatabaseHelper.instance.removeFromCart(item['CartID']);
+                                          _refreshCart();
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                          // Subtotal per store could be here
                         ],
                       ),
                     );
@@ -349,7 +452,10 @@ class _CartScreenState extends State<CartScreen> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('المجموع الكلي: ${formatPrice(total)} د.ع', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+                    Text(
+                      'المجموع الكلي: ${formatPrice(total)} د.ع',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                    ),
                     FilledButton.icon(
                       icon: const Icon(Icons.check),
                       onPressed: _isLoading ? null : () => _placeOrder(items),
@@ -357,7 +463,7 @@ class _CartScreenState extends State<CartScreen> {
                     ),
                   ],
                 ),
-              )
+              ),
             ],
           );
         },

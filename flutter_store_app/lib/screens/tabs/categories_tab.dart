@@ -86,13 +86,31 @@ class _CategoriesTabState extends State<CategoriesTab> {
             imagePath: imagePath,
           );
 
-          if (category == null) {
-            await DatabaseHelper.instance.addCategory(newCategory);
-          } else {
-            await DatabaseHelper.instance.updateCategory(newCategory);
+          try {
+            print('🔄 [CategoriesTab] Starting category save...');
+            if (category == null) {
+              print('📝 [CategoriesTab] Adding new category: $name');
+              await DatabaseHelper.instance.addCategory(newCategory);
+              print('✅ [CategoriesTab] New category added successfully');
+            } else {
+              print('✏️ [CategoriesTab] Updating category: $name');
+              await DatabaseHelper.instance.updateCategory(newCategory);
+              print('✅ [CategoriesTab] Category updated successfully');
+            }
+          } catch (e) {
+            print('❌ [CategoriesTab] Error saving category: $e');
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('❌ خطأ: $e')),
+              );
+            }
+            return;
           }
+          
           if (mounted) {
+            print('🔄 [CategoriesTab] Refreshing categories list...');
             await _refreshCategories(force: true);
+            print('✅ [CategoriesTab] Categories list refreshed');
           }
         },
       ),

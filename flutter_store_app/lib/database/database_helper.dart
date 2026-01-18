@@ -275,6 +275,28 @@ class DatabaseHelper {
     );
   }
 
+  Future<bool> updateCreditTransaction({
+    required int creditId,
+    required String transactionType,
+    required double amount,
+    String? description,
+    required double balanceBefore,
+    required double balanceAfter,
+  }) async {
+    return await _cloudHelper.updateCreditTransaction(
+      creditId: creditId,
+      transactionType: transactionType,
+      amount: amount,
+      description: description,
+      balanceBefore: balanceBefore,
+      balanceAfter: balanceAfter,
+    );
+  }
+
+  Future<bool> deleteCreditTransaction(int creditId) async {
+    return await _cloudHelper.deleteCreditTransaction(creditId);
+  }
+
   Future<CreditCustomer?> getCreditCustomerByPhone(
       int sellerId, String phoneNumber) async {
     return await _cloudHelper.getCreditCustomerByPhone(
