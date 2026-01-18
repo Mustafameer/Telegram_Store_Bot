@@ -1,3 +1,10 @@
+import sys
+import io
+
+# Fix encoding for console output to handle Telegram messages properly
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+
 import telebot
 from telebot import types
 import sqlite3
@@ -75,6 +82,26 @@ def sys_info(message):
         bot.reply_to(message, info, parse_mode='Markdown')
     except Exception as e:
         bot.reply_to(message, f"Error: {e}")
+
+@bot.message_handler(commands=['update_auction_store'])
+def update_auction_store_command(message):
+    """أمر لتحديث متجر المزادات برقم تليجرام صحيح"""
+    try:
+        # الحصول على معرف المستخدم الحالي
+        user_id = message.from_user.id
+        
+        # تحديث المتجر بمعرف المستخدم الحالي
+        success = update_auction_store_owner(user_id)
+        
+        if success:
+            bot.reply_to(message, 
+                        f"✅ تم تحديث متجر المزادات بنجاح!\n\n"
+                        f"معرفك: {user_id}\n"
+                        f"الآن يمكنك تلقي الإشعارات بشكل صحيح")
+        else:
+            bot.reply_to(message, "❌ فشل التحديث")
+    except Exception as e:
+        bot.reply_to(message, f"❌ خطأ: {e}")
 
 @bot.message_handler(commands=['force_migration'])
 def force_migration_command(message):
@@ -309,13 +336,13 @@ def ensure_images_synced():
                     # نسخ بدون حذف الصور الموجودة الأخرى
                     if not os.path.exists(dst):
                         shutil.copy2(src, dst)
-                        print(f"✅ تم نسخ الصورة: {image_file}")
+                        print(f"[OK] Copied image: {image_file}")
             
-            print(f"✅ تم مزامنة الصور بنجاح من seed_data/Images")
+            print(f"[OK] Images synced from seed_data/Images")
         except Exception as e:
-            print(f"⚠️ خطأ في مزامنة الصور: {e}")
+            print(f"[WARN] Error syncing images: {e}")
     else:
-        print(f"⚠️ لم يتم العثور على مجلد seed_data/Images")
+        print(f"[WARN] seed_data/Images directory not found")
 
 # تشغيل مزامنة الصور عند بدء البوت
 ensure_images_synced()
@@ -336,6 +363,9 @@ class DBWrapper:
 
     def commit(self):
         self.conn.commit()
+
+    def rollback(self):
+        self.conn.rollback()
 
     def close(self):
         self.conn.close()
@@ -1008,6 +1038,161 @@ def init_db():
             )
         """)
     
+    # 15. Auctions (نظام المزادات)
+    # جدول المزادات يتحتوي على المنتجات المرفوعة للمزاد
+    if IS_POSTGRES:
+        cursor_wrapper.execute("""
+            CREATE TABLE IF NOT EXISTS Auctions(
+                AuctionID SERIAL PRIMARY KEY,
+                ProductID INTEGER NOT NULL,
+                OriginalSellerID INTEGER NOT NULL,
+                AuctionStoreID INTEGER NOT NULL,
+                StartPrice REAL NOT NULL,
+                AuctionStartAt TIMESTAMP NOT NULL,
+                AuctionEndAt TIMESTAMP NOT NULL,
+                Status TEXT DEFAULT 'active',
+                CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UpdatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (ProductID) REFERENCES Products(ProductID),
+                FOREIGN KEY (OriginalSellerID) REFERENCES Sellers(SellerID),
+                FOREIGN KEY (AuctionStoreID) REFERENCES Sellers(SellerID)
+            )
+        """)
+    else:
+        cursor_wrapper.execute("""
+            CREATE TABLE IF NOT EXISTS Auctions(
+                AuctionID INTEGER PRIMARY KEY AUTOINCREMENT,
+                ProductID INTEGER NOT NULL,
+                OriginalSellerID INTEGER NOT NULL,
+                AuctionStoreID INTEGER NOT NULL,
+                StartPrice REAL NOT NULL,
+                AuctionStartAt DATETIME NOT NULL,
+                AuctionEndAt DATETIME NOT NULL,
+                Status TEXT DEFAULT 'active',
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (ProductID) REFERENCES Products(ProductID),
+                FOREIGN KEY (OriginalSellerID) REFERENCES Sellers(SellerID),
+                FOREIGN KEY (AuctionStoreID) REFERENCES Sellers(SellerID)
+            )
+        """)
+    
+    # 16. AuctionBidders (جدول المشترين في المزاد)
+    # لتسجيل بيانات المشترين الراغبين بالمزايدة
+    if IS_POSTGRES:
+        cursor_wrapper.execute("""
+            CREATE TABLE IF NOT EXISTS AuctionBidders(
+                BidderID SERIAL PRIMARY KEY,
+                AuctionID INTEGER NOT NULL,
+                BidderName TEXT NOT NULL,
+                BidderPhone TEXT NOT NULL,
+                TelegramID BIGINT,
+                RegistrationTime TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (AuctionID) REFERENCES Auctions(AuctionID),
+                UNIQUE(AuctionID, BidderPhone)
+            )
+        """)
+    else:
+        cursor_wrapper.execute("""
+            CREATE TABLE IF NOT EXISTS AuctionBidders(
+                BidderID INTEGER PRIMARY KEY AUTOINCREMENT,
+                AuctionID INTEGER NOT NULL,
+                BidderName TEXT NOT NULL,
+                BidderPhone TEXT NOT NULL,
+                TelegramID INTEGER,
+                RegistrationTime DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (AuctionID) REFERENCES Auctions(AuctionID),
+                UNIQUE(AuctionID, BidderPhone)
+            )
+        """)
+    
+    # 17. AuctionBids (جدول العطاءات)
+    # لتسجيل العطاءات المقدمة من المشترين
+    if IS_POSTGRES:
+        cursor_wrapper.execute("""
+            CREATE TABLE IF NOT EXISTS AuctionBids(
+                BidID SERIAL PRIMARY KEY,
+                AuctionID INTEGER NOT NULL,
+                BidderID INTEGER NOT NULL,
+                BidAmount REAL NOT NULL,
+                BidTime TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (AuctionID) REFERENCES Auctions(AuctionID),
+                FOREIGN KEY (BidderID) REFERENCES AuctionBidders(BidderID)
+            )
+        """)
+    else:
+        cursor_wrapper.execute("""
+            CREATE TABLE IF NOT EXISTS AuctionBids(
+                BidID INTEGER PRIMARY KEY AUTOINCREMENT,
+                AuctionID INTEGER NOT NULL,
+                BidderID INTEGER NOT NULL,
+                BidAmount REAL NOT NULL,
+                BidTime DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (AuctionID) REFERENCES Auctions(AuctionID),
+                FOREIGN KEY (BidderID) REFERENCES AuctionBidders(BidderID)
+            )
+        """)
+    
+    # 18. AuctionResults (نتائج المزاد)
+    # لتسجيل نتائج المزاد (الفائز والسعر النهائي)
+    if IS_POSTGRES:
+        cursor_wrapper.execute("""
+            CREATE TABLE IF NOT EXISTS AuctionResults(
+                ResultID SERIAL PRIMARY KEY,
+                AuctionID INTEGER NOT NULL UNIQUE,
+                WinnerBidderID INTEGER,
+                WinnerName TEXT,
+                WinnerPhone TEXT,
+                FinalPrice REAL,
+                AuctionEndedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (AuctionID) REFERENCES Auctions(AuctionID),
+                FOREIGN KEY (WinnerBidderID) REFERENCES AuctionBidders(BidderID)
+            )
+        """)
+    else:
+        cursor_wrapper.execute("""
+            CREATE TABLE IF NOT EXISTS AuctionResults(
+                ResultID INTEGER PRIMARY KEY AUTOINCREMENT,
+                AuctionID INTEGER NOT NULL UNIQUE,
+                WinnerBidderID INTEGER,
+                WinnerName TEXT,
+                WinnerPhone TEXT,
+                FinalPrice REAL,
+                AuctionEndedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (AuctionID) REFERENCES Auctions(AuctionID),
+                FOREIGN KEY (WinnerBidderID) REFERENCES AuctionBidders(BidderID)
+            )
+        """)
+    
+    # 19. AuctionProducts (نسخة المنتج في متجر المزادات)
+    # جدول يحتفظ بنسخة من المنتج في متجر المزادات
+    if IS_POSTGRES:
+        cursor_wrapper.execute("""
+            CREATE TABLE IF NOT EXISTS AuctionProducts(
+                AuctionProductID SERIAL PRIMARY KEY,
+                AuctionID INTEGER NOT NULL,
+                ProductID INTEGER NOT NULL,
+                AuctionStoreProductID INTEGER,
+                CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (AuctionID) REFERENCES Auctions(AuctionID),
+                FOREIGN KEY (ProductID) REFERENCES Products(ProductID),
+                FOREIGN KEY (AuctionStoreProductID) REFERENCES Products(ProductID)
+            )
+        """)
+    else:
+        cursor_wrapper.execute("""
+            CREATE TABLE IF NOT EXISTS AuctionProducts(
+                AuctionProductID INTEGER PRIMARY KEY AUTOINCREMENT,
+                AuctionID INTEGER NOT NULL,
+                ProductID INTEGER NOT NULL,
+                AuctionStoreProductID INTEGER,
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (AuctionID) REFERENCES Auctions(AuctionID),
+                FOREIGN KEY (ProductID) REFERENCES Products(ProductID),
+                FOREIGN KEY (AuctionStoreProductID) REFERENCES Products(ProductID)
+            )
+        """)
+    
     # ----------------- MIGRATIONS -----------------
     def ensure_column(table, column, definition):
         try:
@@ -1135,6 +1320,336 @@ def check_and_fix_db():
     pass
 
 # check_and_fix_db()
+
+# ===================== نظام المزادات - تهيئة متجر المزادات =====================
+
+def initialize_auction_store():
+    """
+    تهيئة متجر المزادات الخاص (متجر نظام).
+    يتم استدعاء هذه الدالة عند بدء البوت.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # التحقق إذا كان متجر المزادات موجوداً بالفعل
+        cursor.execute("SELECT SellerID FROM Sellers WHERE StoreName = 'المزادات'")
+        result = cursor.fetchone()
+        
+        if not result:
+            # إنشاء حساب نظام خاص لمتجر المزادات
+            # استخدام Telegram ID وهمي يكون محفوظاً للنظام
+            AUCTION_STORE_TELEGRAM_ID = 1  # معرف النظام
+            
+            cursor.execute("""
+                INSERT INTO Sellers (TelegramID, UserName, StoreName, Status, RequireCustomerRegistration)
+                VALUES (?, ?, ?, ?, ?)
+            """, (AUCTION_STORE_TELEGRAM_ID, 'System_Auction', 'المزادات', 'active', 0))
+            
+            conn.commit()
+            print("✅ تم إنشاء متجر المزادات بنجاح")
+        else:
+            print("✅ متجر المزادات موجود بالفعل")
+            
+    except Exception as e:
+        print(f"❌ خطأ في إنشاء متجر المزادات: {e}")
+        conn.rollback()
+    finally:
+        conn.close()
+
+def get_auction_store_id():
+    """الحصول على معرف متجر المزادات"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("SELECT SellerID FROM Sellers WHERE StoreName = 'المزادات' LIMIT 1")
+        result = cursor.fetchone()
+        return result[0] if result else None
+    except Exception as e:
+        print(f"❌ خطأ في الحصول على معرف متجر المزادات: {e}")
+        return None
+    finally:
+        conn.close()
+
+def update_auction_store_owner(admin_telegram_id):
+    """
+    تحديث معرف الآدمن لمتجر المزادات
+    استخدم هذه الدالة إذا كنت تريد تصحيح معرف التليجرام
+    
+    المعامل:
+        admin_telegram_id: معرف التليجرام الحقيقي للآدمن
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # أولاً: جلب معرف متجر المزادات الحالي
+        cursor.execute("SELECT SellerID, TelegramID FROM Sellers WHERE StoreName = 'المزادات' LIMIT 1")
+        result = cursor.fetchone()
+        
+        if not result:
+            print(f"❌ متجر المزادات غير موجود")
+            return False
+        
+        seller_id, current_telegram_id = result
+        
+        # إذا كان المعرف هو نفسه، لا حاجة للتحديث
+        if current_telegram_id == admin_telegram_id:
+            print(f"✅ معرف المزادات بالفعل محدث: {admin_telegram_id}")
+            return True
+        
+        # تحديث المتجر الموجود
+        # نستخدم SetNull للتخلص من القيمة القديمة أولاً، ثم نضع القيمة الجديدة
+        cursor.execute("""
+            UPDATE Sellers 
+            SET TelegramID = ? 
+            WHERE SellerID = ?
+        """, (admin_telegram_id, seller_id))
+        
+        conn.commit()
+        print(f"✅ تم تحديث معرف المزادات إلى: {admin_telegram_id}")
+        return True
+    except Exception as e:
+        print(f"❌ خطأ: {e}")
+        # إذا كان الخطأ عن تضارب المفتاح، نحاول حذف السجل القديم أولاً
+        if "duplicate key" in str(e).lower() or "unique" in str(e).lower():
+            try:
+                print("🔧 محاولة إزالة الدخول المتضارب...")
+                cursor.execute("""
+                    UPDATE Sellers 
+                    SET TelegramID = NULL 
+                    WHERE TelegramID = ? AND StoreName != 'المزادات'
+                """, (admin_telegram_id,))
+                conn.commit()
+                
+                # محاولة التحديث مجدداً
+                cursor.execute("""
+                    UPDATE Sellers 
+                    SET TelegramID = ? 
+                    WHERE StoreName = 'المزادات'
+                """, (admin_telegram_id,))
+                conn.commit()
+                print(f"✅ تم تحديث معرف المزادات بعد إزالة التضارب: {admin_telegram_id}")
+                return True
+            except Exception as e2:
+                print(f"❌ فشل حتى بعد إزالة التضارب: {e2}")
+                conn.rollback()
+                return False
+        
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+def create_auction_for_product(original_seller_id, product_id, start_price, auction_start, auction_end):
+    """
+    إنشاء مزاد جديد لمنتج.
+    1. ينسخ المنتج إلى متجر المزادات
+    2. ينشئ سجل المزاد
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # الحصول على معرف متجر المزادات
+        auction_store_id = get_auction_store_id()
+        if not auction_store_id:
+            return False, "❌ متجر المزادات غير متوفر"
+        
+        # الحصول على بيانات المنتج الأصلي
+        cursor.execute("""
+            SELECT ProductID, SellerID, CategoryID, Name, Description, Price, 
+                   WholesalePrice, Quantity, ImagePath, Status
+            FROM Products
+            WHERE ProductID = ?
+        """, (product_id,))
+        
+        product = cursor.fetchone()
+        if not product:
+            return False, "❌ المنتج غير موجود"
+        
+        # إنشاء نسخة من المنتج في متجر المزادات
+        cursor.execute("""
+            INSERT INTO Products 
+            (SellerID, CategoryID, Name, Description, Price, WholesalePrice, Quantity, ImagePath, Status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (auction_store_id, product[2], product[3], product[4], start_price, 
+              product[6], product[7], product[8], 'active'))
+        
+        auction_product_id = cursor.lastrowid
+        
+        # إنشاء سجل المزاد
+        cursor.execute("""
+            INSERT INTO Auctions 
+            (ProductID, OriginalSellerID, AuctionStoreID, StartPrice, AuctionStartAt, AuctionEndAt, Status)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (auction_product_id, original_seller_id, auction_store_id, start_price, 
+              auction_start, auction_end, 'active'))
+        
+        auction_id = cursor.lastrowid
+        
+        # إنشاء سجل في AuctionProducts
+        cursor.execute("""
+            INSERT INTO AuctionProducts (AuctionID, ProductID, AuctionStoreProductID)
+            VALUES (?, ?, ?)
+        """, (auction_id, product_id, auction_product_id))
+        
+        conn.commit()
+        return True, f"✅ تم إنشاء المزاد برقم {auction_id}", auction_id
+        
+    except Exception as e:
+        print(f"❌ خطأ في إنشاء المزاد: {e}")
+        conn.rollback()
+        return False, f"❌ خطأ في إنشاء المزاد: {e}", None
+    finally:
+        conn.close()
+
+def register_auction_bidder(auction_id, bidder_name, bidder_phone, telegram_id=None):
+    """
+    تسجيل مشتري جديد في المزاد
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            INSERT INTO AuctionBidders (AuctionID, BidderName, BidderPhone, TelegramID)
+            VALUES (?, ?, ?, ?)
+        """, (auction_id, bidder_name, bidder_phone, telegram_id))
+        
+        bidder_id = cursor.lastrowid
+        conn.commit()
+        return True, "✅ تم تسجيل البيانات بنجاح", bidder_id
+        
+    except Exception as e:
+        conn.rollback()
+        return False, f"❌ خطأ في التسجيل: {e}", None
+    finally:
+        conn.close()
+
+def place_auction_bid(auction_id, bidder_id, bid_amount):
+    """
+    تسجيل عطاء جديد من المشتري
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # التحقق من وجود المشتري والمزاد
+        cursor.execute("""
+            SELECT BidderID FROM AuctionBidders 
+            WHERE BidderID = ? AND AuctionID = ?
+        """, (bidder_id, auction_id))
+        
+        if not cursor.fetchone():
+            return False, "❌ المشتري أو المزاد غير موجود", None
+        
+        # إدراج العطاء
+        cursor.execute("""
+            INSERT INTO AuctionBids (AuctionID, BidderID, BidAmount)
+            VALUES (?, ?, ?)
+        """, (auction_id, bidder_id, bid_amount))
+        
+        bid_id = cursor.lastrowid
+        conn.commit()
+        return True, "✅ تم تسجيل العطاء بنجاح", bid_id
+        
+    except Exception as e:
+        conn.rollback()
+        return False, f"❌ خطأ في تسجيل العطاء: {e}", None
+    finally:
+        conn.close()
+
+def get_auction_bids(auction_id):
+    """
+    الحصول على قائمة العطاءات لمزاد معين مرتبة تصاعدياً
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            SELECT ab.BidderName, ab.BidderPhone, MAX(bid.BidAmount) as HighestBid, COUNT(bid.BidID) as BidCount
+            FROM AuctionBidders ab
+            LEFT JOIN AuctionBids bid ON ab.BidderID = bid.BidderID
+            WHERE ab.AuctionID = ?
+            GROUP BY ab.BidderID, ab.BidderName, ab.BidderPhone
+            ORDER BY HighestBid ASC
+        """, (auction_id,))
+        
+        bids = cursor.fetchall()
+        return bids
+        
+    except Exception as e:
+        print(f"❌ خطأ في جلب العطاءات: {e}")
+        return []
+    finally:
+        conn.close()
+
+def get_auction_winner(auction_id):
+    """
+    الحصول على الفائز بالمزاد (أعلى عطاء)
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            SELECT ab.BidderID, ab.BidderName, ab.BidderPhone, MAX(b.BidAmount) as FinalPrice
+            FROM AuctionBidders ab
+            LEFT JOIN AuctionBids b ON ab.BidderID = b.BidderID
+            WHERE ab.AuctionID = ?
+            GROUP BY ab.BidderID, ab.BidderName, ab.BidderPhone
+            ORDER BY FinalPrice DESC
+            LIMIT 1
+        """, (auction_id,))
+        
+        result = cursor.fetchone()
+        return result
+        
+    except Exception as e:
+        print(f"❌ خطأ في جلب الفائز: {e}")
+        return None
+    finally:
+        conn.close()
+
+def close_auction(auction_id):
+    """
+    إغلاق المزاد وتسجيل النتيجة
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # الحصول على الفائز
+        winner = get_auction_winner(auction_id)
+        
+        if winner:
+            bidder_id, bidder_name, bidder_phone, final_price = winner
+        else:
+            bidder_id, bidder_name, bidder_phone, final_price = None, None, None, None
+        
+        # تحديث حالة المزاد
+        cursor.execute("""
+            UPDATE Auctions SET Status = 'closed' WHERE AuctionID = ?
+        """, (auction_id,))
+        
+        # تسجيل النتيجة
+        cursor.execute("""
+            INSERT INTO AuctionResults (AuctionID, WinnerBidderID, WinnerName, WinnerPhone, FinalPrice)
+            VALUES (?, ?, ?, ?, ?)
+        """, (auction_id, bidder_id, bidder_name, bidder_phone, final_price))
+        
+        conn.commit()
+        return True, winner
+        
+    except Exception as e:
+        print(f"❌ خطأ في إغلاق المزاد: {e}")
+        conn.rollback()
+        return False, None
+    finally:
+        conn.close()
 
 # Note: download_image_from_cloud is defined later in the file (after line 1342)
 
@@ -1704,11 +2219,17 @@ def is_customer_registered_for_store_by_telegram_id(telegram_id, seller_id):
     """التحقق من أن Telegram ID مسجل في CreditCustomers لهذا المتجر"""
     try:
         if not telegram_id:
+            print(f"⚠️ TelegramID فارغ")
             return False
         
         conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor_wrapper = CursorWrapper(cursor, is_postgres=IS_POSTGRES)
+        cursor_wrapper = conn.cursor()
+        
+        print(f"\n{'='*60}")
+        print(f"🔍 البحث عن: SellerID={seller_id}, TelegramID={telegram_id}")
+        print(f"   نوع TelegramID: {type(telegram_id)}")
+        print(f"   طول TelegramID: {len(str(telegram_id))}")
+        print(f"{'='*60}")
         
         cursor_wrapper.execute("""
             SELECT CustomerID FROM CreditCustomers 
@@ -1716,7 +2237,43 @@ def is_customer_registered_for_store_by_telegram_id(telegram_id, seller_id):
         """, (seller_id, telegram_id))
         
         result = cursor_wrapper.fetchone()
-        cursor.close()
+        
+        if result:
+            print(f"✅ وجدنا الزبون! CustomerID={result[0]}")
+        else:
+            print(f"❌ لم نجد الزبون بهذا التوليفة (SellerID={seller_id} + TelegramID={telegram_id})")
+            
+            # جرب البحث عن نفس TelegramID في بائعين آخرين
+            print(f"\n🔎 جاري البحث عن TelegramID={telegram_id} في جميع البائعين...")
+            cursor_wrapper.execute("""
+                SELECT CustomerID, SellerID, FullName FROM CreditCustomers 
+                WHERE TelegramID=?
+            """, (telegram_id,))
+            all_results = cursor_wrapper.fetchall()
+            
+            if all_results:
+                print(f"⚠️ وجدنا TelegramID في بائعين آخرين:")
+                for cust_id, sel_id, name in all_results:
+                    print(f"   - CustomerID={cust_id}, SellerID={sel_id}, الاسم='{name}'")
+            else:
+                print(f"❌ TelegramID={telegram_id} غير موجود في أي متجر!")
+            
+            # جرب البحث عن جميع الزبائن لهذا البائع
+            print(f"\n🔎 جميع الزبائن للبائع SellerID={seller_id}:")
+            cursor_wrapper.execute("""
+                SELECT CustomerID, FullName, TelegramID FROM CreditCustomers 
+                WHERE SellerID=?
+            """, (seller_id,))
+            all_customers = cursor_wrapper.fetchall()
+            
+            if all_customers:
+                for cust_id, name, tele_id in all_customers:
+                    match = "✅ تطابق" if tele_id == telegram_id else "❌"
+                    print(f"   {match} - CustomerID={cust_id}, الاسم='{name}', TelegramID={tele_id}")
+            else:
+                print(f"   ⚠️ لا يوجد زبائن لهذا البائع!")
+        
+        cursor_wrapper.close()
         conn.close()
         
         return result is not None
@@ -1755,6 +2312,34 @@ def is_customer_registered_for_store_by_phone(phone_number, seller_id):
         return result is not None
     except Exception as e:
         print(f"⚠️ خطأ في التحقق من تسجيل الزبون بالهاتف: {e}")
+        return False
+
+def has_previous_orders_for_store(telegram_id, seller_id):
+    """التحقق من وجود طلبات سابقة للعميل من متجر معين (للمتاجر المغلقة)"""
+    try:
+        if not telegram_id:
+            return False
+        
+        conn = get_db_connection()
+        cursor_wrapper = conn.cursor()
+        
+        # البحث عن أي طلبات سابقة مؤكدة للعميل من هذا البائع
+        # البحث في جدول Orders حيث BuyerID = TelegramID للمشتري
+        cursor_wrapper.execute("""
+            SELECT OrderID FROM Orders 
+            WHERE BuyerID=? AND SellerID=? AND Status IN ('confirmed', 'delivered', 'completed')
+            LIMIT 1
+        """, (telegram_id, seller_id))
+        
+        result = cursor_wrapper.fetchone()
+        cursor_wrapper.close()
+        conn.close()
+        
+        return result is not None
+    except Exception as e:
+        print(f"⚠️ خطأ في التحقق من الطلبات السابقة: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def get_all_credit_customers(seller_id):
@@ -2135,29 +2720,88 @@ def get_user_type(telegram_id):
 
 def add_category(seller_id, name):
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO Categories (SellerID, Name) VALUES (?, ?)",
-                   (seller_id, name))
-    conn.commit()
-    conn.close()
+    cursor_wrapper = conn.cursor()  # This returns CursorWrapper
+    
+    try:
+        print(f"🔍 جاري إضافة فئة:")
+        print(f"   - البائع ID: {seller_id}")
+        print(f"   - اسم الفئة: {name}")
+        print(f"   - قاعدة البيانات: {'PostgreSQL' if cursor_wrapper.is_postgres else 'SQLite'}")
+        
+        # أولاً حدّث الـ sequence في PostgreSQL إلى أكبر ID موجود
+        if cursor_wrapper.is_postgres:
+            cursor_wrapper.execute("SELECT SETVAL('categories_categoryid_seq', (SELECT MAX(\"CategoryID\") FROM \"Categories\"))")
+        
+        if cursor_wrapper.is_postgres:
+            cursor_wrapper.execute(
+                "INSERT INTO \"Categories\" (\"SellerID\", \"Name\") VALUES (%s, %s)",
+                (seller_id, name)
+            )
+        else:
+            cursor_wrapper.execute(
+                "INSERT INTO \"Categories\" (\"SellerID\", \"Name\") VALUES (?, ?)",
+                (seller_id, name)
+            )
+        conn.commit()
+        print(f"✅ تم إضافة الفئة '{name}' للبائع {seller_id} بنجاح")
+    except Exception as e:
+        print(f"❌ خطأ في إضافة الفئة: {e}")
+        print(f"   النوع: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
+        conn.rollback()
+    finally:
+        conn.close()
 
 def update_category(category_id, name):
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE Categories SET Name = ? WHERE CategoryID = ?", (name, category_id))
-    conn.commit()
-    conn.close()
+    cursor_wrapper = conn.cursor()  # This returns CursorWrapper
+    
+    try:
+        if cursor_wrapper.is_postgres:
+            cursor_wrapper.execute(
+                "UPDATE \"Categories\" SET \"Name\" = %s WHERE \"CategoryID\" = %s",
+                (name, category_id)
+            )
+        else:
+            cursor_wrapper.execute(
+                "UPDATE \"Categories\" SET \"Name\" = ? WHERE \"CategoryID\" = ?",
+                (name, category_id)
+            )
+        conn.commit()
+        print(f"✅ تم تحديث الفئة {category_id} بنجاح")
+    except Exception as e:
+        print(f"❌ خطأ في تحديث الفئة: {e}")
+        conn.rollback()
+    finally:
+        conn.close()
 
 def get_categories(seller_id):
     conn = get_db_connection()
     cursor_wrapper = conn.cursor()  # This returns CursorWrapper
     
     try:
-        cursor_wrapper.execute("SELECT CategoryID, Name FROM Categories WHERE SellerID=? ORDER BY OrderIndex", (seller_id,))
+        print(f"\n📁 [get_categories] Getting categories for seller {seller_id}")
+        print(f"   Is PostgreSQL: {cursor_wrapper.is_postgres}")
+        
+        if cursor_wrapper.is_postgres:
+            # PostgreSQL: use %s for parameters
+            query = "SELECT \"CategoryID\", \"Name\" FROM \"Categories\" WHERE \"SellerID\"=%s ORDER BY \"OrderIndex\""
+            print(f"   Query: {query}")
+            print(f"   Params: ({seller_id},)")
+            cursor_wrapper.execute(query, (seller_id,))
+        else:
+            # SQLite: use ? for parameters
+            query = "SELECT \"CategoryID\", \"Name\" FROM \"Categories\" WHERE \"SellerID\"=? ORDER BY \"OrderIndex\""
+            print(f"   Query: {query}")
+            print(f"   Params: ({seller_id},)")
+            cursor_wrapper.execute(query, (seller_id,))
+        
         categories = cursor_wrapper.fetchall()
+        print(f"   ✅ Got {len(categories) if categories else 0} categories")
         return categories
     except Exception as e:
-        print(f"Error in get_categories: {e}")
+        print(f"   ❌ Error in get_categories: {e}")
         import traceback
         traceback.print_exc()
         return []
@@ -2169,10 +2813,10 @@ def get_category_by_id(category_id):
     conn = get_db_connection()
     cursor_wrapper = conn.cursor()
     try:
-        if IS_POSTGRES:
-            cursor_wrapper.execute("SELECT categoryid, sellerid, name FROM categories WHERE categoryid=%s", (category_id,))
+        if cursor_wrapper.is_postgres:
+            cursor_wrapper.execute("SELECT \"CategoryID\", \"SellerID\", \"Name\" FROM \"Categories\" WHERE \"CategoryID\"=%s", (category_id,))
         else:
-            cursor_wrapper.execute("SELECT CategoryID, SellerID, Name FROM Categories WHERE CategoryID=?", (category_id,))
+            cursor_wrapper.execute("SELECT \"CategoryID\", \"SellerID\", \"Name\" FROM \"Categories\" WHERE \"CategoryID\"=?", (category_id,))
         category = cursor_wrapper.fetchone()
         return category
     except Exception as e:
@@ -2182,6 +2826,7 @@ def get_category_by_id(category_id):
         return None
     finally:
         cursor_wrapper.close()
+        conn.close()
         conn.close()
 
 def add_product_db(seller_id, category_id, name, description, price, wholesale_price, quantity, image_path=""):
@@ -2754,23 +3399,21 @@ def create_order(buyer_id, seller_id, cart_items, delivery_address=None, notes=N
             if IS_POSTGRES:
                 # حذف صور هذا المنتج من ImageStorage
                 cursor_wrapper.execute("""
-                    SELECT imagepath FROM productimages WHERE productid=%s
+                    SELECT filename FROM imagestorage WHERE productid=%s
                 """, (pid,))
             else:
                 cursor_wrapper.execute("""
-                    SELECT ImagePath FROM ProductImages WHERE ProductID=?
+                    SELECT FileName FROM imagestorage WHERE ProductID=?
                 """, (pid,))
             
             image_paths = cursor_wrapper.fetchall()
-            for (img_path,) in image_paths:
-                if img_path:
-                    # استخراج اسم الملف من المسار
-                    filename = os.path.basename(img_path)
+            for (filename,) in image_paths:
+                if filename:
                     try:
                         if IS_POSTGRES:
-                            cursor_wrapper.execute("DELETE FROM ImageStorage WHERE FileName = %s", (filename,))
+                            cursor_wrapper.execute("DELETE FROM imagestorage WHERE FileName = %s", (filename,))
                         else:
-                            cursor_wrapper.execute("DELETE FROM ImageStorage WHERE FileName = ?", (filename,))
+                            cursor_wrapper.execute("DELETE FROM imagestorage WHERE FileName = ?", (filename,))
                         print(f"🗑️ حذفت صورة {filename} من ImageStorage بعد البيع")
                     except Exception as del_err:
                         print(f"⚠️ خطأ في حذف الصورة {filename}: {del_err}")
@@ -2952,19 +3595,117 @@ def clear_cart_db(user_id):
 
 def delete_product(product_id):
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM Products WHERE ProductID = ?", (product_id,))
-    conn.commit()
-    conn.close()
-    return True
+    cursor_wrapper = conn.cursor()  # This returns CursorWrapper
+    
+    try:
+        print(f"🔍 جاري حذف المنتج ID: {product_id}")
+        
+        # Delete in order of foreign key dependencies
+        # Critical: Delete child records BEFORE parent records
+        
+        # 1. Delete OrderItems (references Products)
+        print(f"   📋 جاري حذف OrderItems المرتبطة...")
+        cursor_wrapper.execute("DELETE FROM orderitems WHERE productid = ?", (product_id,))
+        deleted_count = cursor_wrapper.rowcount
+        print(f"      ✅ تم حذف {deleted_count} عنصر طلب")
+        
+        # 2. Delete Cart items (references Products)
+        print(f"   🛒 جاري حذف عناصر السلة المرتبطة...")
+        cursor_wrapper.execute("DELETE FROM carts WHERE productid = ?", (product_id,))
+        deleted_count = cursor_wrapper.rowcount
+        print(f"      ✅ تم حذف {deleted_count} عنصر سلة")
+        
+        # 3. Delete image storage records (references Products)
+        print(f"   🖼️ جاري حذف الصور المرتبطة...")
+        cursor_wrapper.execute("DELETE FROM imagestorage WHERE productid = ?", (product_id,))
+        deleted_count = cursor_wrapper.rowcount
+        print(f"      ✅ تم حذف {deleted_count} صورة")
+        
+        # 4. Delete auction products (references Products)
+        print(f"   🏆 جاري حذف المنتجات في المزادات...")
+        cursor_wrapper.execute("DELETE FROM auctionproducts WHERE productid = ?", (product_id,))
+        deleted_count = cursor_wrapper.rowcount
+        print(f"      ✅ تم حذف {deleted_count} منتج مزاد")
+        
+        # 5. Delete auctions (if this product is in an auction)
+        print(f"   🏆 جاري حذف المزادات المرتبطة...")
+        cursor_wrapper.execute("DELETE FROM auctions WHERE productid = ?", (product_id,))
+        deleted_count = cursor_wrapper.rowcount
+        print(f"      ✅ تم حذف {deleted_count} مزاد")
+        
+        # 6. Delete returns (references Products)
+        print(f"   📦 جاري حذف المرتجعات المرتبطة...")
+        cursor_wrapper.execute("DELETE FROM returns WHERE productid = ?", (product_id,))
+        deleted_count = cursor_wrapper.rowcount
+        print(f"      ✅ تم حذف {deleted_count} مرتجع")
+        
+        # 7. Finally, delete the Product itself
+        print(f"   🗑️ جاري حذف المنتج...")
+        cursor_wrapper.execute("DELETE FROM products WHERE productid = ?", (product_id,))
+        deleted_count = cursor_wrapper.rowcount
+        
+        conn.commit()
+        print(f"✅ تم حذف المنتج {product_id} بنجاح")
+        return True
+    except Exception as e:
+        print(f"❌ خطأ في حذف المنتج: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
 
 def delete_category(category_id):
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM Categories WHERE CategoryID = ?", (category_id,))
-    conn.commit()
-    conn.close()
-    return True
+    cursor_wrapper = conn.cursor()  # This returns CursorWrapper
+    
+    try:
+        print(f"🔍 جاري حذف الفئة ID: {category_id}")
+        
+        # 1. First, get all products in this category
+        print(f"   📦 جاري جلب المنتجات في الفئة...")
+        cursor_wrapper.execute("SELECT productid FROM products WHERE categoryid = ?", (category_id,))
+        products = cursor_wrapper.fetchall()
+        product_ids = [p[0] for p in products]
+        print(f"      وجدنا {len(product_ids)} منتج في الفئة")
+        
+        # 2. Delete all dependent records for each product using cascading logic
+        if product_ids:
+            print(f"   🔄 جاري حذف جميع المرتبطات للمنتجات...")
+            
+            for product_id in product_ids:
+                # Delete OrderItems
+                cursor_wrapper.execute("DELETE FROM orderitems WHERE productid = ?", (product_id,))
+                # Delete Cart items
+                cursor_wrapper.execute("DELETE FROM carts WHERE productid = ?", (product_id,))
+                # Delete image storage
+                cursor_wrapper.execute("DELETE FROM imagestorage WHERE productid = ?", (product_id,))
+                # Delete auction products
+                cursor_wrapper.execute("DELETE FROM auctionproducts WHERE productid = ?", (product_id,))
+                # Delete auctions
+                cursor_wrapper.execute("DELETE FROM auctions WHERE productid = ?", (product_id,))
+                # Delete returns
+                cursor_wrapper.execute("DELETE FROM returns WHERE productid = ?", (product_id,))
+        
+        # 3. Now delete all Products in this category
+        print(f"   📦 جاري حذف المنتجات في الفئة...")
+        cursor_wrapper.execute("DELETE FROM \"Products\" WHERE \"CategoryID\" = ?", (category_id,))
+        deleted_products = cursor_wrapper.rowcount
+        print(f"      ✅ تم حذف {deleted_products} منتج")
+        
+        # 4. Finally, delete the Category itself
+        print(f"   🗑️ جاري حذف الفئة...")
+        cursor_wrapper.execute("DELETE FROM \"Categories\" WHERE \"CategoryID\" = ?", (category_id,))
+        deleted_categories = cursor_wrapper.rowcount
+        
+        conn.commit()
+        print(f"✅ تم حذف الفئة {category_id} بنجاح")
+        return True
+    except Exception as e:
+        print(f"❌ خطأ في حذف الفئة: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
 
 def get_product_count_in_category(category_id):
     conn = get_db_connection()
@@ -3697,7 +4438,8 @@ def show_seller_menu(message):
     # تحديث الشارة لتظهر عدد الطلبات المعلقة
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM Orders WHERE SellerID = ? AND Status IN ('Pending', 'Confirmed', 'Shipped')", (seller[0],))
+    # اعرض فقط الطلبات المفتوحة (Pending, Shipped) - لا تعرض المغلقة (Confirmed)
+    cursor.execute("SELECT COUNT(*) FROM Orders WHERE SellerID = ? AND Status IN ('Pending', 'Shipped')", (seller[0],))
     pending_count = cursor.fetchone()[0]
     
     # Self-Cleaning: Mark messages as read for processed orders (Shipped/Delivered/Rejected)
@@ -3739,8 +4481,10 @@ def show_seller_menu(message):
     markup.row("🏪 منتجاتي", "📁 الأقسام", f"📦 الطلبات{orders_badge}")
     # Row 3
     markup.row(f"📩 الرسائل{messages_badge}", "📊 كشف حساب الزبائن", "🏪 إدارة الزبائن الآجلين")
-    # Row 4
-    markup.row("🔗 رابط المتجر", "🛍️ وضع المشتري", "🏠 الرئيسية")
+    # Row 4 - أضفنا زر المزادات
+    markup.row("🔨 رفع منتج للمزاد", "🏠 الرئيسية")
+    # Row 5
+    markup.row("🔗 رابط المتجر", "🛍️ وضع المشتري")
     
     welcome_msg = f"🏪 مرحباً بصاحب المتجر!\n"
     welcome_msg += f"🏪 متجرك: {store_name}"
@@ -3771,6 +4515,7 @@ def handle_seller_orders_menu(message):
         cursor = conn.cursor()
         
         # جلب آخر 10 طلبات مع التفاصيل الكاملة (مشابه لـ seller_messages)
+        # اعرض فقط الطلبات المفتوحة (Pending, Shipped) - لا تعرض المغلقة (Confirmed)
         query = """
             SELECT o.OrderID, o.Total, o.Status, o.CreatedAt, 
                    COALESCE(u.FullName, 'زائر') as BuyerName,
@@ -3778,7 +4523,7 @@ def handle_seller_orders_menu(message):
                    o.PaymentMethod, o.DeliveryAddress, o.Notes
             FROM Orders o
             LEFT JOIN Users u ON o.BuyerID = u.TelegramID
-            WHERE o.SellerID = ?
+            WHERE o.SellerID = ? AND o.Status IN ('Pending', 'Shipped')
             ORDER BY 
                 CASE WHEN o.Status = 'Pending' THEN 0 ELSE 1 END,
                 o.CreatedAt DESC
@@ -4572,12 +5317,12 @@ def admin_main_menu(message):
 def add_category_step1(message):
     telegram_id = message.from_user.id
     
-    # safeguard: IF NOT MOCK (Real user click on old button), Redirect to new menu
-    if not getattr(message, 'is_mock', False):
-        bot.send_message(message.chat.id, "🔄 تحديث القائمة...")
-        show_seller_menu(message)
-        return
-
+    print(f"🔍 add_category_step1 تم استدعاؤه")
+    print(f"   User ID: {telegram_id}")
+    print(f"   is_mock: {getattr(message, 'is_mock', False)}")
+    
+    # تم حذف الـ safeguard - جعل الدالة تعمل دائماً
+    
     seller = get_seller_by_telegram(telegram_id)
     
     if not seller:
@@ -4585,22 +5330,36 @@ def add_category_step1(message):
         bot.send_message(message.chat.id, f"⛔ أنت لست بائعاً مسجلاً! (Debug ID: {telegram_id})")
         return
     
+    print(f"✅ البائع موجود: {seller}")
+    
     user_states[telegram_id] = {
         "step": "add_category",
         "seller_id": seller[0]
     }
+    
+    print(f"📝 تم تعيين الـ state: {user_states[telegram_id]}")
     
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row("🏠 الرئيسية")
     
     bot.send_message(message.chat.id, "📁 **إضافة قسم جديد**\n\nيرجى إدخال اسم القسم:", reply_markup=markup)
 
-@bot.message_handler(func=lambda message: message.from_user.id in user_states and 
-                     user_states[message.from_user.id]["step"] == "add_category")
+@bot.message_handler(func=lambda message: (message.from_user.id in user_states and 
+                     user_states[message.from_user.id].get("step") == "add_category"))
 def add_category_step2(message):
+    telegram_id = message.from_user.id
+    
+    print(f"\n{'='*60}")
+    print(f"🔵 add_category_step2 تم استدعاؤه")
+    print(f"   User ID: {telegram_id}")
+    print(f"   Text: {message.text}")
+    print(f"   User States: {user_states.get(telegram_id, {})}")
+    print(f"{'='*60}")
+    
     # Validation: Handle menu buttons
     if message.text in ["🔙 رجوع", "🏠 الرئيسية"]:
-        del user_states[telegram_id]
+        if telegram_id in user_states:
+            del user_states[telegram_id]
         if message.text == "🔙 رجوع":
             show_seller_menu(message)
         else:
@@ -4610,7 +5369,7 @@ def add_category_step2(message):
     if message.text in ["🏪 إنشاء متجر جديد", "➕ إضافة قسم", "➕ إضافة منتج", "✏️ تعديل قسم", "✏️ تعديل منتج", "تصفح المتاجر 🛍️", "سلة المشتريات 🛒", "📦 طلباتي", "📞 تواصل معنا"]:
         bot.send_message(message.chat.id, "⚠️ الرجاء إدخال اسم القسم كتابةً.\nلإلغاء العملية، اضغط على '🏠 الرئيسية' أو '🔙 رجوع'.")
         return
-    telegram_id = message.from_user.id
+    
     state = user_states[telegram_id]
     
     category_name = message.text.strip()
@@ -4619,24 +5378,24 @@ def add_category_step2(message):
         bot.send_message(message.chat.id, "الرجاء إدخال اسم صحيح للقسم.")
         return
     
+    print(f"✅ إدخال صحيح: '{category_name}'")
+    print(f"📁 جاري إضافة فئة للبائع {state['seller_id']}")
+    
     # إضافة القسم إلى قاعدة البيانات
     add_category(state["seller_id"], category_name)
     
     bot.send_message(message.chat.id, f"✅ **تم إضافة القسم بنجاح!**\n\n📁 القسم: {category_name}")
     
-    del user_states[telegram_id]
+    if telegram_id in user_states:
+        del user_states[telegram_id]
     show_seller_menu(message)
 
 @bot.message_handler(func=lambda message: message.text == "✏️ تعديل قسم" and is_seller(message.from_user.id))
 def edit_category_step1(message):
     telegram_id = message.from_user.id
     
-    # safeguard: IF NOT MOCK (Real user click on old button), Redirect to new menu
-    if not getattr(message, 'is_mock', False):
-        bot.send_message(message.chat.id, "🔄 تحديث القائمة...")
-        show_seller_menu(message)
-        return
-
+    # تم حذف الـ safeguard - جعل الدالة تعمل دائماً
+    
     seller = get_seller_by_telegram(telegram_id)
     
     if not seller:
@@ -4857,12 +5616,14 @@ def view_categories(message):
 
 @bot.callback_query_handler(func=lambda call: call.data == "add_new_category")
 def handle_add_new_category(call):
-    add_category_step1(call.message)
+    mock_msg = MockMessage(call.message.chat, call.from_user, "➕ إضافة قسم")
+    add_category_step1(mock_msg)
     bot.answer_callback_query(call.id)
 
 @bot.callback_query_handler(func=lambda call: call.data == "go_to_edit_category")
 def handle_go_to_edit_category(call):
-    edit_category_step1(call.message)
+    mock_msg = MockMessage(call.message.chat, call.from_user, "✏️ تعديل قسم")
+    edit_category_step1(mock_msg)
     bot.answer_callback_query(call.id)
 
 # ====== معالجة أزرار الحذف النصية (القائمة الرئيسية) ======
@@ -4929,14 +5690,14 @@ def handle_do_delete_store(call):
     # Since we didn't specify ON DELETE CASCADE in init_db, we should delete manually or update schema.
     # For safety, let's delete manually.
     try:
-        cursor.execute("DELETE FROM OrderItems WHERE OrderID IN (SELECT OrderID FROM Orders WHERE SellerID = ?)", (store_id,))
-        cursor.execute("DELETE FROM Orders WHERE SellerID = ?", (store_id,))
-        cursor.execute("DELETE FROM Carts WHERE ProductID IN (SELECT ProductID FROM Products WHERE SellerID = ?)", (store_id,))
-        cursor.execute("DELETE FROM Products WHERE SellerID = ?", (store_id,))
-        cursor.execute("DELETE FROM Categories WHERE SellerID = ?", (store_id,))
-        cursor.execute("DELETE FROM CreditLimits WHERE SellerID = ?", (store_id,))
-        cursor.execute("DELETE FROM CreditCustomers WHERE SellerID = ?", (store_id,))
-        cursor.execute("DELETE FROM Sellers WHERE SellerID = ?", (store_id,))
+        cursor.execute("DELETE FROM \"OrderItems\" WHERE \"OrderID\" IN (SELECT \"OrderID\" FROM \"Orders\" WHERE \"SellerID\" = ?)", (store_id,))
+        cursor.execute("DELETE FROM \"Orders\" WHERE \"SellerID\" = ?", (store_id,))
+        cursor.execute("DELETE FROM \"Carts\" WHERE \"ProductID\" IN (SELECT \"ProductID\" FROM \"Products\" WHERE \"SellerID\" = ?)", (store_id,))
+        cursor.execute("DELETE FROM \"Products\" WHERE \"SellerID\" = ?", (store_id,))
+        cursor.execute("DELETE FROM \"Categories\" WHERE \"SellerID\" = ?", (store_id,))
+        cursor.execute("DELETE FROM \"CreditLimits\" WHERE \"SellerID\" = ?", (store_id,))
+        cursor.execute("DELETE FROM \"CreditCustomers\" WHERE \"SellerID\" = ?", (store_id,))
+        cursor.execute("DELETE FROM \"Sellers\" WHERE \"SellerID\" = ?", (store_id,))
         conn.commit()
         bot.answer_callback_query(call.id, "✅ تم حذف المتجر بنجاح")
         bot.delete_message(call.message.chat.id, call.message.message_id)
@@ -5807,11 +6568,7 @@ def handle_closed_store_save_product(call):
 def edit_product_step1(message):
     telegram_id = message.from_user.id
     
-    # safeguard: IF NOT MOCK (Real user click on old button), Redirect to new menu
-    if not getattr(message, 'is_mock', False):
-        bot.send_message(message.chat.id, "🔄 تحديث القائمة...")
-        show_seller_menu(message)
-        return
+    # تم حذف الـ safeguard - جعل الدالة تعمل دائماً
 
     seller = get_seller_by_telegram(telegram_id)
     
@@ -5896,7 +6653,8 @@ def handle_select_product_to_edit(call):
 
 @bot.callback_query_handler(func=lambda call: call.data == "back_to_edit_product")
 def handle_back_to_edit_product(call):
-    edit_product_step1(call.message)
+    mock_msg = MockMessage(call.message.chat, call.from_user, "✏️ تعديل منتج")
+    edit_product_step1(mock_msg)
     bot.answer_callback_query(call.id)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("edit_prod_"))
@@ -6202,16 +6960,16 @@ def process_edit_product_image(message):
         try:
             product_id = state["product_id"]
             
-            # حذف من ProductImages
+            # حذف من imagestorage
             conn = get_db_connection()
             cursor = conn.cursor()
             if IS_POSTGRES:
-                cursor.execute('DELETE FROM productimages WHERE productid=%s', (product_id,))
+                cursor.execute('DELETE FROM imagestorage WHERE productid=%s', (product_id,))
             else:
-                cursor.execute("DELETE FROM ProductImages WHERE ProductID=?", (product_id,))
+                cursor.execute("DELETE FROM imagestorage WHERE ProductID=?", (product_id,))
             conn.commit()
             conn.close()
-            print(f"✅ تم حذف الصور من ProductImages للمنتج {product_id}")
+            print(f"✅ تم حذف الصور من imagestorage للمنتج {product_id}")
             
             # تحديث Products (للتوافق)
             update_product(product_id, image_path="")
@@ -6256,11 +7014,11 @@ def handle_new_product_image_photo(message):
             conn = get_db_connection()
             cursor = conn.cursor()
             
-            # حذف الروابط القديمة
+            # حذف الروابط القديمة من imagestorage
             if IS_POSTGRES:
-                cursor.execute('DELETE FROM productimages WHERE productid=%s', (product_id,))
+                cursor.execute('DELETE FROM imagestorage WHERE productid=%s', (product_id,))
             else:
-                cursor.execute("DELETE FROM ProductImages WHERE ProductID=?", (product_id,))
+                cursor.execute("DELETE FROM imagestorage WHERE ProductID=?", (product_id,))
             
             conn.commit()
             conn.close()
@@ -6559,9 +7317,13 @@ def bridge_delete_product(call):
 
 @bot.callback_query_handler(func=lambda call: call.data == "dashboard_add_cat")
 def bridge_add_category(call):
-    # Debug: Print ID to verify
-    # bot.send_message(call.message.chat.id, f"Debug ID: {call.from_user.id}")
+    print(f"\n{'='*60}")
+    print(f"🔵 bridge_add_category تم استدعاؤه")
+    print(f"   User: {call.from_user.id}")
+    print(f"   Chat ID: {call.message.chat.id}")
+    print(f"{'='*60}")
     mock_msg = MockMessage(call.message.chat, call.from_user, "➕ إضافة قسم")
+    print(f"📝 MockMessage تم إنشاؤه: is_mock={mock_msg.is_mock}")
     add_category_step1(mock_msg)
     bot.answer_callback_query(call.id)
 
@@ -8708,6 +9470,11 @@ def handle_view_category(call):
         print(f"\n{'='*60}")
         print(f"🔥 handle_view_category STARTED")
         print(f"📦 call.data = {call.data}")
+        print(f"👤 Telegram User Info:")
+        print(f"   call.from_user.id = {call.from_user.id}")
+        print(f"   call.from_user.first_name = {call.from_user.first_name}")
+        print(f"   call.from_user.last_name = {call.from_user.last_name}")
+        print(f"   call.from_user.username = {call.from_user.username}")
         print(f"{'='*60}\n")
         
         parts = call.data.split("_")
@@ -8741,6 +9508,8 @@ def handle_view_category(call):
         
         print(f"🔍 DEBUG handle_view_category: category_id={category_id}, seller_id={seller_id}, category_name={category_name}")
         print(f"🔍 DEBUG: seller length={len(seller) if seller else 0}, requires_registration={requires_registration}")
+        print(f"🔍 DEBUG: customer_telegram_id={customer_telegram_id}, seller_telegram_id={seller_telegram_id}")
+        print(f"🔍 DEBUG: هل صاحب المتجر؟ {customer_telegram_id == seller_telegram_id}")
         
         # ⚡ الإجابة السريعة على callback query أولاً لتجنب timeout
         bot.answer_callback_query(call.id)
@@ -8750,11 +9519,14 @@ def handle_view_category(call):
         
         if requires_registration:
             print(f"🔐 متجر مقفول - البحث عن التسجيل")
+            print(f"📊 requires_registration={requires_registration}, نوع={type(requires_registration)}")
             # التحقق من تسجيل الزبون
             if customer_telegram_id != seller_telegram_id:  # ليس صاحب المتجر
+                print(f"✅ العميل ليس صاحب المتجر - جاري التحقق من التسجيل")
                 try:
+                    # تحقق من TelegramID في CreditCustomers فقط
                     is_registered = is_customer_registered_for_store_by_telegram_id(customer_telegram_id, seller_id)
-                    print(f"✅ نتيجة التحقق: is_registered={is_registered}")
+                    print(f"✅ التحقق من CreditCustomers: is_registered={is_registered}")
                 except Exception as e:
                     print(f"⚠️ خطأ في التحقق: {e}, افتراض أن العميل غير مسجل")
                     is_registered = False
@@ -8765,10 +9537,8 @@ def handle_view_category(call):
         if requires_registration and not is_registered:
             print(f"❌ متجر مغلق وعميل غير مسجل")
             bot.send_message(call.message.chat.id,
-                f"🏪 **{seller_name}**\n\n"
-                f"⚠️ **نعتذر، المتجر مغلق**\n\n"
-                f"حسابك غير مسجل في هذا المتجر.\n"
-                f"يرجى التواصل مع البائع للتسجيل.",
+                f"❌ **زبون غير مسجل**\n\n"
+                f"حسابك غير مسجل في هذا المتجر.",
                 parse_mode='Markdown')
             return
         
@@ -8813,7 +9583,7 @@ def handle_view_category(call):
                     dec_button = types.InlineKeyboardButton("➖", callback_data=f"qty_dec_{pid}_1")
                     qty_display = types.InlineKeyboardButton("1", callback_data="noop")
                     
-                    markup.add(types.InlineKeyboardButton(f"{name}", callback_data="noop"), width=1)
+                    markup.add(types.InlineKeyboardButton(f"{name}", callback_data="noop"))
                     markup.row(dec_button, qty_display, inc_button)
                     markup.row(add_button, back_button)
             
@@ -9794,6 +10564,184 @@ def update_cart_view(chat_id, message_id, user_id):
         bot.send_message(message.chat.id, f"⚠️ حدث خطأ أثناء عرض السلة:\n{str(e)}")
         traceback.print_exc()
 
+
+def create_confirmed_order_for_closed_store(message, telegram_id, seller_id, seller_data, user_info):
+    """
+    For closed (registration-required) stores: Create ONLY a Message, NO Order.
+    Customer gets notified immediately, seller gets message notification.
+    """
+    try:
+        # Format items: [(product_id, quantity, price), ...]
+        items = [(int(product_id), int(quantity), float(price)) for product_id, quantity, price, name in seller_data['items']]
+        
+        # ❌ DO NOT CREATE ORDER - Only create message for closed stores
+        # The purchase is recorded as a message, not an order
+        order_id = None
+        
+        print(f"✅ Processing closed store purchase as MESSAGE (no order created)")
+        
+        # Get seller info to send notification
+        seller = get_seller_by_id(seller_id)
+        seller_telegram_id = seller[1]
+        
+        # Get customer name and ID from CreditCustomers
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT CustomerID, FullName FROM CreditCustomers WHERE TelegramID = ? AND SellerID = ?", (telegram_id, seller_id))
+        cust_result = cursor.fetchone()
+        
+        if cust_result:
+            customer_id = cust_result[0]
+            customer_name = cust_result[1]  # استخدم الاسم المسجل في إدارة الزبائن الآجلين
+        else:
+            customer_id = None
+            customer_name = user_info[2] if user_info and len(user_info) > 2 else "عميل"
+        
+        cursor.close()
+        conn.close()
+        
+        total_amount = seller_data['subtotal']
+        
+        # 💳 ADD AMOUNT TO CUSTOMER'S CREDIT ACCOUNT
+        if customer_id:
+            print(f"💳 Adding {total_amount} د.ع to customer {customer_id}'s account...")
+            add_credit_transaction(
+                customer_id=customer_id,
+                seller_id=seller_id,
+                amount=total_amount,
+                description=f"شراء من متجر مغلق"
+            )
+            print(f"✅ Credit added to customer account!")
+        else:
+            print(f"⚠️ Warning: Could not find customer ID for telegram {telegram_id}")
+        
+        # 📤 SEND PRODUCTS TO CUSTOMER FROM TELEBOT
+        print(f"📸 Sending product images to customer {telegram_id}...")
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        for product_id, quantity, price, name in seller_data['items']:
+            try:
+                # Get product details from Products table
+                cursor.execute("""
+                    SELECT ProductID, ProductName, Description 
+                    FROM Products 
+                    WHERE ProductID=?
+                """, (product_id,))
+                product = cursor.fetchone()
+                
+                if product:
+                    prod_id, prod_name, prod_desc = product
+                    
+                    # جرّب الحصول على صورة المنتج الأساسية أولاً ثم الصور العامة
+                    cursor.execute("""
+                        SELECT FileName FROM imagestorage 
+                        WHERE ProductID = ?
+                        ORDER BY imageorder
+                        LIMIT 1
+                    """, (product_id,))
+                    img_result = cursor.fetchone()
+                    
+                    # إذا لم توجد صورة للمنتج، حاول الصور العامة
+                    if not img_result:
+                        cursor.execute("""
+                            SELECT FileName FROM imagestorage 
+                            WHERE ProductID IS NULL
+                            LIMIT 1
+                        """)
+                        img_result = cursor.fetchone()
+                    
+                    if img_result:
+                        img_filename = img_result[0]
+                        img_path = os.path.join(IMAGES_FOLDER, img_filename)
+                        print(f"[DEBUG] Using image: {img_filename} for product {prod_id}")
+                        
+                        # Send product image
+                        try:
+                            print(f"  Sending image for product {prod_id}: {img_filename}")
+                            with open(img_path, 'rb') as photo:
+                                bot.send_photo(
+                                    telegram_id,
+                                    photo,
+                                    caption=f"Product: {prod_name}\n\nPrice: {price}\nQuantity: {quantity}",
+                                    parse_mode='Markdown'
+                                )
+                                print(f"  Image sent successfully!")
+                        except FileNotFoundError:
+                            print(f"  WARNING: Image file not found: {img_path}")
+                            # Send text version
+                            bot.send_message(
+                                telegram_id,
+                                f"Product: {prod_name}\n\nPrice: {price}\nQuantity: {quantity}",
+                                parse_mode='Markdown'
+                            )
+                        except Exception as e:
+                            print(f"  ERROR sending photo: {type(e).__name__}: {str(e)}")
+                            # Send text version as fallback
+                            bot.send_message(
+                                telegram_id,
+                                f"Product: {prod_name}\n\nPrice: {price}\nQuantity: {quantity}",
+                                parse_mode='Markdown'
+                            )
+                    else:
+                        # No image available
+                        print(f"  No images available in TELEBOT")
+                        bot.send_message(
+                            telegram_id,
+                            f"Product: {prod_name}\n\nPrice: {price}\nQuantity: {quantity}",
+                            parse_mode='Markdown'
+                        )
+            except Exception as e:
+                print(f"ERROR processing product: {type(e).__name__}: {str(e)}")
+                traceback.print_exc()
+        
+        cursor.close()
+        conn.close()
+        
+        # Send purchase notification to customer (no order confirmation needed)
+        bot.send_message(
+            telegram_id,
+            f"✅ تم تسجيل طلبك بنجاح!\n\n"
+            f"💰 المبلغ الإجمالي: {total_amount} د.ع\n"
+            f"📦 تم إضافة المبلغ إلى حسابك الآجل\n"
+            f"📋 سيتم معالجة طلبك من قبل البائع",
+            parse_mode='Markdown'
+        )
+        
+        # 📋 CREATE MESSAGE FOR SELLER (NOT ORDER)
+        items_text = "\n".join([f"• {escape_markdown_v1(name)} x {qty} = {qty * price} د.ع" for _, qty, price, name in seller_data['items']])
+        
+        message_text = (
+            f"طلب جديد من متجر مغلق\n\n"
+            f"👤 الزبون: {escape_markdown_v1(customer_name)}\n"
+            f"📋 المنتجات:\n{items_text}\n"
+            f"💰 الإجمالي: {total_amount} د.ع\n\n"
+            f"تم إضافة المبلغ على الحساب الآجل للزبون"
+        )
+        
+        # Create message in Messages table
+        create_message(None, seller_id, 'closed_store_purchase', message_text)
+        
+        # Send notification to seller with message (no order reference)
+        seller_notification = (
+            f"📬 *رسالة جديدة - شراء من متجر مغلق*\n\n"
+            f"👤 الزبون: *{escape_markdown_v1(customer_name)}*\n"
+            f"📋 *المنتجات:*\n{items_text}\n"
+            f"💰 *الإجمالي:* {total_amount} د.ع\n\n"
+            f"✅ تم إضافة المبلغ على الحساب الآجل"
+        )
+        
+        bot.send_message(seller_telegram_id, seller_notification, parse_mode='Markdown')
+        
+        print(f"✅ Closed store purchase recorded as MESSAGE (no order) - notifications sent!")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error processing closed store purchase: {e}")
+        traceback.print_exc()
+        return False
+
+
 @bot.callback_query_handler(func=lambda call: call.data == "checkout_cart")
 def handle_checkout_cart(call):
     try:
@@ -10679,22 +11627,21 @@ def create_order_for_guest(buyer_id, seller_id, cart_items, delivery_address=Non
         # 🗑️ حذف الصور من ImageStorage (الصور ترسل للمشتري ثم تُحذف من TELEBOT)
         if IS_POSTGRES:
             cursor.execute("""
-                SELECT imagepath FROM productimages WHERE productid=%s
+                SELECT filename FROM imagestorage WHERE productid=%s
             """, (pid,))
         else:
             cursor.execute("""
-                SELECT ImagePath FROM ProductImages WHERE ProductID=?
+                SELECT FileName FROM imagestorage WHERE ProductID=?
             """, (pid,))
         
         image_paths = cursor.fetchall()
-        for (img_path,) in image_paths:
-            if img_path:
-                filename = os.path.basename(img_path)
+        for (filename,) in image_paths:
+            if filename:
                 try:
                     if IS_POSTGRES:
-                        cursor.execute("DELETE FROM ImageStorage WHERE FileName = %s", (filename,))
+                        cursor.execute("DELETE FROM imagestorage WHERE FileName = %s", (filename,))
                     else:
-                        cursor.execute("DELETE FROM ImageStorage WHERE FileName = ?", (filename,))
+                        cursor.execute("DELETE FROM imagestorage WHERE FileName = ?", (filename,))
                     print(f"🗑️ حذفت صورة {filename} من ImageStorage بعد البيع (guest order)")
                 except Exception as del_err:
                     print(f"⚠️ خطأ في حذف الصورة {filename}: {del_err}")
@@ -12210,17 +13157,17 @@ def clean_unused_images(message):
         used_images = set()
         
         # Products
-        cursor.execute("SELECT ImagePath FROM Products WHERE ImagePath IS NOT NULL AND ImagePath != ''")
+        cursor.execute("SELECT \"ImagePath\" FROM \"Products\" WHERE \"ImagePath\" IS NOT NULL AND \"ImagePath\" != ''")
         for row in cursor.fetchall():
             used_images.add(os.path.basename(row[0])) # Store filename only
             
         # Categories
-        cursor.execute("SELECT ImagePath FROM Categories WHERE ImagePath IS NOT NULL AND ImagePath != ''")
+        cursor.execute("SELECT \"ImagePath\" FROM \"Categories\" WHERE \"ImagePath\" IS NOT NULL AND \"ImagePath\" != ''")
         for row in cursor.fetchall():
             used_images.add(os.path.basename(row[0]))
             
         # Sellers
-        cursor.execute("SELECT ImagePath FROM Sellers WHERE ImagePath IS NOT NULL AND ImagePath != ''")
+        cursor.execute("SELECT \"ImagePath\" FROM \"Sellers\" WHERE \"ImagePath\" IS NOT NULL AND \"ImagePath\" != ''")
         for row in cursor.fetchall():
             used_images.add(os.path.basename(row[0]))
             
@@ -12327,9 +13274,9 @@ def find_image_usage(message):
             
         # Categories
         if IS_POSTGRES:
-            cursor.execute("SELECT CategoryID, Name FROM Categories WHERE ImagePath LIKE %s", (f"%{target_name}%",))
+            cursor.execute("SELECT \"CategoryID\", \"Name\" FROM \"Categories\" WHERE \"ImagePath\" LIKE %s", (f"%{target_name}%",))
         else:
-            cursor.execute("SELECT CategoryID, Name FROM Categories WHERE ImagePath LIKE ?", (f"%{target_name}%",))
+            cursor.execute("SELECT \"CategoryID\", \"Name\" FROM \"Categories\" WHERE \"ImagePath\" LIKE ?", (f"%{target_name}%",))
             
         for row in cursor.fetchall():
             found_msg += f"📂 **Category:** {row[1]} (ID: {row[0]})\n"
@@ -12354,27 +13301,27 @@ def find_image_usage(message):
         bot.reply_to(message, f"Error: {e}")
 
 # ====== تشغيل البوت ======
-print("🚀 بدأ تشغيل بوت متجرنا...")
-print("✅ النظام الجديد شامل جميع الميزات:")
-print("   👑 إدارة النظام الكاملة لأدمن البوت")
-print("   🏪 إنشاء متجر خاص لأدمن البوت")
-print("   🔗 نسخ رابط المتجر")
-print("   📦 نظام مرتجع الشراء")
-print("   📩 نظام الرسائل")
-print("   💰 نظام كشف حساب الزبائن الآجل")
-print("   💳 **نظام الحدود الائتمانية الجديد**")
-print("   📊 إحصائيات النظام الكاملة")
-print("   🛒 نظام إضافة وتعديل المنتجات والأقسام للبائعين")
-print("   📸 نظام الصور المحسن مع إصلاح المشاكل")
-print("   💳 نظام الدفع النقدي والآجل")
-print("   👤 نظام الزبائن الآجلين")
-print("   💰 سعر الجملة للزبائن الآجلين")
-print("   👀 **الميزات الجديدة:**")
-print("   • تصفح المتاجر بدون تسجيل")
-print("   • إضافة المنتجات للسلة للزوار")
-print("   • إتمام الطلبات للزوار")
-print("   • تسجيل حساب جديد في أي وقت")
-print("   • التفريق بين الزوار والمستخدمين المسجلين")
+print("[INFO] Bot started...")
+print("[OK] All features enabled:")
+print("   [OK] Admin system")
+print("   [OK] Store management")
+print("   [OK] Share link feature")
+print("   [OK] Returns system")
+print("   [OK] Messaging system")
+print("   [OK] Credit account statement")
+print("   [OK] Credit limit system")
+print("   [OK] System statistics")
+print("   [OK] Product and category management")
+print("   [OK] Enhanced image system")
+print("   [OK] Cash and credit payments")
+print("   [OK] Credit customers")
+print("   [OK] Wholesale price for credit customers")
+print("   [OK] NEW FEATURES:")
+print("   [OK] Browse stores without registration")
+print("   [OK] Add products to cart as guest")
+print("   [OK] Complete guest orders")
+print("   [OK] Register account anytime")
+print("   [OK] Different rules for guests and registered users")
 
 
 # ====== Start Command ======
@@ -12630,25 +13577,603 @@ def handle_order_actions(call):
         print(f"Order Action Error: {e}")
         bot.answer_callback_query(call.id, "حدث خطأ أثناء تنفيذ الإجراء")
 
+# ===================== نظام المزادات - المعالجات =====================
+
+# حالات المستخدمين للمزادات
+auction_states = {}
+
+@bot.message_handler(func=lambda message: "🔨 رفع منتج للمزاد" in message.text and is_seller(message.from_user.id))
+def upload_product_to_auction(message):
+    """معالج رفع منتج للمزاد"""
+    telegram_id = message.from_user.id
+    seller = get_seller_by_telegram(telegram_id)
+    
+    if not seller:
+        bot.send_message(message.chat.id, "❌ أنت لست بائعاً مسجلاً")
+        return
+    
+    # التحقق من أن المتجر مفتوح
+    seller_id = seller[0]
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT RequireCustomerRegistration FROM Sellers WHERE SellerID = ?", (seller_id,))
+    result = cursor.fetchone()
+    conn.close()
+    
+    is_closed = result and result[0] == 1
+    
+    if is_closed:
+        bot.send_message(message.chat.id, 
+                        "⛔ **متجرك مغلق**\n\n"
+                        "لا يمكنك رفع المنتجات للمزاد إلا إذا كان متجرك مفتوحاً.\n"
+                        "استخدم الأمر /set_open_store لفتح متجرك.")
+        return
+    
+    # جلب منتجات البائع
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT ProductID, Name, Price FROM Products 
+        WHERE SellerID = ? AND Status = 'active' 
+        ORDER BY ProductID DESC
+    """, (seller_id,))
+    
+    products = cursor.fetchall()
+    conn.close()
+    
+    if not products:
+        bot.send_message(message.chat.id, "❌ ليس لديك منتجات لرفعها للمزاد")
+        return
+    
+    # عرض قائمة المنتجات
+    msg = "🏷️ **اختر المنتج الذي تريد رفعه للمزاد:**\n\n"
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    
+    for product_id, name, price in products:
+        msg += f"• {name} - {price} دينار\n"
+        markup.add(f"📦 {product_id}: {name}")
+    
+    markup.add("❌ إلغاء")
+    
+    auction_states[telegram_id] = {"step": "select_product"}
+    bot.send_message(message.chat.id, msg, reply_markup=markup)
+
+@bot.message_handler(func=lambda message: message.from_user.id in auction_states and 
+                     auction_states[message.from_user.id].get("step") == "select_product" and
+                     "📦" in message.text)
+def select_auction_product(message):
+    """معالج اختيار المنتج"""
+    telegram_id = message.from_user.id
+    
+    try:
+        # استخراج معرف المنتج من الرسالة
+        product_id = int(message.text.split(":")[0].replace("📦 ", ""))
+        
+        # التحقق من وجود المنتج
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT ProductID, Name, Price FROM Products WHERE ProductID = ?", (product_id,))
+        product = cursor.fetchone()
+        conn.close()
+        
+        if not product:
+            bot.send_message(message.chat.id, "❌ المنتج غير موجود")
+            return
+        
+        auction_states[telegram_id]["product_id"] = product_id
+        auction_states[telegram_id]["product_name"] = product[1]
+        auction_states[telegram_id]["original_price"] = product[2]
+        auction_states[telegram_id]["step"] = "enter_start_price"
+        
+        bot.send_message(message.chat.id, 
+                        f"💰 **ادخل سعر بداية المزاد للمنتج:**\n\n"
+                        f"📦 المنتج: {product[1]}\n"
+                        f"💰 السعر الأصلي: {product[2]}")
+        
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ خطأ: {e}")
+        del auction_states[telegram_id]
+
+@bot.message_handler(func=lambda message: message.from_user.id in auction_states and 
+                     auction_states[message.from_user.id].get("step") == "enter_start_price")
+def enter_auction_start_price(message):
+    """معالج إدخال سعر بداية المزاد"""
+    telegram_id = message.from_user.id
+    
+    try:
+        start_price = float(message.text)
+        
+        if start_price <= 0:
+            bot.send_message(message.chat.id, "⚠️ السعر يجب أن يكون أكبر من صفر")
+            return
+        
+        auction_states[telegram_id]["start_price"] = start_price
+        auction_states[telegram_id]["step"] = "enter_start_date"
+        
+        bot.send_message(message.chat.id,
+                        "📅 **أدخل تاريخ بداية المزاد**\n\n"
+                        "الصيغة: YYYY-MM-DD HH:MM\n"
+                        "مثال: 2025-01-20 10:00")
+        
+    except ValueError:
+        bot.send_message(message.chat.id, "⚠️ أدخل رقماً صحيحاً")
+
+@bot.message_handler(func=lambda message: message.from_user.id in auction_states and 
+                     auction_states[message.from_user.id].get("step") == "enter_start_date")
+def enter_auction_start_date(message):
+    """معالج إدخال تاريخ بداية المزاد"""
+    telegram_id = message.from_user.id
+    
+    try:
+        start_dt = datetime.strptime(message.text, "%Y-%m-%d %H:%M")
+        
+        auction_states[telegram_id]["start_date"] = start_dt
+        auction_states[telegram_id]["step"] = "enter_end_date"
+        
+        bot.send_message(message.chat.id,
+                        "📅 **أدخل تاريخ نهاية المزاد**\n\n"
+                        "الصيغة: YYYY-MM-DD HH:MM\n"
+                        "مثال: 2025-01-25 18:00")
+        
+    except ValueError:
+        bot.send_message(message.chat.id, "⚠️ التاريخ غير صحيح! استخدم الصيغة: YYYY-MM-DD HH:MM")
+
+@bot.message_handler(func=lambda message: message.from_user.id in auction_states and 
+                     auction_states[message.from_user.id].get("step") == "enter_end_date")
+def enter_auction_end_date(message):
+    """معالج إدخال تاريخ نهاية المزاد"""
+    telegram_id = message.from_user.id
+    
+    try:
+        end_dt = datetime.strptime(message.text, "%Y-%m-%d %H:%M")
+        state = auction_states[telegram_id]
+        
+        # التحقق من أن تاريخ النهاية أكبر من تاريخ البداية
+        if end_dt <= state["start_date"]:
+            bot.send_message(message.chat.id, "⚠️ تاريخ النهاية يجب أن يكون بعد تاريخ البداية")
+            return
+        
+        # إنشاء المزاد
+        seller_id = get_seller_by_telegram(telegram_id)[0]
+        success, message_text, auction_id = create_auction_for_product(
+            seller_id,
+            state["product_id"],
+            state["start_price"],
+            state["start_date"],
+            end_dt
+        )
+        
+        if success:
+            bot.send_message(message.chat.id,
+                            f"✅ **تم إنشاء المزاد بنجاح!**\n\n"
+                            f"🔨 رقم المزاد: #{auction_id}\n"
+                            f"📦 المنتج: {state['product_name']}\n"
+                            f"💰 سعر البداية: {state['start_price']} دينار\n"
+                            f"📅 البداية: {state['start_date']}\n"
+                            f"📅 النهاية: {end_dt}")
+        else:
+            bot.send_message(message.chat.id, message_text)
+        
+        del auction_states[telegram_id]
+        show_seller_menu(message)
+        
+    except ValueError:
+        bot.send_message(message.chat.id, "⚠️ التاريخ غير صحيح! استخدم الصيغة: YYYY-MM-DD HH:MM")
+
+@bot.message_handler(func=lambda message: message.from_user.id in auction_states and 
+                     message.text == "❌ إلغاء")
+def cancel_auction_process(message):
+    """إلغاء عملية رفع المنتج للمزاد"""
+    telegram_id = message.from_user.id
+    
+    if telegram_id in auction_states:
+        del auction_states[telegram_id]
+    
+    bot.send_message(message.chat.id, "❌ تم إلغاء العملية")
+    show_seller_menu(message)
+
+# ===================== نظام المزادات - المشترين (البيديرز) =====================
+
+# حالات المشترين في المزادات
+bidder_states = {}
+
+@bot.message_handler(func=lambda message: "تصفح المتاجر 🛍️" in message.text)
+def browse_stores_with_auctions(message):
+    """معالج تصفح المتاجر والمزادات"""
+    telegram_id = message.from_user.id
+    
+    # جلب قائمة المتاجر والمزادات
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # جلب المتاجر العادية
+    cursor.execute("""
+        SELECT DISTINCT SellerID, StoreName FROM Sellers 
+        WHERE Status = 'active' AND RequireCustomerRegistration != 1
+        ORDER BY StoreName
+    """)
+    
+    stores = cursor.fetchall()
+    
+    # جلب متجر المزادات إن وجد مع عدد المزادات النشطة
+    cursor.execute("""
+        SELECT s.SellerID, s.StoreName, COUNT(a.AuctionID) 
+        FROM Sellers s
+        LEFT JOIN Auctions a ON s.SellerID = a.AuctionStoreID AND a.Status = 'active'
+        WHERE s.StoreName = 'المزادات'
+        GROUP BY s.SellerID, s.StoreName
+    """)
+    
+    auction_store = cursor.fetchone()
+    conn.close()
+    
+    if not stores and not auction_store:
+        bot.send_message(message.chat.id, "❌ لا توجد متاجر متاحة حالياً")
+        return
+    
+    # إنشاء قائمة الأزرار
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    
+    # عرض متجر المزادات في الأعلى إن وجد مزادات
+    if auction_store and auction_store[2] > 0:
+        markup.add(f"🔨 المزادات ({auction_store[2]} مزاد نشط)")
+    elif auction_store:
+        markup.add(f"🔨 المزادات (بدون مزادات)")
+    
+    # عرض المتاجر الأخرى
+    for store_id, store_name in stores:
+        markup.add(f"🏪 {store_name}")
+    
+    markup.add("🏠 الرئيسية")
+    
+    msg = "🏪 **اختر المتجر:**\n\n"
+    msg += "يمكنك تصفح المتاجر العادية أو المزادات"
+    
+    bot.send_message(message.chat.id, msg, reply_markup=markup)
+
+@bot.message_handler(func=lambda message: "🔨 المزادات" in message.text)
+def browse_auctions(message):
+    """عرض قائمة المزادات النشطة"""
+    telegram_id = message.from_user.id
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # جلب المزادات النشطة مع تفاصيل المنتجات
+    cursor.execute("""
+        SELECT a.AuctionID, p.Name, a.StartPrice, a.AuctionStartAt, a.AuctionEndAt, 
+               a.ProductID, COUNT(b.BidID) as BidCount
+        FROM Auctions a
+        JOIN Products p ON a.ProductID = p.ProductID
+        LEFT JOIN AuctionBids b ON a.AuctionID = b.AuctionID
+        WHERE a.Status = 'active'
+        GROUP BY a.AuctionID, p.Name, a.StartPrice, a.AuctionStartAt, a.AuctionEndAt, a.ProductID
+        ORDER BY a.AuctionEndAt ASC
+    """)
+    
+    auctions = cursor.fetchall()
+    conn.close()
+    
+    if not auctions:
+        bot.send_message(message.chat.id, "📭 لا توجد مزادات متاحة حالياً")
+        return
+    
+    # عرض المزادات
+    msg = "🔨 **قائمة المزادات النشطة:**\n\n"
+    
+    for auction in auctions:
+        auction_id, product_name, start_price, start_at, end_at, product_id, bid_count = auction
+        
+        # تنسيق التواريخ
+        try:
+            start_dt = datetime.fromisoformat(str(start_at).replace(" ", "T"))
+            end_dt = datetime.fromisoformat(str(end_at).replace(" ", "T"))
+            start_str = start_dt.strftime("%Y-%m-%d %H:%M")
+            end_str = end_dt.strftime("%Y-%m-%d %H:%M")
+        except:
+            start_str = str(start_at)
+            end_str = str(end_at)
+        
+        msg += f"🔨 **مزاد #{auction_id}**\n"
+        msg += f"📦 المنتج: {product_name}\n"
+        msg += f"💰 سعر البداية: {start_price} دينار\n"
+        msg += f"⏰ النهاية: {end_str}\n"
+        msg += f"📊 العروض: {bid_count}\n"
+        msg += f"─" * 30 + "\n\n"
+    
+    # عرض زر اختيار المزاد
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    for auction in auctions:
+        auction_id, product_name = auction[0], auction[1]
+        markup.add(f"🎯 مزاد #{auction_id}: {product_name[:20]}")
+    
+    markup.add("👈 العودة", "🏠 الرئيسية")
+    
+    bot.send_message(message.chat.id, msg, reply_markup=markup)
+
+@bot.message_handler(func=lambda message: "🎯 مزاد #" in message.text)
+def select_auction_to_bid(message):
+    """اختيار مزاد للمزايدة"""
+    telegram_id = message.from_user.id
+    
+    try:
+        # استخراج معرف المزاد من الرسالة
+        auction_id = int(message.text.split("#")[1].split(":")[0])
+        
+        # التحقق من وجود المزاد
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT a.AuctionID, p.Name, p.Description, a.StartPrice, 
+                   a.AuctionStartAt, a.AuctionEndAt, p.ImagePath
+            FROM Auctions a
+            JOIN Products p ON a.ProductID = p.ProductID
+            WHERE a.AuctionID = ? AND a.Status = 'active'
+        """, (auction_id,))
+        
+        auction = cursor.fetchone()
+        conn.close()
+        
+        if not auction:
+            bot.send_message(message.chat.id, "❌ المزاد غير موجود أو انتهى")
+            return
+        
+        auction_id, product_name, description, start_price, start_at, end_at, image_path = auction
+        
+        # حفظ معرف المزاد في الحالة
+        bidder_states[telegram_id] = {
+            "step": "register_bidder",
+            "auction_id": auction_id,
+            "product_name": product_name,
+            "start_price": start_price
+        }
+        
+        # عرض تفاصيل المزاد
+        msg = f"🔨 **تفاصيل المزاد:**\n\n"
+        msg += f"📦 المنتج: {product_name}\n"
+        msg += f"💰 سعر البداية: {start_price} دينار\n"
+        
+        if description:
+            msg += f"📝 الوصف: {description}\n"
+        
+        msg += f"\n✅ لكي تشارك في المزاد، يرجى إدخال اسمك ورقم تلفونك\n"
+        
+        bot.send_message(message.chat.id, msg)
+        
+        # طلب اسم المزايد
+        bot.send_message(message.chat.id, "👤 **أدخل اسمك:**")
+        
+        # إرسال صورة المنتج إن وجدت
+        if image_path:
+            try:
+                if IS_POSTGRES:
+                    with open(image_path, 'rb') as photo:
+                        bot.send_photo(message.chat.id, photo)
+            except:
+                pass
+        
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ خطأ: {e}")
+        if telegram_id in bidder_states:
+            del bidder_states[telegram_id]
+
+@bot.message_handler(func=lambda message: message.from_user.id in bidder_states and 
+                     bidder_states[message.from_user.id].get("step") == "register_bidder")
+def enter_bidder_name(message):
+    """إدخال اسم المزايد"""
+    telegram_id = message.from_user.id
+    
+    bidder_states[telegram_id]["bidder_name"] = message.text.strip()
+    bidder_states[telegram_id]["step"] = "enter_bidder_phone"
+    
+    bot.send_message(message.chat.id, "📞 **أدخل رقم تلفونك:**")
+
+@bot.message_handler(func=lambda message: message.from_user.id in bidder_states and 
+                     bidder_states[message.from_user.id].get("step") == "enter_bidder_phone")
+def enter_bidder_phone(message):
+    """إدخال رقم تلفون المزايد"""
+    telegram_id = message.from_user.id
+    state = bidder_states[telegram_id]
+    
+    # التحقق من صيغة رقم التلفون
+    phone = message.text.strip()
+    if not phone or len(phone) < 7:
+        bot.send_message(message.chat.id, "⚠️ رقم التلفون غير صحيح!")
+        return
+    
+    # تسجيل المزايد في قاعدة البيانات
+    success, msg, bidder_id = register_auction_bidder(
+        state["auction_id"],
+        state["bidder_name"],
+        phone,
+        telegram_id
+    )
+    
+    if not success:
+        bot.send_message(message.chat.id, msg)
+        del bidder_states[telegram_id]
+        return
+    
+    state["bidder_id"] = bidder_id
+    state["step"] = "enter_bid_amount"
+    
+    bot.send_message(message.chat.id,
+                    f"✅ تم تسجيل بيانات الدخول بنجاح!\n\n"
+                    f"👤 الاسم: {state['bidder_name']}\n"
+                    f"📞 التلفون: {phone}\n\n"
+                    f"💰 **الآن أدخل السعر الذي تريد المزايدة به:**\n"
+                    f"(السعر الأدنى: {state['start_price']} دينار)")
+
+@bot.message_handler(func=lambda message: message.from_user.id in bidder_states and 
+                     bidder_states[message.from_user.id].get("step") == "enter_bid_amount")
+def enter_bid_amount(message):
+    """إدخال مبلغ العطاء"""
+    telegram_id = message.from_user.id
+    state = bidder_states[telegram_id]
+    
+    try:
+        bid_amount = float(message.text)
+        
+        if bid_amount < state["start_price"]:
+            bot.send_message(message.chat.id, 
+                            f"⚠️ السعر يجب أن يكون على الأقل {state['start_price']} دينار")
+            return
+        
+        # تسجيل العطاء
+        success, msg, bid_id = place_auction_bid(
+            state["auction_id"],
+            state["bidder_id"],
+            bid_amount
+        )
+        
+        if success:
+            bot.send_message(message.chat.id,
+                            f"✅ **تم تسجيل عطاؤك بنجاح!**\n\n"
+                            f"🔨 مزاد #{state['auction_id']}\n"
+                            f"📦 المنتج: {state['product_name']}\n"
+                            f"💰 السعر المعروض: {bid_amount} دينار\n\n"
+                            f"شكراً لمشاركتك في المزاد!")
+        else:
+            bot.send_message(message.chat.id, msg)
+        
+        del bidder_states[telegram_id]
+        
+        # العودة إلى القائمة الرئيسية
+        main_menu(message)
+        
+    except ValueError:
+        bot.send_message(message.chat.id, "⚠️ أدخل رقماً صحيحاً")
+
+# ===================== خدمة التحقق من انتهاء المزادات =====================
+
+def check_ended_auctions():
+    """
+    تحقق دوري من المزادات التي انتهت وأرسل إشعارات للبائعين والمتجر
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # جلب المزادات التي انتهت وتحتاج إلى إغلاق
+        if IS_POSTGRES:
+            cursor.execute("""
+                SELECT a.AuctionID, a.ProductID, a.OriginalSellerID, a.AuctionStoreID, a.AuctionEndAt,
+                       p.Name, s.TelegramID, s.StoreName
+                FROM Auctions a
+                JOIN Products p ON a.ProductID = p.ProductID
+                JOIN Sellers s ON a.OriginalSellerID = s.SellerID
+                WHERE a.Status = 'active' AND a.AuctionEndAt < NOW()
+                ORDER BY a.AuctionEndAt DESC
+            """)
+        else:
+            cursor.execute("""
+                SELECT a.AuctionID, a.ProductID, a.OriginalSellerID, a.AuctionStoreID, a.AuctionEndAt,
+                       p.Name, s.TelegramID, s.StoreName
+                FROM Auctions a
+                JOIN Products p ON a.ProductID = p.ProductID
+                JOIN Sellers s ON a.OriginalSellerID = s.SellerID
+                WHERE a.Status = 'active' AND a.AuctionEndAt < datetime('now')
+                ORDER BY a.AuctionEndAt DESC
+            """)
+        
+        ended_auctions = cursor.fetchall()
+        
+        if not ended_auctions:
+            return
+        
+        print(f"🔔 عدد المزادات المنتهية: {len(ended_auctions)}")
+        
+        for auction_info in ended_auctions:
+            auction_id, product_id, seller_id, auction_store_id, end_at, product_name, seller_tg_id, seller_name = auction_info
+            
+            # إغلاق المزاد والحصول على الفائز
+            success, winner = close_auction(auction_id)
+            
+            if not success:
+                continue
+            
+            # بناء رسالة النتائج
+            # جلب قائمة جميع العطاءات مرتبة تصاعدياً
+            bids = get_auction_bids(auction_id)
+            
+            result_msg = f"🔨 **انتهى المزاد #{auction_id}**\n\n"
+            result_msg += f"📦 المنتج: {product_name}\n"
+            result_msg += f"📅 وقت الانتهاء: {end_at}\n\n"
+            
+            result_msg += f"📊 **قائمة العطاءات (مرتب تصاعدياً):**\n"
+            result_msg += "─" * 40 + "\n"
+            
+            if bids:
+                for idx, bid in enumerate(bids, 1):
+                    bidder_name, bidder_phone, highest_bid, bid_count = bid
+                    if highest_bid:
+                        result_msg += f"{idx}. 👤 {bidder_name}\n"
+                        result_msg += f"   📞 {bidder_phone}\n"
+                        result_msg += f"   💰 السعر: {highest_bid} دينار\n"
+                        result_msg += f"   📊 عدد العروض: {bid_count}\n"
+                        result_msg += "─" * 40 + "\n"
+                
+                if winner:
+                    bidder_id, bidder_name, bidder_phone, final_price = winner
+                    result_msg += f"\n🏆 **الفائز:**\n"
+                    result_msg += f"👤 الاسم: {bidder_name}\n"
+                    result_msg += f"📞 التلفون: {bidder_phone}\n"
+                    result_msg += f"💰 السعر النهائي: {final_price} دينار"
+                else:
+                    result_msg += f"\n📭 **لم يتلقَ المزاد أي عروض**"
+            else:
+                result_msg += "📭 لم يتم استقبال أي عروض"
+            
+            # إرسال الرسالة إلى صاحب المتجر الأصلي
+            try:
+                bot.send_message(seller_tg_id, result_msg, parse_mode='Markdown')
+                print(f"✅ تم إرسال نتيجة المزاد #{auction_id} إلى البائع (ID: {seller_tg_id})")
+            except Exception as e:
+                print(f"⚠️ فشل إرسال رسالة إلى البائع: {e}")
+            
+            # إرسال الرسالة إلى متجر المزادات
+            try:
+                cursor.execute("SELECT TelegramID FROM Sellers WHERE SellerID = ?", (auction_store_id,))
+                auction_store = cursor.fetchone()
+                if auction_store:
+                    auction_store_tg_id = auction_store[0]
+                    bot.send_message(auction_store_tg_id, result_msg, parse_mode='Markdown')
+                    print(f"✅ تم إرسال نتيجة المزاد #{auction_id} إلى متجر المزادات")
+            except Exception as e:
+                print(f"⚠️ فشل إرسال رسالة إلى متجر المزادات: {e}")
+        
+        conn.commit()
+        
+    except Exception as e:
+        print(f"❌ خطأ في التحقق من المزادات المنتهية: {e}")
+        conn.rollback()
+    finally:
+        conn.close()
+
 # تشغيل البوت
 if __name__ == "__main__":
-    print("🚀 SYSTEM STARTUP: Bot script is running...")
+    print("[INFO] Bot script is running...")
     
     # 1. Log Token Status
     if TOKEN:
-        print(f"🔑 Token Loaded: {TOKEN[:5]}...{TOKEN[-5:]} (Length: {len(TOKEN)})")
+        print(f"[OK] Token Loaded: {TOKEN[:5]}...{TOKEN[-5:]} (Length: {len(TOKEN)})")
     else:
-        print("❌ CRITICAL: No Token Found in Environment!")
+        print("[ERROR] CRITICAL: No Token Found in Environment!")
 
     if os.environ.get('DATABASE_URL'):
-        print("☁️ DATABASE MODE: CLOUD (PostgreSQL)")
+        print("[INFO] DATABASE MODE: CLOUD (PostgreSQL)")
     else:
-        print("💻 DATABASE MODE: LOCAL (SQLite)")
+        print("[INFO] DATABASE MODE: LOCAL (SQLite)")
 
     try:
-        print("🛠️ Initializing Database...")
+        print("[INFO] Initializing Database...")
         init_db()
-        print("✅ Database Initialized Successfully")
+        print("[OK] Database Initialized Successfully")
+        
+        # Initialize Auction Store
+        print("[INFO] Initializing Auction Store...")
+        initialize_auction_store()
+        print("[OK] Auction Store Initialized Successfully")
         
         # Debug: Check products count after initialization
         conn = get_db_connection()
@@ -12656,35 +14181,92 @@ if __name__ == "__main__":
         cursor.execute("SELECT COUNT(*) FROM Products")
         result = cursor.fetchone()
         product_count = result[0] if result else 0
-        print(f"📊 Total products in database: {product_count}")
+        print(f"[INFO] Total products in database: {product_count}")
         
         cursor.execute("SELECT COUNT(*) FROM Products WHERE Quantity > 0 AND Status='active'")
         result = cursor.fetchone()
         active_product_count = result[0] if result else 0
-        print(f"📊 Active products with Quantity > 0: {active_product_count}")
+        print(f"[INFO] Active products with Quantity > 0: {active_product_count}")
         
         conn.close()
     except Exception as e:
-        print(f"❌ CRITICAL DATABASE ERROR: {e}")
+        print(f"[ERROR] CRITICAL DATABASE ERROR: {e}")
         traceback.print_exc()
         # Non-fatal? Maybe allow bot to try starting anyway, or fail loud?
         # For now, let's fail loud but AFTER printing the error.
     try:
-        print("🧹 Clearing Webhooks...")
+        print("[INFO] Clearing Webhooks...")
         bot.remove_webhook()
         
     except Exception as e:
-        print(f"⚠️ Failed to remove webhook: {e}")
+        print(f"[WARN] Failed to remove webhook: {e}")
 
-    print("📡 Starting Polling...")
+    print("[INFO] Waiting 5 seconds for Telegram API to clear old session...")
+    time.sleep(5)
     
-    # Infinite loop to auto-restart on crashes/connection errors
-    while True:
-        try:
-            # infinity_polling handles many errors internally, but this loop catches the rest
-            bot.infinity_polling(timeout=60, long_polling_timeout=60, allowed_updates=['message', 'callback_query', 'my_chat_member'])
-        except Exception as e:
-            print(f"⚠️ Polling Error (Restarting in 5s): {e}")
-            time.sleep(5)
+    print("[INFO] Starting Polling...")
+    
+    # Start background task to check auctions
+    import threading
+    
+    def check_auctions_periodically():
+        """Check ended auctions every minute"""
+        while True:
+            try:
+                check_ended_auctions()
+            except Exception as e:
+                print(f"[WARN] Auction check error: {e}")
+            
+            # Wait 60 seconds before next check
+            time.sleep(60)
+    
+    # Start background thread
+    auction_thread = threading.Thread(target=check_auctions_periodically, daemon=True)
+    auction_thread.start()
+    print("[OK] Auction check service ready")
+    
+    # Check if polling is disabled (for when Railway instance is running)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Create FeatureFlags table if it doesn't exist
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS FeatureFlags (
+                FlagName TEXT PRIMARY KEY,
+                FlagValue INTEGER DEFAULT 0,
+                Description TEXT
+            )
+        """)
+        conn.commit()
+    except:
+        pass
+    
+    polling_disabled = False
+    try:
+        cursor.execute("SELECT FlagValue FROM FeatureFlags WHERE FlagName=?", ("DISABLE_POLLING",))
+        result = cursor.fetchone()
+        polling_disabled = result[0] == 1 if result else False
+    except:
+        polling_disabled = False
+    
+    cursor.close()
+    conn.close()
+    
+    if polling_disabled:
+        print("[WARN] POLLING DISABLED - Bot is in standby mode (Railway instance is active)")
+        print("[INFO] To re-enable polling locally, run: python enable_local_polling.py")
+        # Keep the process alive but don't start polling
+        while True:
+            time.sleep(60)
+    else:
+        # Infinite loop to auto-restart on crashes/connection errors
+        while True:
+            try:
+                # infinity_polling handles many errors internally, but this loop catches the rest
+                bot.infinity_polling(timeout=60, long_polling_timeout=60, allowed_updates=['message', 'callback_query', 'my_chat_member'])
+            except Exception as e:
+                print(f"[WARN] Polling Error (Restarting in 5s): {e}")
+                time.sleep(5)
             continue
 
