@@ -215,9 +215,18 @@ class DatabaseHelperCloud {
   Future<List<Category>> getCategories(int sellerId,
       {bool forceRefresh = false}) async {
     try {
-      return await postgresService.getCategories(sellerId);
+      print('🔄 جاري جلب الأقسام للمتجر $sellerId...');
+      final categories = await postgresService.getCategories(sellerId).timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          print('⏱️ انتهت مهلة جلب الأقسام');
+          return [];
+        }
+      );
+      print('✅ تم جلب ${categories.length} قسم');
+      return categories;
     } catch (e) {
-      print('❌ Error getting categories: $e');
+      print('❌ خطأ في جلب الأقسام: $e');
       return [];
     }
   }
@@ -228,18 +237,23 @@ class DatabaseHelperCloud {
 
   Future<void> addCategory(Category category) async {
     try {
-      // Categories are managed via Bot
-      print('⚠️ addCategory: Categories managed via Bot');
+      print('� [DatabaseHelper] Adding category: ${category.name}');
+      print('   SellerID: ${category.sellerId}');
+      print('   Calling postgresService.addCategory()...');
+      
+      await postgresService.addCategory(category.sellerId, category.name);
+      
+      print('✅ [DatabaseHelper] Category added successfully to PostgreSQL: ${category.name}');
     } catch (e) {
-      print('❌ Error adding category: $e');
+      print('❌ [DatabaseHelper] Error adding category: $e');
+      print('   Error type: ${e.runtimeType}');
       rethrow;
     }
   }
 
   Future<void> updateCategory(Category category) async {
     try {
-      // Categories are managed via Bot
-      print('⚠️ updateCategory: Categories managed via Bot');
+      await postgresService.updateCategory(category.categoryId, category.name, category.orderIndex);
     } catch (e) {
       print('❌ Error updating category: $e');
       rethrow;
@@ -248,8 +262,7 @@ class DatabaseHelperCloud {
 
   Future<void> deleteCategory(int categoryId) async {
     try {
-      // Categories are managed via Bot
-      print('⚠️ deleteCategory: Categories managed via Bot');
+      await postgresService.deleteCategory(categoryId);
     } catch (e) {
       print('❌ Error deleting category: $e');
       rethrow;
@@ -260,9 +273,27 @@ class DatabaseHelperCloud {
 
   Future<List<Product>> getProducts(int sellerId, {int? categoryId, bool forceRefresh = false}) async {
     try {
-      return await postgresService.getProducts(sellerId, categoryId);
+      print('🔄 جاري جلب المنتجات للمتجر $sellerId...');
+      print('   Category Filter: $categoryId');
+      
+      final products = await postgresService.getProducts(sellerId, categoryId).timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          print('⏱️ انتهت مهلة جلب المنتجات');
+          return [];
+        }
+      );
+      print('✅ تم جلب ${products.length} منتج');
+      
+      if (products.isNotEmpty) {
+        print('   أول منتج: ${products.first.name}');
+      } else {
+        print('   ❌ لم يتم جلب أي منتجات!');
+      }
+      
+      return products;
     } catch (e) {
-      print('❌ Error getting products: $e');
+      print('❌ خطأ في جلب المنتجات: $e');
       return [];
     }
   }
@@ -323,13 +354,23 @@ class DatabaseHelperCloud {
 
   Future<List<ProductImage>> getProductImages(int productId) async {
     try {
-      final images = await postgresService.getProductImages(productId);
+      print('🖼️ جاري جلب صور المنتج $productId...');
+      final images = await postgresService.getProductImages(productId).timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          print('⏱️ انتهت مهلة جلب صور المنتج');
+          return [];
+        }
+      );
+      
+      print('📊 تم استقبال ${images.length} صورة');
+      
       return images
           .map((img) => ProductImage(
                 imageId: img['imageid'],
-                productId: img['productid'],
+                productId: img['productid'] ?? productId,
                 imagePath: img['imagepath'],
-                imageOrder: 0,
+                imageOrder: img['imageorder'] ?? 0,
               ))
           .toList();
     } catch (e) {
@@ -341,6 +382,10 @@ class DatabaseHelperCloud {
   // جديد: تحميل بيانات الصور من ImageStorage
   Future<Uint8List?> getImageData(String fileName) async {
     try {
+      if (fileName.isEmpty) {
+        print('❌ اسم الملف فارغ');
+        return null;
+      }
       return await postgresService.getImageData(fileName);
     } catch (e) {
       print('❌ Error getting image data: $e');
@@ -354,11 +399,15 @@ class DatabaseHelperCloud {
       // Upload image file to ImageStorage table
       final file = File(imagePath);
       if (!file.existsSync()) {
-        throw Exception('Image file not found: $imagePath');
+        print('❌ صورة غير موجودة: $imagePath');
+        return 0;
       }
+      
+      print('📁 جاري قراءة الملف: $imagePath');
       
       // Read file bytes
       final fileBytes = await file.readAsBytes();
+      print('✅ تم قراءة ${fileBytes.length} بايت');
       
       // Generate timestamped filename to match bot's naming convention
       // Format: {timestamp}_{uuid}{ext}
@@ -367,23 +416,48 @@ class DatabaseHelperCloud {
       final ext = p.extension(imagePath); // Get file extension
       final fileName = '${timestamp}_$uuid$ext';
       
-      print('📤 Uploading image to cloud: $fileName (${fileBytes.length} bytes)');
+      print('📤 جاري تحميل الصورة: $fileName (${fileBytes.length} bytes)');
       
-      // Upload to ImageStorage table via PostgreSQL
-      final result = await postgresService.uploadImageToStorage(fileName, fileBytes);
+      // Upload to ImageStorage table via PostgreSQL with timeout
+      final uploadResult = await postgresService
+          .uploadImageToStorage(fileName, fileBytes)
+          .timeout(
+            const Duration(seconds: 30),
+            onTimeout: () {
+              print('⏱️ انتهت مهلة تحميل الصورة');
+              return 0;
+            },
+          );
       
-      if (result > 0) {
-        print('✅ Image uploaded successfully: $fileName');
-        
-        // Insert ProductImage entry with the generated filename
-        final imageId = await postgresService.addProductImage(productId, fileName, imageOrder);
-        return imageId ?? 0;
-      } else {
-        throw Exception('Failed to upload image to storage');
+      if (uploadResult <= 0) {
+        print('❌ فشل تحميل الصورة إلى قاعدة البيانات');
+        return 0;
       }
-    } catch (e) {
-      print('❌ Error adding product image: $e');
-      rethrow;
+      
+      print('✅ تم تحميل الصورة بنجاح: $fileName');
+      
+      // Insert ProductImage entry with the generated filename
+      final imageId = await postgresService
+          .addProductImage(productId, fileName, imageOrder)
+          .timeout(
+            const Duration(seconds: 30),
+            onTimeout: () {
+              print('⏱️ انتهت مهلة ربط الصورة بالمنتج');
+              return null;
+            },
+          );
+      
+      if (imageId == null || imageId <= 0) {
+        print('❌ فشل ربط الصورة بالمنتج - imageId: $imageId');
+        return 0;
+      }
+      
+      print('✅ تم ربط الصورة بالمنتج: ID=$imageId');
+      return imageId;
+    } catch (e, stackTrace) {
+      print('❌ خطأ في إضافة الصورة: $e');
+      print('📍 Stack Trace: $stackTrace');
+      return 0;
     }
   }
 
@@ -491,9 +565,18 @@ class DatabaseHelperCloud {
 
   Future<List<Order>> getOrders(int sellerId) async {
     try {
-      return await postgresService.getUserOrders(sellerId);
+      print('🔄 جاري جلب الطلبات للمتجر $sellerId...');
+      final orders = await postgresService.getUserOrders(sellerId).timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          print('⏱️ انتهت مهلة جلب الطلبات');
+          return [];
+        }
+      );
+      print('✅ تم جلب ${orders.length} طلب');
+      return orders;
     } catch (e) {
-      print('❌ Error getting orders: $e');
+      print('❌ خطأ في جلب الطلبات: $e');
       return [];
     }
   }
@@ -648,13 +731,57 @@ class DatabaseHelperCloud {
   }
 
   Future<int> getCustomersCount(int sellerId) async {
-    return 0; // Credit customers managed via Bot
+    try {
+      final customers = await getCreditCustomers(sellerId);
+      return customers.length;
+    } catch (e) {
+      print('❌ Error getting customers count: $e');
+      return 0;
+    }
   }
 
   // ==================== Credit Customer Functions ====================
 
   Future<List<CreditCustomer>> getCreditCustomers(int sellerId) async {
-    return []; // Managed via Bot
+    try {
+      print('📥 Fetching credit customers for seller: $sellerId');
+      final results = await postgresService.getCreditCustomers(sellerId).timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          print('⏱️ انتهت مهلة جلب الزبائن الآجلين');
+          return [];
+        }
+      );
+      
+      print('📊 Received ${results.length} credit customers from database');
+      
+      final customers = results.map((row) {
+        print('🔍 Processing customer: ${row['FullName']}');
+        
+        // Handle CreatedAt - convert DateTime to String if needed
+        String? createdAt = row['CreatedAt'] != null 
+          ? (row['CreatedAt'] is DateTime 
+              ? (row['CreatedAt'] as DateTime).toString() 
+              : row['CreatedAt'] as String?)
+          : null;
+        
+        return CreditCustomer(
+          customerId: row['CustomerID'] ?? 0,
+          sellerId: row['SellerID'] ?? sellerId,
+          fullName: row['FullName'] ?? '',
+          phoneNumber: row['PhoneNumber'],
+          telegramId: row['TelegramID'],
+          createdAt: createdAt,
+        );
+      }).toList();
+      
+      print('✅ Successfully mapped ${customers.length} credit customers');
+      return customers;
+    } catch (e) {
+      print('❌ Error fetching credit customers: $e');
+      print('❌ Stack trace: $e');
+      return [];
+    }
   }
 
   Future<int?> addCreditCustomer(int sellerId, String fullName,
@@ -674,7 +801,57 @@ class DatabaseHelperCloud {
 
   Future<List<CustomerCreditTransaction>> getCustomerTransactions(
       int customerId) async {
-    return [];
+    try {
+      print('═══════════════════════════════════════════');
+      print('📊 جاري جلب معاملات الزبون $customerId...');
+      print('═══════════════════════════════════════════');
+      
+      final transactions = await postgresService.getCustomerTransactions(customerId).timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          print('⏱️ انتهت مهلة جلب المعاملات');
+          return [];
+        }
+      );
+      
+      print('📊 تم جلب ${transactions.length} معاملة');
+      
+      final result = transactions.map((row) {
+        print('🔍 معالجة المعاملة:');
+        print('   نوع: ${row['transactiontype']}');
+        print('   المبلغ: ${row['amount']}');
+        print('   التاريخ: ${row['transactiondate']}');
+        
+        // تحويل transactiondate إلى String
+        String? transactionDateStr;
+        final dateValue = row['transactiondate'];
+        if (dateValue is DateTime) {
+          transactionDateStr = dateValue.toIso8601String();
+        } else if (dateValue is String) {
+          transactionDateStr = dateValue;
+        }
+        
+        return CustomerCreditTransaction(
+          creditId: row['creditid'] as int? ?? 0,
+          customerId: row['customerid'] as int? ?? customerId,
+          sellerId: row['sellerid'] as int? ?? 0,
+          transactionType: row['transactiontype'] as String? ?? '',
+          amount: (row['amount'] as num?)?.toDouble() ?? 0,
+          description: row['description'] as String?,
+          balanceBefore: (row['balancebefore'] as num?)?.toDouble(),
+          balanceAfter: (row['balanceafter'] as num?)?.toDouble(),
+          transactionDate: transactionDateStr,
+        );
+      }).toList();
+      
+      print('✅ تم جلب المعاملات بنجاح');
+      print('═══════════════════════════════════════════');
+      return result;
+    } catch (e) {
+      print('❌ خطأ في جلب معاملات الزبون: $e');
+      print('Stack: $e');
+      return [];
+    }
   }
 
   Future<void> addCreditTransaction({
@@ -684,7 +861,131 @@ class DatabaseHelperCloud {
     required double amount,
     String? description,
   }) async {
-    // Managed via Bot
+    try {
+      print('═══════════════════════════════════════════');
+      print('💳 جاري إضافة معاملة ائتمانية...');
+      print('   الزبون: $customerId');
+      print('   المتجر: $sellerId');
+      print('   النوع: $transactionType');
+      print('   المبلغ: $amount');
+      print('═══════════════════════════════════════════');
+      
+      // الحصول على الرصيد الحالي
+      final currentBalance = await postgresService.getCustomerBalance(customerId, sellerId);
+      
+      double balanceBefore = currentBalance ?? 0;
+      double balanceAfter = balanceBefore;
+      
+      // حساب الرصيد بعد المعاملة
+      if (transactionType == 'credit') {
+        balanceAfter = balanceBefore + amount; // دين جديد (شراء آجل)
+      } else if (transactionType == 'payment') {
+        balanceAfter = balanceBefore - amount; // دفع (تسديد)
+      }
+      
+      print('💰 الرصيد قبل: $balanceBefore');
+      print('💰 الرصيد بعد: $balanceAfter');
+      
+      // إضافة المعاملة إلى قاعدة البيانات
+      final result = await postgresService.addCreditTransaction(
+        customerId: customerId,
+        sellerId: sellerId,
+        transactionType: transactionType,
+        amount: amount,
+        description: description ?? (transactionType == 'payment' ? 'تسديد نقدي' : 'شراء آجل'),
+        balanceBefore: balanceBefore,
+        balanceAfter: balanceAfter,
+      ).timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          print('⏱️ انتهت مهلة إضافة المعاملة');
+          return 0;
+        }
+      );
+      
+      if (result > 0) {
+        print('✅ تمت إضافة المعاملة بنجاح (CreditID: $result)');
+      } else {
+        print('⚠️ فشل إضافة المعاملة');
+      }
+      print('═══════════════════════════════════════════');
+    } catch (e) {
+      print('❌ خطأ في إضافة المعاملة الائتمانية: $e');
+      print('Stack: $e');
+      rethrow;
+    }
+  }
+
+  Future<bool> updateCreditTransaction({
+    required int creditId,
+    required String transactionType,
+    required double amount,
+    String? description,
+    required double balanceBefore,
+    required double balanceAfter,
+  }) async {
+    try {
+      print('═══════════════════════════════════════════');
+      print('✏️ جاري تعديل المعاملة $creditId...');
+      print('   النوع: $transactionType');
+      print('   المبلغ: $amount');
+      print('═══════════════════════════════════════════');
+      
+      final result = await postgresService.updateCreditTransaction(
+        creditId: creditId,
+        transactionType: transactionType,
+        amount: amount,
+        description: description,
+        balanceBefore: balanceBefore,
+        balanceAfter: balanceAfter,
+      ).timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          print('⏱️ انتهت مهلة تعديل المعاملة');
+          return false;
+        }
+      );
+      
+      if (result) {
+        print('✅ تم تعديل المعاملة بنجاح');
+      } else {
+        print('⚠️ فشل تعديل المعاملة');
+      }
+      print('═══════════════════════════════════════════');
+      return result;
+    } catch (e) {
+      print('❌ خطأ في تعديل المعاملة: $e');
+      print('Stack: $e');
+      return false;
+    }
+  }
+
+  Future<bool> deleteCreditTransaction(int creditId) async {
+    try {
+      print('═══════════════════════════════════════════');
+      print('🗑️ جاري حذف المعاملة $creditId...');
+      print('═══════════════════════════════════════════');
+      
+      final result = await postgresService.deleteCreditTransaction(creditId).timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          print('⏱️ انتهت مهلة حذف المعاملة');
+          return false;
+        }
+      );
+      
+      if (result) {
+        print('✅ تم حذف المعاملة بنجاح');
+      } else {
+        print('⚠️ فشل حذف المعاملة');
+      }
+      print('═══════════════════════════════════════════');
+      return result;
+    } catch (e) {
+      print('❌ خطأ في حذف المعاملة: $e');
+      print('Stack: $e');
+      return false;
+    }
   }
 
   Future<CreditCustomer?> getCreditCustomerByPhone(
@@ -710,7 +1011,53 @@ class DatabaseHelperCloud {
   }
 
   Future<List<Message>> getMessages(int sellerId) async {
-    return [];
+    try {
+      print('═══════════════════════════════════════════');
+      print('📬 جاري جلب الرسائل للمتجر $sellerId...');
+      print('═══════════════════════════════════════════');
+      
+      final result = await postgresService.getMessages(sellerId).timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          print('⏱️ انتهت مهلة جلب الرسائل');
+          return [];
+        }
+      );
+      
+      print('📊 تم استقبال ${result.length} رسالة من قاعدة البيانات');
+      print('═══════════════════════════════════════════');
+      
+      if (result.isEmpty) {
+        print('⚠️ لا توجد رسائل لـ Seller ID: $sellerId');
+        return [];
+      }
+      
+      final messages = result.map((row) {
+        print('🔍 معالجة الرسالة:');
+        print('   Type: ${row['MessageType']}');
+        print('   Order: ${row['OrderID']}');
+        print('   Text: ${row['MessageText']?.toString().substring(0, 30)}...');
+        print('   Created: ${row['CreatedAt']}');
+        
+        return Message.fromMap({
+          'MessageID': row['MessageID'],
+          'OrderID': row['OrderID'],
+          'SellerID': row['SellerID'],
+          'MessageType': row['MessageType'],
+          'MessageText': row['MessageText'],
+          'IsRead': row['IsRead'] ?? false,
+          'CreatedAt': row['CreatedAt'],
+        });
+      }).toList();
+      
+      print('✅ تم جلب ${messages.length} رسالة بنجاح');
+      print('═══════════════════════════════════════════');
+      return messages;
+    } catch (e) {
+      print('❌ Error fetching messages: $e');
+      print('Stack: $e');
+      return [];
+    }
   }
 
   Future<void> markMessageAsRead(int messageId) async {

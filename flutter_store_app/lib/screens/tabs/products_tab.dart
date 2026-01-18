@@ -59,10 +59,15 @@ class _ProductsTabState extends State<ProductsTab> {
         widget.sellerId,
         forceRefresh: force,
       );
+      print('🏪 [products_tab] Seller ID: ${widget.sellerId}');
+      print('   Categories: ${cats.length}');
+      
       final prods = await DatabaseHelper.instance.getProducts(
         widget.sellerId,
         forceRefresh: force,
       );
+      print('   Products: ${prods.length}');
+      
       if (mounted) {
         setState(() {
           _categories = cats;
@@ -328,21 +333,8 @@ class _ProductsTabState extends State<ProductsTab> {
                                       2 // Mobile: 2 columns مع padding
                                 : 250, // Desktop: fixed size
                             childAspectRatio: () {
-                              // للمشترين في المتاجر المقفولة: استخدام نسبة مربع (1.0) لبطاقة 4.97 × 4.97
-                              // لصاحب المتجر أو المتاجر المفتوحة: استخدام الأبعاد الأصلية
-                              final isRestrictedForBuyer =
-                                  !widget.isEditable &&
-                                  widget.requireCustomerRegistration;
-
-                              if (isRestrictedForBuyer) {
-                                // للمتاجر المقفولة: نسبة مربع تماماً (1.0)
-                                return 1.0;
-                              } else {
-                                // الأبعاد للمتاجر المفتوحة أو لصاحب المتجر (زيادة النسبة لتجنب overflow)
-                                return MediaQuery.of(context).size.width < 600
-                                    ? 0.58
-                                    : 0.62;
-                              }
+                              // جميع البطاقات مربعة (1.0)
+                              return 1.0;
                             }(),
                             crossAxisSpacing:
                                 MediaQuery.of(context).size.width < 600
@@ -435,6 +427,23 @@ class _ProductsTabState extends State<ProductsTab> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
+                // الصورة الصغيرة (25% من الحجم)
+                if (product.imagePath != null)
+                  Container(
+                    width: 48,
+                    height: 48,
+                    margin: const EdgeInsets.only(bottom: 8),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: Colors.grey[300]!),
+                    ),
+                    child: Image.asset(
+                      product.imagePath!,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) =>
+                          const Icon(Icons.image, color: Colors.grey, size: 24),
+                    ),
+                  ),
                 // اسم المنتج
                 Text(
                   product.name,
@@ -449,48 +458,45 @@ class _ProductsTabState extends State<ProductsTab> {
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 3),
-                // السعر والكمية
-                Wrap(
-                  spacing: 4,
-                  runSpacing: 2,
-                  children: [
-                    Text(
-                      '${formatPrice(product.price)} د.ع',
-                      style: TextStyle(
-                        color: Colors.blue,
-                        fontWeight: FontWeight.bold,
-                        fontSize: MediaQuery.of(context).size.width < 600
-                            ? 11
-                            : 13,
-                      ),
-                    ),
-                    Text(
-                      'الكمية: ${product.quantity}',
-                      style: TextStyle(
-                        fontSize: MediaQuery.of(context).size.width < 600
-                            ? 12
-                            : 13,
-                        color: Colors.grey[600],
-                      ),
-                    ),
-                  ],
+                // السعر
+                Text(
+                  '${formatPrice(product.price)} د.ع',
+                  style: TextStyle(
+                    color: Colors.blue,
+                    fontWeight: FontWeight.bold,
+                    fontSize: MediaQuery.of(context).size.width < 600
+                        ? 11
+                        : 13,
+                  ),
                 ),
+                const SizedBox(height: 3),
                 // سعر الجملة (إذا كان في وضع التعديل)
                 if (widget.isEditable && product.wholesalePrice != null) ...[
-                  const SizedBox(height: 4),
                   Text(
                     'جملة: ${formatPrice(product.wholesalePrice)} د.ع',
                     style: TextStyle(
                       fontSize: MediaQuery.of(context).size.width < 600
-                          ? 9
-                          : 10,
+                          ? 11
+                          : 13,
                       color: Colors.green,
                       fontWeight: FontWeight.bold,
                     ),
                     overflow: TextOverflow.ellipsis,
                     maxLines: 1,
                   ),
+                  const SizedBox(height: 3),
                 ],
+                // الكمية
+                Text(
+                  'الكمية: ${product.quantity}',
+                  style: TextStyle(
+                    fontSize: MediaQuery.of(context).size.width < 600
+                        ? 14
+                        : 16,
+                    color: Colors.red,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ],
             ),
           ),
