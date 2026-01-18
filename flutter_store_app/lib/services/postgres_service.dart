@@ -1,6 +1,7 @@
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:postgres/postgres.dart' as postgres;
 import 'dart:typed_data';
+import 'dart:convert';
 import '../models/database_models.dart';
 
 /// خدمة الاتصال ببقاعدة بيانات PostgreSQL السحابية
@@ -17,6 +18,11 @@ class PostgresService {
   String _username = 'postgres';
   String _password = '';
   bool _useSSL = true;
+  
+  // Cache للصور لتحسين الأداء
+  final Map<String, Uint8List> _imageCache = {};
+  final Map<String, DateTime> _imageCacheTime = {};
+  static const int _cacheValidityMinutes = 60;
 
   factory PostgresService() {
     return _instance;
@@ -460,17 +466,28 @@ class PostgresService {
         return null;
       }
       
+      // تحقق من الـ cache أولاً
+      if (_imageCache.containsKey(fileName)) {
+        final cacheTime = _imageCacheTime[fileName];
+        if (cacheTime != null) {
+          final elapsed = DateTime.now().difference(cacheTime);
+          if (elapsed.inMinutes < _cacheValidityMinutes) {
+            print('💾 استرجاع من الـ cache: $fileName');
+            return _imageCache[fileName];
+          }
+        }
+        // Cache انتهت صلاحيته
+        _imageCache.remove(fileName);
+        _imageCacheTime.remove(fileName);
+      }
+      
       await _ensureConnection();
       
-      print('🔍 جاري البحث عن الصورة: $fileName');
-      
-      // استرجاع البيانات بصيغة hex آمنة من PostgreSQL
+      // استرجاع البيانات بصيغة base64 (أسرع من hex)
       final results = await _connection!.execute(
-        'SELECT encode(filedata, \'hex\') as filedata FROM imagestorage WHERE filename = \$1',
+        'SELECT encode(filedata, \'base64\') as filedata FROM imagestorage WHERE filename = \$1',
         parameters: [fileName],
       );
-      
-      print('🔍 تم استرجاع ${results.length} نتيجة');
       
       if (results.isEmpty) {
         print('⚠️ لم يتم العثور على الصورة: $fileName');
@@ -478,29 +495,24 @@ class PostgresService {
       }
       
       final row = results.first.toColumnMap();
-      final hexData = row['filedata'];
+      final base64Data = row['filedata'];
       
-      if (hexData == null) {
+      if (base64Data == null) {
         print('⚠️ بيانات الصورة فارغة: $fileName');
         return null;
       }
-      
-      print('✅ تم العثور على البيانات بصيغة hex (${hexData.toString().length} characters)');
 
       try {
-        // تحويل hex string إلى bytes
-        final hexString = hexData.toString();
-        final bytes = <int>[];
-        for (int i = 0; i < hexString.length; i += 2) {
-          final hexByte = hexString.substring(i, i + 2);
-          bytes.add(int.parse(hexByte, radix: 16));
-        }
+        // تحويل base64 string إلى bytes (أسرع بكثير من hex)
+        final uint8Bytes = base64Decode(base64Data.toString());
         
-        final uint8Bytes = Uint8List.fromList(bytes);
-        print('✅ تم تحويل hex إلى bytes بنجاح (${uint8Bytes.length} bytes)');
+        // احفظ في الـ cache
+        _imageCache[fileName] = uint8Bytes;
+        _imageCacheTime[fileName] = DateTime.now();
+        
         return uint8Bytes;
       } catch (e) {
-        print('❌ خطأ في تحويل hex: $e');
+        print('❌ خطأ في تحويل base64: $e');
         return null;
       }
     } catch (e) {
@@ -1368,5 +1380,19 @@ class PostgresService {
         print('❌ Error closing connection: $e');
       }
     }
+  }
+  
+  // مسح الـ cache
+  void clearImageCache() {
+    _imageCache.clear();
+    _imageCacheTime.clear();
+    print('💾 تم مسح cache الصور');
+  }
+  
+  // مسح cache صورة واحدة
+  void clearImageCacheFor(String fileName) {
+    _imageCache.remove(fileName);
+    _imageCacheTime.remove(fileName);
+    print('💾 تم مسح cache الصورة: $fileName');
   }
 }

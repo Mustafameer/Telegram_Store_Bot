@@ -386,7 +386,14 @@ class DatabaseHelperCloud {
         print('❌ اسم الملف فارغ');
         return null;
       }
-      return await postgresService.getImageData(fileName);
+      // أضيف timeout لمنع التأخير الطويل
+      return await postgresService.getImageData(fileName).timeout(
+        const Duration(seconds: 60),
+        onTimeout: () {
+          print('⏱️ انتهت مهلة تحميل الصورة: $fileName');
+          return null;
+        }
+      );
     } catch (e) {
       print('❌ Error getting image data: $e');
       return null;
