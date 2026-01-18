@@ -217,7 +217,7 @@ class DatabaseHelperCloud {
     try {
       print('🔄 جاري جلب الأقسام للمتجر $sellerId...');
       final categories = await postgresService.getCategories(sellerId).timeout(
-        const Duration(seconds: 30),
+        const Duration(seconds: 15),
         onTimeout: () {
           print('⏱️ انتهت مهلة جلب الأقسام');
           return [];
@@ -277,7 +277,7 @@ class DatabaseHelperCloud {
       print('   Category Filter: $categoryId');
       
       final products = await postgresService.getProducts(sellerId, categoryId).timeout(
-        const Duration(seconds: 30),
+        const Duration(seconds: 20),
         onTimeout: () {
           print('⏱️ انتهت مهلة جلب المنتجات');
           return [];

@@ -125,8 +125,14 @@ class PostgresService {
       await _ensureConnection();
       
       final results = await _connection!.execute(
-        'SELECT * FROM sellers WHERE "telegramid" = \$1',
+        'SELECT "sellerid", "telegramid", "username", "storename", "status", "imagepath", "requirecustomerregistration" FROM sellers WHERE "telegramid" = \$1',
         parameters: [telegramId],
+      ).timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          print('⏱️ Timeout fetching seller');
+          return [];
+        }
       );
       
       if (results.isEmpty) return null;
@@ -189,8 +195,14 @@ class PostgresService {
       await _ensureConnection();
       
       final results = await _connection!.execute(
-        'SELECT * FROM "Categories" WHERE "SellerID" = \$1 ORDER BY "OrderIndex"',
+        'SELECT "CategoryID", "SellerID", "Name", "OrderIndex", "ImagePath" FROM "Categories" WHERE "SellerID" = \$1 ORDER BY "OrderIndex" LIMIT 100',
         parameters: [sellerId],
+      ).timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          print('⏱️ Timeout fetching categories');
+          return [];
+        }
       );
       
       return results.map((row) {
@@ -296,13 +308,25 @@ class PostgresService {
       
       if (categoryId != null) {
         results = await _connection!.execute(
-          'SELECT * FROM products WHERE "sellerid" = \$1 AND "categoryid" = \$2 ORDER BY "productid"',
+          'SELECT "productid", "sellerid", "categoryid", "name", "description", "price", "wholesaleprice", "quantity", "imagepath", "status" FROM products WHERE "sellerid" = \$1 AND "categoryid" = \$2 ORDER BY "productid" LIMIT 500',
           parameters: [sellerId, categoryId],
+        ).timeout(
+          const Duration(seconds: 15),
+          onTimeout: () {
+            print('⏱️ Timeout fetching products');
+            return [];
+          }
         );
       } else {
         results = await _connection!.execute(
-          'SELECT * FROM products WHERE "sellerid" = \$1 ORDER BY "productid"',
+          'SELECT "productid", "sellerid", "categoryid", "name", "description", "price", "wholesaleprice", "quantity", "imagepath", "status" FROM products WHERE "sellerid" = \$1 ORDER BY "productid" LIMIT 500',
           parameters: [sellerId],
+        ).timeout(
+          const Duration(seconds: 15),
+          onTimeout: () {
+            print('⏱️ Timeout fetching products');
+            return [];
+          }
         );
       }
       
