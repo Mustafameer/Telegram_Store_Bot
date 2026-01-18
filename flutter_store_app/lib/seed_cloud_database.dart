@@ -35,8 +35,9 @@ Future<void> main() async {
     await connection.execute('DELETE FROM OrderItems');
     await connection.execute('DELETE FROM Orders');
     await connection.execute('DELETE FROM Carts');
-    await connection.execute('DELETE FROM ProductImages');
-    await connection.execute('DELETE FROM Products');
+    // Delete from imagestorage (productimages table was deleted)
+    await connection.execute('DELETE FROM imagestorage');
+    await connection.execute('DELETE FROM products');
     await connection.execute('DELETE FROM Categories');
     await connection.execute('DELETE FROM Users');
     await connection.execute('DELETE FROM Sellers');
@@ -83,7 +84,7 @@ Future<void> main() async {
     // Insert Products for Category 1 (Electronics)
     print('📝 Inserting sample products...');
     final prod1Result = await connection.execute(
-      '''INSERT INTO Products ("sellerid", "categoryid", "name", "description", "price", "wholesaleprice", "quantity", "imagepath", "status")
+      '''INSERT INTO products ("sellerid", "categoryid", "name", "description", "price", "wholesaleprice", "quantity", "imagepath", "status")
          VALUES (\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8, \$9)
          RETURNING "productid"''',
       parameters: [
@@ -101,7 +102,7 @@ Future<void> main() async {
     final prod1Id = prod1Result.first.toColumnMap()['productid'] as int;
 
     final prod2Result = await connection.execute(
-      '''INSERT INTO Products ("sellerid", "categoryid", "name", "description", "price", "wholesaleprice", "quantity", "imagepath", "status")
+      '''INSERT INTO products ("sellerid", "categoryid", "name", "description", "price", "wholesaleprice", "quantity", "imagepath", "status")
          VALUES (\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8, \$9)
          RETURNING "productid"''',
       parameters: [
@@ -120,7 +121,7 @@ Future<void> main() async {
 
     // Insert Products for Category 2 (Clothing)
     final prod3Result = await connection.execute(
-      '''INSERT INTO Products ("sellerid", "categoryid", "name", "description", "price", "wholesaleprice", "quantity", "imagepath", "status")
+      '''INSERT INTO products ("sellerid", "categoryid", "name", "description", "price", "wholesaleprice", "quantity", "imagepath", "status")
          VALUES (\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8, \$9)
          RETURNING "productid"''',
       parameters: [
@@ -139,27 +140,16 @@ Future<void> main() async {
 
     print('✅ Products created: ID1=$prod1Id, ID2=$prod2Id, ID3=$prod3Id');
 
-    // Insert Product Images
+    // Insert Product Images into imagestorage
     print('📝 Inserting product images...');
-    await connection.execute(
-      '''INSERT INTO ProductImages ("productid", "imagepath")
-         VALUES (\$1, \$2)''',
-      parameters: [prod1Id, 'phone.jpg'],
-    );
+    
+    // Note: productimages table has been deleted.
+    // Images are now stored in imagestorage with productid and imageorder fields
+    // We'll update imagestorage entries with productid
+    // Since seed script just initializes structure, we skip sample product image data
+    // Real images are added when users upload them via manage product images screen
 
-    await connection.execute(
-      '''INSERT INTO ProductImages ("productid", "imagepath")
-         VALUES (\$1, \$2)''',
-      parameters: [prod2Id, 'headphones.jpg'],
-    );
-
-    await connection.execute(
-      '''INSERT INTO ProductImages ("productid", "imagepath")
-         VALUES (\$1, \$2)''',
-      parameters: [prod3Id, 'tshirt.jpg'],
-    );
-
-    print('✅ Product images created');
+    print('✅ Product images structure ready (productimages has been consolidated into imagestorage)');
 
     // Insert Sample User
     print('📝 Inserting sample user...');

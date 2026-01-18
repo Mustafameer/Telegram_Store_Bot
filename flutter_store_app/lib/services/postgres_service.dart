@@ -100,9 +100,13 @@ class PostgresService {
   Future<void> _ensureConnection() async {
     if (!_isConnected || _connection == null) {
       try {
+        print('🔄 Attempting to reconnect to PostgreSQL...');
         await _connect();
+        print('✅ Reconnection successful');
       } catch (e) {
         print('❌ Failed to reconnect: $e');
+        _isConnected = false;
+        _connection = null;
         rethrow;
       }
     }
@@ -179,18 +183,18 @@ class PostgresService {
       await _ensureConnection();
       
       final results = await _connection!.execute(
-        'SELECT * FROM categories WHERE "sellerid" = \$1 ORDER BY "orderindex"',
+        'SELECT * FROM "Categories" WHERE "SellerID" = \$1 ORDER BY "OrderIndex"',
         parameters: [sellerId],
       );
       
       return results.map((row) {
         final map = row.toColumnMap();
         return Category(
-          categoryId: map['categoryid'] as int,
-          sellerId: map['sellerid'] as int,
-          name: map['name'] as String,
-          orderIndex: map['orderindex'] as int? ?? 0,
-          imagePath: map['imagepath'] as String?,
+          categoryId: map['CategoryID'] as int,
+          sellerId: map['SellerID'] as int,
+          name: map['Name'] as String,
+          orderIndex: map['OrderIndex'] as int? ?? 0,
+          imagePath: map['ImagePath'] as String?,
         );
       }).toList();
     } catch (e) {
@@ -204,7 +208,7 @@ class PostgresService {
       await _ensureConnection();
       
       final results = await _connection!.execute(
-        'SELECT * FROM categories WHERE "categoryid" = \$1',
+        'SELECT * FROM "Categories" WHERE "CategoryID" = \$1',
         parameters: [categoryId],
       );
       
@@ -212,15 +216,67 @@ class PostgresService {
       
       final map = results.first.toColumnMap();
       return Category(
-        categoryId: map['categoryid'] as int,
-        sellerId: map['sellerid'] as int,
-        name: map['name'] as String,
-        orderIndex: map['orderindex'] as int? ?? 0,
-        imagePath: map['imagepath'] as String?,
+        categoryId: map['CategoryID'] as int,
+        sellerId: map['SellerID'] as int,
+        name: map['Name'] as String,
+        orderIndex: map['OrderIndex'] as int? ?? 0,
+        imagePath: map['ImagePath'] as String?,
       );
     } catch (e) {
       print('❌ Error getting category: $e');
       return null;
+    }
+  }
+
+  Future<void> updateCategory(int categoryId, String name, int orderIndex) async {
+    try {
+      await _ensureConnection();
+      
+      await _connection!.execute(
+        'UPDATE "Categories" SET "Name" = \$1, "OrderIndex" = \$2 WHERE "CategoryID" = \$3',
+        parameters: [name, orderIndex, categoryId],
+      );
+      
+      print('✅ Category updated: ID=$categoryId');
+    } catch (e) {
+      print('❌ Error updating category: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> addCategory(int sellerId, String name) async {
+    try {
+      print('📡 Ensuring PostgreSQL connection...');
+      await _ensureConnection();
+      print('✅ Connection verified');
+      
+      print('📁 Preparing INSERT query for category: "$name" (SellerID: $sellerId)');
+      await _connection!.execute(
+        'INSERT INTO "Categories" ("SellerID", "Name", "OrderIndex") VALUES (\$1, \$2, 0)',
+        parameters: [sellerId, name],
+      );
+      
+      print('✅ Category added successfully: $name');
+    } catch (e) {
+      print('❌ Error adding category: $e');
+      print('   Error type: ${e.runtimeType}');
+      rethrow;
+    }
+  }
+
+  Future<void> deleteCategory(int categoryId) async {
+    try {
+      await _ensureConnection();
+      
+      await _connection!.execute(
+        'DELETE FROM "Categories" WHERE "CategoryID" = \$1',
+        parameters: [categoryId],
+      );
+      
+      print('✅ Category deleted: ID=$categoryId');
+    } catch (e) {
+      print('❌ Error deleting category: $e');
+      rethrow;
     }
   }
 
@@ -301,21 +357,49 @@ class PostgresService {
     try {
       await _ensureConnection();
       
+      print('🔍 جاري البحث عن صور المنتج: ID=$productId');
+      
+      // استعلام من جدول imagestorage (مع productid و imageorder)
       final results = await _connection!.execute(
-        'SELECT "imageid", "productid", "imagepath" FROM "productimages" WHERE "productid" = \$1 ORDER BY "imageid"',
+        '''SELECT "imageid", "filename" as "imagepath", "imageorder", "productid"
+           FROM "imagestorage" 
+           WHERE "productid" = \$1 
+           ORDER BY "imageorder", "imageid"''',
         parameters: [productId],
       );
       
-      return results.map((row) {
+      print('📸 تم العثور على ${results.length} صورة للمنتج $productId');
+      
+      if (results.isEmpty) {
+        print('⚠️ لا توجد صور للمنتج $productId');
+        return [];
+      }
+      
+      final images = results.map((row) {
         final map = row.toColumnMap();
+        final imagePath = map['imagepath']?.toString() ?? '';
+        
+        if (imagePath.isEmpty) {
+          print('   - ⚠️ صورة بمسار فارغ! ID: ${map['imageid']}');
+        } else {
+          print('   - صورة: $imagePath');
+        }
+        
         return {
           'imageid': map['imageid'],
-          'productid': map['productid'],
-          'imagepath': map['imagepath'],
+          'productid': map['productid'] ?? productId,
+          'imagepath': imagePath,
+          'imageorder': map['imageorder'] ?? 0,
         };
       }).toList();
+      
+      // تصفية الصور ذات imagepath الفارغ
+      final validImages = images.where((img) => (img['imagepath'] as String).isNotEmpty).toList();
+      print('📊 عدد الصور الصحيحة بعد التصفية: ${validImages.length} (تم حذف ${images.length - validImages.length} صور فارغة)');
+      
+      return validImages;
     } catch (e) {
-      print('❌ Error getting product images: $e');
+      print('❌ خطأ في جلب صور المنتج: $e');
       return [];
     }
   }
@@ -323,38 +407,56 @@ class PostgresService {
   // جديد: تحميل بيانات الصور من ImageStorage
   Future<Uint8List?> getImageData(String fileName) async {
     try {
+      if (fileName.isEmpty) {
+        print('❌ اسم الملف فارغ');
+        return null;
+      }
+      
       await _ensureConnection();
       
-      print('🔍 [DEBUG] Searching for image: $fileName');
+      print('🔍 جاري البحث عن الصورة: $fileName');
       
+      // استرجاع البيانات بصيغة hex آمنة من PostgreSQL
       final results = await _connection!.execute(
-        'SELECT "filedata" FROM "imagestorage" WHERE "filename" = \$1',
+        'SELECT encode(filedata, \'hex\') as filedata FROM imagestorage WHERE filename = \$1',
         parameters: [fileName],
       );
       
-      print('🔍 [DEBUG] Query returned ${results.length} results');
+      print('🔍 تم استرجاع ${results.length} نتيجة');
       
       if (results.isEmpty) {
-        print('⚠️ [DEBUG] No image found with name: $fileName');
+        print('⚠️ لم يتم العثور على الصورة: $fileName');
         return null;
       }
       
       final row = results.first.toColumnMap();
-      final fileData = row['filedata'];
+      final hexData = row['filedata'];
       
-      print('✅ [DEBUG] Found image data, type: ${fileData.runtimeType}, size: ${fileData.toString().length} bytes');
-
-      if (fileData is Uint8List) {
-        print('✅ [DEBUG] Data is Uint8List, returning directly');
-        return fileData;
-      } else if (fileData is List) {
-        print('✅ [DEBUG] Data is List, converting to Uint8List');
-        return Uint8List.fromList(List<int>.from(fileData));
+      if (hexData == null) {
+        print('⚠️ بيانات الصورة فارغة: $fileName');
+        return null;
       }
-      print('❌ [DEBUG] Data is unknown type: ${fileData.runtimeType}');
-      return null;
+      
+      print('✅ تم العثور على البيانات بصيغة hex (${hexData.toString().length} characters)');
+
+      try {
+        // تحويل hex string إلى bytes
+        final hexString = hexData.toString();
+        final bytes = <int>[];
+        for (int i = 0; i < hexString.length; i += 2) {
+          final hexByte = hexString.substring(i, i + 2);
+          bytes.add(int.parse(hexByte, radix: 16));
+        }
+        
+        final uint8Bytes = Uint8List.fromList(bytes);
+        print('✅ تم تحويل hex إلى bytes بنجاح (${uint8Bytes.length} bytes)');
+        return uint8Bytes;
+      } catch (e) {
+        print('❌ خطأ في تحويل hex: $e');
+        return null;
+      }
     } catch (e) {
-      print('❌ Error getting image data: $e');
+      print('❌ خطأ في جلب بيانات الصورة: $e');
       return null;
     }
   }
@@ -364,7 +466,7 @@ class PostgresService {
       await _ensureConnection();
       
       final results = await _connection!.execute(
-        'SELECT "imageid", "productid", "imagepath" FROM "productimages" WHERE "productid" = \$1 ORDER BY "imageid" LIMIT \$2',
+        'SELECT "imageid", "filename" as "imagepath", "imageorder" FROM "imagestorage" WHERE "productid" = \$1 ORDER BY "imageorder", "imageid" LIMIT \$2',
         parameters: [productId, quantity],
       );
       
@@ -372,8 +474,9 @@ class PostgresService {
         final map = row.toColumnMap();
         return {
           'imageid': map['imageid'],
-          'productid': map['productid'],
+          'productid': productId,
           'imagepath': map['imagepath'],
+          'imageorder': map['imageorder'] ?? 0,
         };
       }).toList();
     } catch (e) {
@@ -582,15 +685,15 @@ class PostgresService {
     try {
       await _ensureConnection();
       
-      // First delete related images
+      // First delete related images from imagestorage (CASCADE should handle this, but be explicit)
       await _connection!.execute(
-        'DELETE FROM "productimages" WHERE "productid" = \$1',
+        'DELETE FROM "imagestorage" WHERE "productid" = \$1',
         parameters: [productId],
       );
       
       // Then delete the product
       await _connection!.execute(
-        'DELETE FROM products WHERE "productid" = \$1',
+        'DELETE FROM "products" WHERE "productid" = \$1',
         parameters: [productId],
       );
       
@@ -606,7 +709,7 @@ class PostgresService {
       await _ensureConnection();
       
       await _connection!.execute(
-        'UPDATE Products SET "quantity" = "quantity" - \$1 WHERE "productid" = \$2',
+        'UPDATE products SET "quantity" = "quantity" - \$1 WHERE "productid" = \$2',
         parameters: [decrementBy, productId],
       );
       
@@ -842,23 +945,23 @@ class PostgresService {
       
       // First delete related data
       await _connection!.execute(
-        'DELETE FROM "productimages" WHERE "productid" IN (SELECT "productid" FROM products WHERE "sellerid" = \$1)',
+        'DELETE FROM "imagestorage" WHERE "productid" IN (SELECT "productid" FROM "products" WHERE "sellerid" = \$1)',
         parameters: [sellerId],
       );
       
       await _connection!.execute(
-        'DELETE FROM products WHERE "sellerid" = \$1',
+        'DELETE FROM "products" WHERE "sellerid" = \$1',
         parameters: [sellerId],
       );
       
       await _connection!.execute(
-        'DELETE FROM categories WHERE "sellerid" = \$1',
+        'DELETE FROM "categories" WHERE "sellerid" = \$1',
         parameters: [sellerId],
       );
       
       // Finally delete the seller
       await _connection!.execute(
-        'DELETE FROM sellers WHERE "sellerid" = \$1',
+        'DELETE FROM "sellers" WHERE "sellerid" = \$1',
         parameters: [sellerId],
       );
       
@@ -871,44 +974,74 @@ class PostgresService {
 
   // ==================== Image Functions ====================
 
+  // جديد: رفع بيانات الصور لـ ImageStorage
   Future<int> uploadImageToStorage(String fileName, List<int> fileBytes) async {
     try {
       await _ensureConnection();
       
+      print('📤 جاري رفع الصورة: $fileName، الحجم: ${fileBytes.length} bytes');
+      
+      // تحويل البيانات إلى hex string لضمان الحفظ الآمن
+      final hexData = fileBytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+      print('📝 تم تحويل البيانات إلى hex (${hexData.length} characters)');
+      
       final result = await _connection!.execute(
-        '''INSERT INTO "imagestorage" ("filename", "filedata", "uploadedat") 
-           VALUES (\$1, \$2, NOW())
-           ON CONFLICT ("filename") DO UPDATE SET "filedata" = \$2, "uploadedat" = NOW()
+        '''INSERT INTO "imagestorage" ("filename", "filedata") 
+           VALUES (\$1, decode(\$2, 'hex'))
+           ON CONFLICT ("filename") DO UPDATE SET "filedata" = decode(\$2, 'hex')
            RETURNING 1''',
-        parameters: [fileName, fileBytes],
+        parameters: [fileName, hexData],
       );
       
-      // Return 1 if successful (file was inserted/updated)
-      return result.isNotEmpty ? 1 : 0;
+      if (result.isNotEmpty) {
+        print('✅ تم رفع الصورة بنجاح: $fileName');
+        return 1;
+      } else {
+        print('⚠️ فشل الرفع (النتيجة فارغة): $fileName');
+        return 0;
+      }
     } catch (e) {
-      print('❌ Error uploading image to storage: $e');
+      print('❌ خطأ في رفع الصورة: $e');
       return 0;
     }
   }
 
-  Future<int?> addProductImage(int productId, String imagePath, [int imageOrder = 0]) async {
+  Future<int?> addProductImage(int productId, String fileName, [int imageOrder = 0]) async {
     try {
       await _ensureConnection();
       
+      print('🔗 جاري إضافة صورة للمنتج $productId: $fileName');
+      
+      // تحديث السجل الموجود في imagestorage بربطه بـ productid و imageorder
       final result = await _connection!.execute(
-        '''INSERT INTO "productimages" ("productid", "imagepath", "imageorder")
-           VALUES (\$1, \$2, \$3)
+        '''UPDATE "imagestorage" 
+           SET "productid" = \$1, "imageorder" = \$2
+           WHERE "filename" = \$3
            RETURNING "imageid"''',
-        parameters: [productId, imagePath, imageOrder],
+        parameters: [productId, imageOrder, fileName],
       );
+      
+      print('📊 عدد الصفوف المرجعة: ${result.length}');
       
       if (result.isNotEmpty) {
         final map = result.first.toColumnMap();
-        return map['imageid'] as int?;
+        print('📍 القيم المرجعة: $map');
+        final imageId = map['imageid'] as int?;
+        
+        if (imageId != null && imageId > 0) {
+          print('✅ تم إضافة الصورة بنجاح: $fileName (Image ID: $imageId، المنتج: $productId، الترتيب: $imageOrder)');
+          return imageId;
+        } else {
+          print('⚠️ فشل الحصول على imageid - القيمة: $imageId');
+          return null;
+        }
       }
+      
+      print('⚠️ فشل التحديث (لم تعد أي صفوف محدثة)');
       return null;
-    } catch (e) {
-      print('❌ Error adding product image: $e');
+    } catch (e, stackTrace) {
+      print('❌ خطأ في إضافة الصورة: $e');
+      print('📍 Stack Trace: $stackTrace');
       return null;
     }
   }
@@ -917,14 +1050,261 @@ class PostgresService {
     try {
       await _ensureConnection();
       
+      print('🗑️ جاري حذف الصورة ID: $imageId');
+      
+      // حذف من جدول imagestorage
       await _connection!.execute(
-        'DELETE FROM "productimages" WHERE "imageid" = \$1',
+        'DELETE FROM "imagestorage" WHERE "imageid" = \$1',
         parameters: [imageId],
       );
       
+      print('✅ تم حذف الصورة بنجاح: $imageId');
       return true;
     } catch (e) {
-      print('❌ Error deleting product image: $e');
+      print('❌ خطأ في حذف الصورة: $e');
+      return false;
+    }
+  }
+
+  // Get messages for a seller
+  Future<List<Map<String, dynamic>>> getMessages(int sellerId) async {
+    try {
+      await _ensureConnection();
+      
+      print('🔌 PostgreSQL: Querying messages for seller $sellerId');
+      print('   Query: SELECT * FROM messages WHERE "sellerid" = \$1');
+      
+      final results = await _connection!.execute(
+        'SELECT * FROM messages WHERE "sellerid" = \$1 ORDER BY "createdat" DESC',
+        parameters: [sellerId],
+      );
+      
+      print('📊 PostgreSQL: Returned ${results.length} messages');
+      
+      if (results.isEmpty) {
+        print('⚠️ لا توجد رسائل في قاعدة البيانات لـ Seller ID: $sellerId');
+      }
+      
+      return results.map((row) {
+        final map = row.toColumnMap();
+        print('   📬 Found message: ${map['messagetype']} (OrderID: ${map['orderid']})');
+        return {
+          'MessageID': map['messageid'],
+          'OrderID': map['orderid'],
+          'SellerID': map['sellerid'],
+          'MessageType': map['messagetype'],
+          'MessageText': map['messagetext'],
+          'IsRead': (map['isread'] as int?) == 1,
+          'CreatedAt': map['createdat'],
+        };
+      }).toList();
+    } catch (e) {
+      print('❌ Error getting messages: $e');
+      print('❌ Stack: $e');
+      return [];
+    }
+  }
+
+  /// الحصول على الزبائن الآجلين لبائع معين
+  Future<List<dynamic>> getCreditCustomers(int sellerId) async {
+    try {
+      await _ensureConnection();
+      
+      print('🔌 PostgreSQL: Querying credit customers for seller $sellerId');
+      
+      final results = await _connection!.execute(
+        'SELECT * FROM creditcustomers WHERE "sellerid" = \$1 ORDER BY "fullname" ASC',
+        parameters: [sellerId],
+      );
+
+      print('📊 PostgreSQL: Returned ${results.length} rows');
+      
+      return results.map((row) {
+        final map = row.toColumnMap();
+        print('🔍 Row data: $map');
+        return {
+          'CustomerID': map['customerid'],
+          'SellerID': map['sellerid'],
+          'FullName': map['fullname'],
+          'PhoneNumber': map['phonenumber'],
+          'TelegramID': map['telegramid'],
+          'CreatedAt': map['createdat'],
+        };
+      }).toList();
+    } catch (e) {
+      print('❌ Error getting credit customers: $e');
+      print('❌ Stack trace: ${StackTrace.current}');
+      return [];
+    }
+  }
+
+  // ==================== Credit Transaction Functions ====================
+
+  Future<double?> getCustomerBalance(int customerId, int sellerId) async {
+    try {
+      await _ensureConnection();
+      
+      print('💰 جاري جلب رصيد الزبون $customerId للمتجر $sellerId');
+      
+      final results = await _connection!.execute(
+        '''SELECT "balanceafter" 
+           FROM "customercredit" 
+           WHERE "customerid" = \$1 AND "sellerid" = \$2
+           ORDER BY "transactiondate" DESC 
+           LIMIT 1''',
+        parameters: [customerId, sellerId],
+      );
+      
+      if (results.isNotEmpty) {
+        final map = results.first.toColumnMap();
+        final balance = map['balanceafter'] as double?;
+        print('✅ الرصيد الحالي: $balance');
+        return balance ?? 0;
+      }
+      
+      print('⚠️ لا توجد معاملات سابقة - الرصيد الحالي: 0');
+      return 0;
+    } catch (e) {
+      print('❌ خطأ في جلب الرصيد: $e');
+      return 0;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getCustomerTransactions(int customerId) async {
+    try {
+      await _ensureConnection();
+      
+      print('📊 جاري جلب معاملات الزبون $customerId');
+      
+      final results = await _connection!.execute(
+        '''SELECT "creditid", "customerid", "sellerid", "transactiontype", "amount", 
+                  "description", "balancebefore", "balanceafter", "transactiondate"
+           FROM "customercredit" 
+           WHERE "customerid" = \$1
+           ORDER BY "transactiondate" DESC''',
+        parameters: [customerId],
+      );
+      
+      print('📊 تم جلب ${results.length} معاملة');
+      
+      return results.map((row) {
+        final map = row.toColumnMap();
+        return {
+          'creditid': map['creditid'],
+          'customerid': map['customerid'],
+          'sellerid': map['sellerid'],
+          'transactiontype': map['transactiontype'],
+          'amount': map['amount'],
+          'description': map['description'],
+          'balancebefore': map['balancebefore'],
+          'balanceafter': map['balanceafter'],
+          'transactiondate': map['transactiondate'],
+        };
+      }).toList();
+    } catch (e) {
+      print('❌ خطأ في جلب المعاملات: $e');
+      return [];
+    }
+  }
+
+  Future<int> addCreditTransaction({
+    required int customerId,
+    required int sellerId,
+    required String transactionType,
+    required double amount,
+    String? description,
+    required double balanceBefore,
+    required double balanceAfter,
+  }) async {
+    try {
+      await _ensureConnection();
+      
+      print('💳 جاري إضافة معاملة ائتمانية...');
+      
+      final results = await _connection!.execute(
+        '''INSERT INTO "customercredit" 
+           ("customerid", "sellerid", "transactiontype", "amount", "description", 
+            "balancebefore", "balanceafter", "transactiondate")
+           VALUES (\$1, \$2, \$3, \$4, \$5, \$6, \$7, CURRENT_TIMESTAMP)
+           RETURNING "creditid"''',
+        parameters: [
+          customerId,
+          sellerId,
+          transactionType,
+          amount,
+          description ?? '',
+          balanceBefore,
+          balanceAfter,
+        ],
+      );
+      
+      if (results.isNotEmpty) {
+        final map = results.first.toColumnMap();
+        final creditId = map['creditid'] as int? ?? 0;
+        print('✅ تمت إضافة المعاملة بنجاح (ID: $creditId)');
+        return creditId;
+      }
+      
+      print('⚠️ فشل في الحصول على CreditID');
+      return 0;
+    } catch (e) {
+      print('❌ خطأ في إضافة المعاملة: $e');
+      print('Stack: $e');
+      return 0;
+    }
+  }
+
+  Future<bool> updateCreditTransaction({
+    required int creditId,
+    required String transactionType,
+    required double amount,
+    String? description,
+    required double balanceBefore,
+    required double balanceAfter,
+  }) async {
+    try {
+      await _ensureConnection();
+      
+      print('✏️ جاري تعديل المعاملة $creditId...');
+      
+      await _connection!.execute(
+        '''UPDATE "customercredit" 
+           SET "transactiontype" = \$1, "amount" = \$2, "description" = \$3,
+               "balancebefore" = \$4, "balanceafter" = \$5
+           WHERE "creditid" = \$6''',
+        parameters: [
+          transactionType,
+          amount,
+          description ?? '',
+          balanceBefore,
+          balanceAfter,
+          creditId,
+        ],
+      );
+      
+      print('✅ تم تعديل المعاملة بنجاح');
+      return true;
+    } catch (e) {
+      print('❌ خطأ في تعديل المعاملة: $e');
+      return false;
+    }
+  }
+
+  Future<bool> deleteCreditTransaction(int creditId) async {
+    try {
+      await _ensureConnection();
+      
+      print('🗑️ جاري حذف المعاملة $creditId...');
+      
+      await _connection!.execute(
+        'DELETE FROM "customercredit" WHERE "creditid" = \$1',
+        parameters: [creditId],
+      );
+      
+      print('✅ تم حذف المعاملة بنجاح');
+      return true;
+    } catch (e) {
+      print('❌ خطأ في حذف المعاملة: $e');
       return false;
     }
   }

@@ -130,7 +130,7 @@ class SyncService {
              await conn.execute(Sql.named('DELETE FROM OrderItems WHERE OrderID = @id'), parameters: {'id': remoteId});
              await conn.execute(Sql.named('DELETE FROM Messages WHERE OrderID = @id'), parameters: {'id': remoteId});
           } else if (table == 'Products') {
-             remoteTable = 'Products';
+             remoteTable = 'products';
              remoteKey = 'ProductID'; // Remote is ProductID
           } else if (table == 'OrderItems') {
              remoteTable = 'OrderItems';
@@ -239,7 +239,7 @@ class SyncService {
         'ImagePath': 'imagepath'
       });
       // Products
-      await _pushTable(conn, dbHelper, 'Products', 'Products', 'ProductID', {
+      await _pushTable(conn, dbHelper, 'Products', 'products', 'ProductID', {
         'ProductID': 'productid',
         'SellerID': 'sellerid',
         'CategoryID': 'categoryid',
@@ -319,10 +319,10 @@ class SyncService {
   Future<void> _resetSequences(Connection conn) async {
     try {
       // Reset Serial Sequences to match the highest ID we just inserted
-      await conn.execute("SELECT setval('categories_categoryid_seq', COALESCE((SELECT MAX(CategoryID) FROM Categories), 1))");
-      await conn.execute("SELECT setval('products_productid_seq', COALESCE((SELECT MAX(ProductID) FROM Products), 1))");
-      await conn.execute("SELECT setval('orders_orderid_seq', COALESCE((SELECT MAX(OrderID) FROM Orders), 1))");
-      await conn.execute("SELECT setval('orderitems_orderitemid_seq', COALESCE((SELECT MAX(OrderItemID) FROM OrderItems), 1))");
+      await conn.execute("SELECT setval('categories_categoryid_seq', COALESCE((SELECT MAX(\"categoryid\") FROM \"Categories\"), 1))");
+      await conn.execute("SELECT setval('products_productid_seq', COALESCE((SELECT MAX(\"productid\") FROM products), 1))");
+      await conn.execute("SELECT setval('orders_orderid_seq', COALESCE((SELECT MAX(\"orderid\") FROM \"Orders\"), 1))");
+      await conn.execute("SELECT setval('orderitems_orderitemid_seq', COALESCE((SELECT MAX(\"orderitemid\") FROM \"OrderItems\"), 1))");
       print("✅ Sequences Reset");
     } catch (e) {
       print("⚠️ Sequence Reset Failed (ignorable if tables empty): $e");
@@ -349,7 +349,7 @@ class SyncService {
         'imagepath': 'ImagePath'
       }, prune: prune);
        // Products
-      await _syncTable(conn, dbHelper, 'Products', 'productid', {
+      await _syncTable(conn, dbHelper, 'products', 'productid', {
          'productid': 'ProductID',
          'sellerid': 'SellerID',
          'categoryid': 'CategoryID',
@@ -730,17 +730,17 @@ class SyncService {
 
       // 3. Products
       await conn.execute('''
-        CREATE TABLE IF NOT EXISTS Products (
-          ProductID SERIAL PRIMARY KEY,
-          SellerID INTEGER,
-          CategoryID INTEGER,
-          Name TEXT,
-          Description TEXT,
-          Price NUMERIC,
-          WholesalePrice NUMERIC,
-          Quantity INTEGER,
-          ImagePath TEXT,
-          Status TEXT DEFAULT 'active'
+        CREATE TABLE IF NOT EXISTS products (
+          productid SERIAL PRIMARY KEY,
+          sellerid INTEGER,
+          categoryid INTEGER,
+          name TEXT,
+          description TEXT,
+          price NUMERIC,
+          wholesaleprice NUMERIC,
+          quantity INTEGER,
+          imagepath TEXT,
+          status TEXT DEFAULT 'active'
         )
       ''');
 
