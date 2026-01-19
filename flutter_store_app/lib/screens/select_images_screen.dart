@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../database/database_helper.dart';
 import '../models/database_models.dart';
 import 'package:intl/intl.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 
 // دالة لتنسيق المبالغ مع فاصلة الآلاف وإزالة الكسور
 String formatPrice(dynamic price) {
@@ -67,13 +69,6 @@ class _SelectImagesScreenState extends State<SelectImagesScreen> {
       return;
     }
 
-    if (_selectedQuantity > widget.product.quantity) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('الكمية المحددة أكبر من الكمية المتاحة')),
-      );
-      return;
-    }
-
     // الحصول على معلومات الزبون باستخدام Telegram ID
     if (widget.customerTelegramId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -92,8 +87,8 @@ class _SelectImagesScreenState extends State<SelectImagesScreen> {
     // حساب المبلغ الإجمالي
     final totalAmount = widget.product.price * _selectedQuantity;
 
-    // إضافة المعاملة الائتمانية
     try {
+      // 1. إضافة المعاملة الائتمانية
       await DatabaseHelper.instance.addCreditTransaction(
         customerId: customer.customerId,
         sellerId: widget.sellerId,
@@ -102,7 +97,7 @@ class _SelectImagesScreenState extends State<SelectImagesScreen> {
         description: 'شراء ${_selectedQuantity} صورة من منتج: ${widget.product.name}',
       );
 
-      // تحديث كمية المنتج (تأكد من عدم السالب)
+      // 2. تحديث كمية المنتج (تقليل بعدد الصور المشتراة)
       final newQuantity = (widget.product.quantity - _selectedQuantity).clamp(0, double.infinity).toInt();
       final updatedProduct = Product(
         productId: widget.product.productId,
@@ -118,6 +113,36 @@ class _SelectImagesScreenState extends State<SelectImagesScreen> {
       );
       await DatabaseHelper.instance.updateProduct(updatedProduct);
 
+      // 3. حذف الصور المشتراة من قاعدة البيانات (محليًا)
+      final imagesToDelete = _images.take(_selectedQuantity).toList();
+      final imageIdsToDelete = imagesToDelete.map((img) => img.imageId).toList();
+      
+      for (final image in imagesToDelete) {
+        await DatabaseHelper.instance.deleteProductImage(image.imageId);
+      }
+
+      // 4. إخبار البوت بحذف الصور من قاعدة البيانات (Cloud)
+      print('🗑️ إرسال أمر حذف الصور للبوت...');
+      try {
+        final response = await http.post(
+          Uri.parse('http://localhost:5000/api/delete-purchased-images'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'product_id': widget.product.productId,
+            'image_ids': imageIdsToDelete,
+          }),
+        ).timeout(const Duration(seconds: 5));
+        
+        if (response.statusCode == 200) {
+          print('✅ تم حذف الصور من البوت بنجاح');
+        } else {
+          print('⚠️ خطأ في حذف الصور من البوت: ${response.statusCode}');
+        }
+      } catch (e) {
+        print('⚠️ تنبيه: لم يتمكن من الاتصال بالبوت لحذف الصور: $e');
+        // لا نعطل الشراء إذا فشل حذف الصور من البوت
+      }
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -128,9 +153,13 @@ class _SelectImagesScreenState extends State<SelectImagesScreen> {
         Navigator.pop(context, true);
       }
     } catch (e) {
+      print('❌ خطأ في شراء الصور: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ في الشراء: $e')),
+          SnackBar(
+            content: Text('خطأ في الشراء: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
@@ -174,7 +203,7 @@ class _SelectImagesScreenState extends State<SelectImagesScreen> {
                               style: const TextStyle(fontSize: 14, color: Colors.grey),
                             ),
                             Text(
-                              'الكمية المتاحة: ${widget.product.quantity} صورة',
+                              'الكمية المتاحة: ${_images.length} صورة',
                               style: const TextStyle(fontSize: 14, color: Colors.grey),
                             ),
                           ],
@@ -196,7 +225,7 @@ class _SelectImagesScreenState extends State<SelectImagesScreen> {
                             spacing: 8,
                             runSpacing: 8,
                             children: List.generate(
-                              [widget.product.quantity, _images.length, 10].reduce((a, b) => a < b ? a : b),
+                              _images.length,
                               (index) {
                                 final qty = index + 1;
                                 final isSelected = _selectedQuantity == qty;

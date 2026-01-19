@@ -235,15 +235,16 @@ class DatabaseHelperCloud {
     // No-op for cloud database
   }
 
-  Future<void> addCategory(Category category) async {
+  Future<int?> addCategory(Category category) async {
     try {
-      print('� [DatabaseHelper] Adding category: ${category.name}');
+      print('🔹 [DatabaseHelper] Adding category: ${category.name}');
       print('   SellerID: ${category.sellerId}');
       print('   Calling postgresService.addCategory()...');
       
-      await postgresService.addCategory(category.sellerId, category.name);
+      final categoryId = await postgresService.addCategory(category.sellerId, category.name);
       
-      print('✅ [DatabaseHelper] Category added successfully to PostgreSQL: ${category.name}');
+      print('✅ [DatabaseHelper] Category added successfully to PostgreSQL: ${category.name} (ID: $categoryId)');
+      return categoryId;
     } catch (e) {
       print('❌ [DatabaseHelper] Error adding category: $e');
       print('   Error type: ${e.runtimeType}');
@@ -396,6 +397,25 @@ class DatabaseHelperCloud {
       );
     } catch (e) {
       print('❌ Error getting image data: $e');
+      return null;
+    }
+  }
+
+  Future<String?> getImageUrl(String fileName) async {
+    try {
+      if (fileName.isEmpty) {
+        print('❌ اسم الملف فارغ');
+        return null;
+      }
+      return await postgresService.getImageUrl(fileName).timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          print('⏱️ انتهت مهلة تحميل رابط الصورة: $fileName');
+          return null;
+        }
+      );
+    } catch (e) {
+      print('❌ Error getting image URL: $e');
       return null;
     }
   }

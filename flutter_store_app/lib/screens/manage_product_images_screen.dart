@@ -7,13 +7,11 @@ import '../models/database_models.dart';
 class ManageProductImagesScreen extends StatefulWidget {
   final Product product;
 
-  const ManageProductImagesScreen({
-    super.key,
-    required this.product,
-  });
+  const ManageProductImagesScreen({super.key, required this.product});
 
   @override
-  State<ManageProductImagesScreen> createState() => _ManageProductImagesScreenState();
+  State<ManageProductImagesScreen> createState() =>
+      _ManageProductImagesScreenState();
 }
 
 class _ManageProductImagesScreenState extends State<ManageProductImagesScreen> {
@@ -29,33 +27,21 @@ class _ManageProductImagesScreenState extends State<ManageProductImagesScreen> {
   Future<void> _loadImages() async {
     setState(() => _isLoading = true);
     try {
-      print('🔍 جاري تحميل الصور للمنتج: ${widget.product.productId}');
-      final images = await DatabaseHelper.instance.getProductImages(widget.product.productId);
-      print('✅ تم تحميل ${images.length} صورة للمنتج ${widget.product.productId}');
-      
-      // تصفية الصور ذات imagePath الفارغ
-      final validImages = images.where((img) => img.imagePath.isNotEmpty).toList();
-      print('📊 عدد الصور الصحيحة بعد التصفية: ${validImages.length} (تم تجاهل ${images.length - validImages.length} صور فارغة)');
-      
-      for (var img in validImages) {
-        print('   - صورة ID: ${img.imageId}, المسار: ${img.imagePath}');
-      }
-      
+      final images = await DatabaseHelper.instance.getProductImages(
+        widget.product.productId,
+      );
+      final validImages = images
+          .where((img) => img.imagePath.isNotEmpty)
+          .toList();
       setState(() {
         _images = validImages;
         _isLoading = false;
       });
-    } catch (e, stackTrace) {
-      print('❌ خطأ في تحميل الصور: $e');
-      print('📍 StackTrace: $stackTrace');
+    } catch (e) {
       setState(() => _isLoading = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('خطأ في تحميل الصور: $e'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 3),
-          ),
+          SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
         );
       }
     }
@@ -69,149 +55,76 @@ class _ManageProductImagesScreenState extends State<ManageProductImagesScreen> {
       );
 
       if (result != null && result.files.isNotEmpty) {
-        print('📁 تم اختيار ${result.files.length} صورة');
         int addedCount = 0;
         int imageOrder = _images.length;
 
         for (var file in result.files) {
           if (file.path != null) {
             try {
-              print('📤 جاري إضافة الصورة: ${file.name}');
               final imageId = await DatabaseHelper.instance.addProductImage(
                 widget.product.productId,
                 file.path!,
                 imageOrder: imageOrder++,
               );
-              print('📍 تم استقبال imageId: $imageId من قاعدة البيانات');
               if (imageId > 0) {
-                print('✅ تم إضافة الصورة بنجاح: ${file.name} (ID: $imageId)');
                 addedCount++;
-              } else {
-                print('❌ فشل إضافة الصورة: ${file.name} - imageId كان: $imageId (يجب أن يكون > 0)');
               }
-            } catch (e, stackTrace) {
-              print('❌ خطأ في إضافة الصورة ${file.name}: $e');
-              print('📍 Stack Trace: $stackTrace');
+            } catch (e) {
+              print('خطأ: $e');
             }
-          }
-        }
-        
-        print('📊 تم إضافة $addedCount صورة من أصل ${result.files.length}');
-        
-        if (addedCount == 0) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('❌ فشل إضافة جميع الصور. تحقق من السجلات للمزيد من المعلومات.'),
-                backgroundColor: Colors.red,
-                duration: Duration(seconds: 3),
-              ),
-            );
-          }
-          return;
-        }
-        
-        // تحديث كمية المنتج تلقائياً
-        if (addedCount > 0) {
-          try {
-            print('📥 جاري جلب الصور بعد الإضافة...');
-            final images = await DatabaseHelper.instance.getProductImages(widget.product.productId);
-            final imageCount = images.length;
-            
-            print('📊 عدد الصور بعد الإضافة: $imageCount');
-            print('   - الصور:');
-            for (var img in images) {
-              print('   - صورة ID: ${img.imageId}, المسار: ${img.imagePath}');
-            }
-            
-            // تحديث الكمية بناءً على عدد الصور
-            print('🔄 جاري تحديث الكمية من ${widget.product.quantity} إلى $imageCount');
-            final updatedProduct = widget.product.copyWith(quantity: imageCount);
-            await DatabaseHelper.instance.updateProduct(updatedProduct);
-            
-            print('✅ تم تحديث الكمية إلى: $imageCount');
-            print('📝 المنتج المحدث: ${updatedProduct.name}, الكمية: ${updatedProduct.quantity}');
-          } catch (e) {
-            print('❌ خطأ في تحديث الكمية: $e');
           }
         }
 
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('✅ تم إضافة $addedCount صورة بنجاح من أصل ${result.files.length}'),
-              backgroundColor: Colors.green,
-              duration: const Duration(seconds: 2),
-            ),
-          );
-          await Future.delayed(const Duration(milliseconds: 500));
-          _loadImages();
+        if (addedCount > 0) {
+          await _loadImages();
+          
+          // تحديث الكمية تلقائياً = عدد الصور
+          final updatedProduct = widget.product.copyWith(quantity: _images.length);
+          await DatabaseHelper.instance.updateProduct(updatedProduct);
+          
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('✅ تم إضافة $addedCount صورة'),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
         }
       }
     } catch (e) {
-      print('❌ خطأ في عملية الإضافة: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ في إضافة الصور: $e')),
+          SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
         );
       }
     }
   }
 
   Future<void> _deleteImage(ProductImage image) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('تأكيد الحذف'),
-        content: const Text('هل أنت متأكد من حذف هذه الصورة؟'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('إلغاء'),
+    try {
+      await DatabaseHelper.instance.deleteProductImage(image.imageId);
+      setState(() {
+        _images.removeWhere((img) => img.imageId == image.imageId);
+      });
+      
+      // تحديث الكمية تلقائياً = عدد الصور المتبقية
+      final updatedProduct = widget.product.copyWith(quantity: _images.length);
+      await DatabaseHelper.instance.updateProduct(updatedProduct);
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ تم حذف الصورة'),
+            backgroundColor: Colors.green,
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('حذف', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm == true) {
-        try {
-          await DatabaseHelper.instance.deleteProductImage(image.imageId);
-          
-          // تحديث كمية المنتج تلقائياً إذا كان المتجر مقفول
-          final seller = await DatabaseHelper.instance.getSellerById(widget.product.sellerId);
-          if (seller?.requireCustomerRegistration == true) {
-            // إعادة تحميل الصور بعد الحذف
-            final images = await DatabaseHelper.instance.getProductImages(widget.product.productId);
-            final imageCount = images.length;
-            
-            print('📊 عدد الصور بعد الحذف: $imageCount');
-            
-            // تحديث الكمية مباشرة
-            final updatedProduct = widget.product.copyWith(quantity: imageCount);
-            await DatabaseHelper.instance.updateProduct(updatedProduct);
-            
-            print('✅ تم تحديث الكمية إلى: $imageCount');
-          }
-          
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('تم حذف الصورة بنجاح'),
-                backgroundColor: Colors.green,
-              ),
-            );
-            _loadImages();
-          }
-        } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('خطأ في حذف الصورة: $e')),
-          );
-        }
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
+        );
       }
     }
   }
@@ -219,84 +132,33 @@ class _ManageProductImagesScreenState extends State<ManageProductImagesScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          'إدارة صور: ${widget.product.name}',
-          style: TextStyle(
-            color: Colors.blue[900], // أزرق غامق
-          ),
-        ),
-      ),
+      appBar: AppBar(title: Text('إدارة الصور: ${widget.product.name}')),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
-                // معلومات المنتج
-                Card(
-                  margin: const EdgeInsets.all(16),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                widget.product.name,
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                'عدد الصور: ${_images.length}',
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        ElevatedButton.icon(
-                          onPressed: _addImages,
-                          icon: const Icon(Icons.add_photo_alternate),
-                          label: const Text('إضافة صور'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.blue,
-                            foregroundColor: Colors.white,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                // قائمة الصور
                 Expanded(
                   child: _images.isEmpty
                       ? Center(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              const Icon(
-                                Icons.photo_library_outlined,
+                              Icon(
+                                Icons.image_not_supported,
                                 size: 64,
-                                color: Colors.grey,
+                                color: Colors.grey[400],
                               ),
                               const SizedBox(height: 16),
-                              const Text(
-                                'لا توجد صور حالياً',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  color: Colors.grey,
-                                ),
+                              Text(
+                                'لا توجد صور',
+                                style: Theme.of(
+                                  context,
+                                ).textTheme.headlineSmall,
                               ),
-                              const SizedBox(height: 16),
+                              const SizedBox(height: 32),
                               ElevatedButton.icon(
                                 onPressed: _addImages,
-                                icon: const Icon(Icons.add_photo_alternate),
+                                icon: const Icon(Icons.add_a_photo),
                                 label: const Text('إضافة صور'),
                               ),
                             ],
@@ -304,170 +166,122 @@ class _ManageProductImagesScreenState extends State<ManageProductImagesScreen> {
                         )
                       : GridView.builder(
                           padding: const EdgeInsets.all(16),
-                          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 9,
-                            crossAxisSpacing: 8,
-                            mainAxisSpacing: 8,
-                            childAspectRatio: 1.0,
-                          ),
+                          gridDelegate:
+                              const SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 9,
+                                crossAxisSpacing: 8,
+                                mainAxisSpacing: 8,
+                                childAspectRatio: 1.0,
+                              ),
                           itemCount: _images.length,
                           itemBuilder: (context, index) {
                             final image = _images[index];
-                            
-                            // حساب الحجم: 25% من 4×4 سم = ~113×113 pixels (عند 96 DPI)
-                            final imageSize = 113.5;
-                            
-                            // التحقق من أن المسار ليس فارغاً
-                            if (image.imagePath.isEmpty) {
-                              print('❌ مسار الصورة فارغ للصورة ID: ${image.imageId}');
-                              return Container(
-                                width: imageSize,
-                                height: imageSize,
-                                child: Card(
-                                  clipBehavior: Clip.antiAlias,
-                                  child: Container(
-                                    color: Colors.grey[200],
-                                    child: const Column(
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      children: [
-                                        Icon(
-                                          Icons.error,
-                                          size: 30,
-                                          color: Colors.red,
-                                        ),
-                                        SizedBox(height: 4),
-                                        Text(
-                                          'مسار فارغ',
-                                          style: TextStyle(fontSize: 10, color: Colors.red),
-                                          textAlign: TextAlign.center,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              );
-                            }
-                            
                             return Container(
-                              width: imageSize,
-                              height: imageSize,
                               child: Stack(
                                 children: [
                                   Card(
-                                  clipBehavior: Clip.antiAlias,
-                                  child: FutureBuilder<Uint8List?>(
-                                    future: DatabaseHelper.instance.getImageData(image.imagePath),
-                                    builder: (context, snapshot) {
-                                      print('🔍 حالة الصورة: ${image.imagePath}, الحالة: ${snapshot.connectionState}');
-                                      
-                                      if (snapshot.connectionState == ConnectionState.waiting) {
-                                        print('⏳ جاري تحميل الصورة: ${image.imagePath}');
-                                        return Container(
-                                          color: Colors.grey[100],
-                                          child: const Center(
-                                            child: CircularProgressIndicator(),
-                                          ),
-                                        );
-                                      }
-                                      
-                                      if (snapshot.hasData && snapshot.data != null) {
-                                        print('✅ تم تحميل الصورة بنجاح: ${image.imagePath}, الحجم: ${snapshot.data!.length} bytes');
-                                        return Image.memory(
-                                          snapshot.data!,
-                                          fit: BoxFit.cover,
-                                          errorBuilder: (context, error, stackTrace) {
-                                            print('❌ خطأ في عرض الصورة: ${image.imagePath}, الخطأ: $error');
+                                    clipBehavior: Clip.antiAlias,
+                                    child: FutureBuilder<String?>(
+                                      future: DatabaseHelper.instance
+                                          .getImageUrl(image.imagePath),
+                                      builder: (context, snapshot) {
+                                        // جرب Firebase أولاً
+                                        if (snapshot.hasData &&
+                                            snapshot.data != null) {
+                                          return Image.network(
+                                            snapshot.data!,
+                                            fit: BoxFit.cover,
+                                            errorBuilder:
+                                                (context, error, stackTrace) {
+                                                  // إذا فشل Firebase، استخدم البيانات المحلية
+                                                  return FutureBuilder<
+                                                    Uint8List?
+                                                  >(
+                                                    future: DatabaseHelper
+                                                        .instance
+                                                        .getImageData(
+                                                          image.imagePath,
+                                                        ),
+                                                    builder:
+                                                        (context, memSnapshot) {
+                                                          if (memSnapshot
+                                                                  .hasData &&
+                                                              memSnapshot
+                                                                      .data !=
+                                                                  null) {
+                                                            return Image.memory(
+                                                              memSnapshot.data!,
+                                                              fit: BoxFit.cover,
+                                                            );
+                                                          }
+                                                          return Container(
+                                                            color: Colors
+                                                                .grey[200],
+                                                            child: const Icon(
+                                                              Icons
+                                                                  .broken_image,
+                                                            ),
+                                                          );
+                                                        },
+                                                  );
+                                                },
+                                          );
+                                        }
+
+                                        // إذا لم يتوفر Firebase، استخدم البيانات المحلية
+                                        return FutureBuilder<Uint8List?>(
+                                          future: DatabaseHelper.instance
+                                              .getImageData(image.imagePath),
+                                          builder: (context, memSnapshot) {
+                                            if (memSnapshot.connectionState ==
+                                                ConnectionState.waiting) {
+                                              return Container(
+                                                color: Colors.grey[100],
+                                                child: const Center(
+                                                  child:
+                                                      CircularProgressIndicator(),
+                                                ),
+                                              );
+                                            }
+
+                                            if (memSnapshot.hasData &&
+                                                memSnapshot.data != null) {
+                                              return Image.memory(
+                                                memSnapshot.data!,
+                                                fit: BoxFit.cover,
+                                              );
+                                            }
+
                                             return Container(
                                               color: Colors.grey[200],
-                                              child: const Column(
-                                                mainAxisAlignment: MainAxisAlignment.center,
-                                                children: [
-                                                  Icon(
-                                                    Icons.broken_image,
-                                                    size: 40,
-                                                    color: Colors.grey,
-                                                  ),
-                                                  SizedBox(height: 8),
-                                                  Text(
-                                                    'خطأ في الصورة',
-                                                    style: TextStyle(fontSize: 10, color: Colors.grey),
-                                                  ),
-                                                ],
+                                              child: const Icon(
+                                                Icons.image_not_supported,
                                               ),
                                             );
                                           },
                                         );
-                                      }
-                                      
-                                      if (snapshot.hasError) {
-                                        print('⚠️ خطأ في تحميل الصورة: ${image.imagePath}, الخطأ: ${snapshot.error}');
-                                        return Container(
-                                          color: Colors.red[100],
-                                          child: Center(
-                                            child: Column(
-                                              mainAxisAlignment: MainAxisAlignment.center,
-                                              children: [
-                                                const Icon(
-                                                  Icons.error,
-                                                  size: 40,
-                                                  color: Colors.red,
-                                                ),
-                                                const SizedBox(height: 8),
-                                                Text(
-                                                  '${snapshot.error}'.length > 30 ? '${snapshot.error}'.substring(0, 30) + '...' : '${snapshot.error}',
-                                                  style: const TextStyle(fontSize: 9, color: Colors.red),
-                                                  textAlign: TextAlign.center,
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        );
-                                      }
-                                      
-                                      print('⚠️ لم يتم تحميل الصورة: ${image.imagePath}، البيانات: ${snapshot.data}');
-                                      return Container(
-                                        color: Colors.grey[300],
-                                        child: const Center(
-                                          child: Column(
-                                            mainAxisAlignment: MainAxisAlignment.center,
-                                            children: [
-                                              Icon(
-                                                Icons.image_not_supported,
-                                                size: 40,
-                                                color: Colors.grey,
-                                              ),
-                                              SizedBox(height: 8),
-                                              Text(
-                                                'لم يتم تحميل الصورة',
-                                                style: TextStyle(fontSize: 10, color: Colors.grey),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                ),
-                                Positioned(
-                                  top: 4,
-                                  right: 4,
-                                  child: Container(
-                                    decoration: const BoxDecoration(
-                                      color: Colors.red,
-                                      shape: BoxShape.circle,
+                                      },
                                     ),
-                                    child: IconButton(
-                                      icon: const Icon(
-                                        Icons.delete,
-                                        color: Colors.white,
-                                        size: 20,
+                                  ),
+                                  Positioned(
+                                    top: 4,
+                                    right: 4,
+                                    child: Container(
+                                      decoration: const BoxDecoration(
+                                        color: Colors.red,
+                                        shape: BoxShape.circle,
                                       ),
-                                      onPressed: () => _deleteImage(image),
-                                      tooltip: 'حذف الصورة',
+                                      child: IconButton(
+                                        icon: const Icon(
+                                          Icons.delete,
+                                          color: Colors.white,
+                                          size: 20,
+                                        ),
+                                        onPressed: () => _deleteImage(image),
+                                      ),
                                     ),
                                   ),
-                                ),
-                              ],
+                                ],
                               ),
                             );
                           },
@@ -475,6 +289,11 @@ class _ManageProductImagesScreenState extends State<ManageProductImagesScreen> {
                 ),
               ],
             ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _addImages,
+        tooltip: 'إضافة صور',
+        child: const Icon(Icons.add_a_photo),
+      ),
     );
   }
 }

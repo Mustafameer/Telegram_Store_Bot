@@ -98,6 +98,8 @@ class Category {
   final String name;
   final int orderIndex;
   final String? imagePath;
+  final String? imageFileName; // اسم الملف في قاعدة البيانات
+  final String? imageUrl; // رابط Firebase (إن وجد)
 
   Category({
     required this.categoryId,
@@ -105,6 +107,8 @@ class Category {
     required this.name,
     this.orderIndex = 0,
     this.imagePath,
+    this.imageFileName,
+    this.imageUrl,
   });
 
   factory Category.fromMap(Map<String, dynamic> map) {
@@ -114,6 +118,28 @@ class Category {
       name: map['Name'],
       orderIndex: map['OrderIndex'] ?? 0,
       imagePath: map['ImagePath'],
+      imageFileName: map['ImageFileName'],
+      imageUrl: map['ImageUrl'],
+    );
+  }
+
+  Category copyWith({
+    int? categoryId,
+    int? sellerId,
+    String? name,
+    int? orderIndex,
+    String? imagePath,
+    String? imageFileName,
+    String? imageUrl,
+  }) {
+    return Category(
+      categoryId: categoryId ?? this.categoryId,
+      sellerId: sellerId ?? this.sellerId,
+      name: name ?? this.name,
+      orderIndex: orderIndex ?? this.orderIndex,
+      imagePath: imagePath ?? this.imagePath,
+      imageFileName: imageFileName ?? this.imageFileName,
+      imageUrl: imageUrl ?? this.imageUrl,
     );
   }
 }

@@ -21,6 +21,9 @@ import traceback
 from datetime import datetime
 from utils.receipt_generator import generate_order_card
 import base64
+import json
+import threading
+from flask import Flask, request, jsonify
 # Reverting to direct DB functions defined in bot.py
 # from db_manager import get_seller_by_telegram, get_products, get_categories, get_product_by_id, get_category_by_id
 # from integration_models import Product, Category, Seller
@@ -37,7 +40,34 @@ except ImportError:
     RealDictCursor = None
     IntegrityError = None
 
+# ======================== Firebase Initialization ========================
+try:
+    import firebase_admin
+    from firebase_admin import storage, credentials
+    
+    if os.path.exists('firebase-key.json'):
+        try:
+            firebase_admin.get_app()
+            print("✅ Firebase is already initialized")
+        except ValueError:
+            cred = credentials.Certificate('firebase-key.json')
+            firebase_admin.initialize_app(cred, {
+                'storageBucket': 'telegram-store-bot.appspot.com'
+            })
+            print("✅ Firebase initialized successfully")
+        
+        FIREBASE_ENABLED = True
+    else:
+        print("⚠️  firebase-key.json not found - Firebase disabled")
+        FIREBASE_ENABLED = False
 
+except ImportError:
+    print("⚠️  firebase-admin not installed - Firebase disabled")
+    FIREBASE_ENABLED = False
+except Exception as e:
+    print(f"⚠️  Firebase initialization error: {e}")
+    FIREBASE_ENABLED = False
+# ========================================================================
 
 TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 if TOKEN:
@@ -61,6 +91,332 @@ IS_POSTGRES = (os.environ.get('DATABASE_URL') is not None) and (psycopg2 is not 
 
 # إضافة معرف صاحب البوت (أدمن) - للتحكم التقني فقط
 BOT_ADMIN_ID = 1041977029  # ضع هنا معرف التليجرام الخاص بأدمن البوت
+
+# ====================== Flask App for API ======================
+app = Flask(__name__)
+
+# API endpoint للحصول على الإشعارات
+@app.route('/api/notifications', methods=['GET'])
+def api_get_notifications():
+    """
+    احصل على الإشعارات للعميل
+    
+    Parameters:
+        customer_id (int): معرف التليجرام للعميل
+        unread_only (bool): هل تحضر الإشعارات غير المقروءة فقط (default: true)
+    
+    Returns:
+        JSON: قائمة الإشعارات
+    """
+    try:
+        customer_id = request.args.get('customer_id', type=int)
+        unread_only = request.args.get('unread_only', default='true').lower() == 'true'
+        
+        if not customer_id:
+            return jsonify({'error': 'customer_id is required'}), 400
+        
+        notifications = get_customer_notifications(customer_id, unread_only)
+        
+        return jsonify({
+            'success': True,
+            'count': len(notifications),
+            'notifications': notifications
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ API Error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# API endpoint لوضع علامة على إشعار كمقروء
+@app.route('/api/notifications/<int:notification_id>/read', methods=['POST'])
+def api_mark_as_read(notification_id):
+    """
+    وضع علامة على إشعار كمقروء
+    
+    Parameters:
+        notification_id (int): معرف الإشعار
+    
+    Returns:
+        JSON: النتيجة
+    """
+    try:
+        success = mark_notification_as_read(notification_id)
+        
+        if success:
+            return jsonify({'success': True, 'message': 'تم وضع علامة على الإشعار'}), 200
+        else:
+            return jsonify({'success': False, 'error': 'فشل تحديث الإشعار'}), 500
+            
+    except Exception as e:
+        print(f"❌ API Error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# API endpoint للفحص
+@app.route('/api/health', methods=['GET'])
+def api_health():
+    """التحقق من أن الـ API يعمل"""
+    return jsonify({'status': 'ok', 'service': 'telegram-store-bot'}), 200
+
+# API endpoint لحذف الصور بعد الشراء من التطبيق
+@app.route('/api/delete-purchased-images', methods=['POST'])
+def api_delete_purchased_images():
+    """
+    حذف الصور بعد شراؤها من التطبيق الـ Flutter
+    
+    Parameters (JSON):
+        - product_id: معرف المنتج
+        - image_ids: قائمة معرفات الصور المراد حذفها
+    
+    Returns:
+        JSON: عدد الصور المحذوفة
+    """
+    try:
+        data = request.get_json()
+        product_id = int(data.get('product_id', 0))
+        image_ids = data.get('image_ids', [])
+        
+        if not product_id or not image_ids:
+            return jsonify({'error': 'Missing product_id or image_ids'}), 400
+        
+        print(f"🗑️ API: Delete {len(image_ids)} images from product {product_id}")
+        
+        # حذف الصور من قاعدة البيانات
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        deleted_count = 0
+        for image_id in image_ids:
+            try:
+                if IS_POSTGRES:
+                    # احصل على اسم الملف أولاً
+                    cursor.execute('SELECT filename FROM imagestorage WHERE imageid = %s', (image_id,))
+                    result = cursor.fetchone()
+                    
+                    if result:
+                        filename = result[0]
+                        # حذف من قاعدة البيانات
+                        cursor.execute('DELETE FROM imagestorage WHERE imageid = %s', (image_id,))
+                        deleted_count += 1
+                        print(f"   ✅ Deleted image ID {image_id}: {filename}")
+                        
+                        # حذف الملف من القرص
+                        img_path = os.path.join(IMAGES_FOLDER, filename)
+                        if os.path.exists(img_path):
+                            try:
+                                os.remove(img_path)
+                                print(f"   📁 File deleted: {img_path}")
+                            except Exception as e:
+                                print(f"   ⚠️ Error deleting file: {e}")
+                else:
+                    cursor.execute('SELECT filename FROM imagestorage WHERE imageid = ?', (image_id,))
+                    result = cursor.fetchone()
+                    
+                    if result:
+                        filename = result[0]
+                        cursor.execute('DELETE FROM imagestorage WHERE imageid = ?', (image_id,))
+                        deleted_count += 1
+                        print(f"   ✅ Deleted image ID {image_id}: {filename}")
+                        
+                        img_path = os.path.join(IMAGES_FOLDER, filename)
+                        if os.path.exists(img_path):
+                            try:
+                                os.remove(img_path)
+                                print(f"   📁 File deleted: {img_path}")
+                            except Exception as e:
+                                print(f"   ⚠️ Error deleting file: {e}")
+            except Exception as e:
+                print(f"   ⚠️ Error deleting image {image_id}: {e}")
+        
+        conn.commit()
+        conn.close()
+        
+        print(f"✅ Successfully deleted {deleted_count} images from product {product_id}")
+        
+        return jsonify({
+            'success': True,
+            'deleted_count': deleted_count,
+            'message': f'تم حذف {deleted_count} صورة بنجاح'
+        }), 200
+    except Exception as e:
+        print(f"❌ Error in api_delete_purchased_images: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# API endpoint لشراء الصور من التطبيق
+@app.route('/api/buy-images', methods=['POST'])
+def api_buy_images():
+    """
+    شراء صور من التطبيق - نفس عملية شراء الصور من البوت
+    
+    Parameters (JSON):
+        - product_id: معرف المنتج
+        - quantity: عدد الصور المراد شراؤها
+        - customer_id: معرف العميل (من قاعدة البيانات)
+        - seller_id: معرف البائع
+        - customer_telegram_id: معرف التليجرام للعميل (لحفظ الإشعار)
+    
+    Returns:
+        JSON: نتائج العملية (إرسال الصور، حذف الصور، حفظ الإشعار)
+    """
+    try:
+        data = request.get_json()
+        
+        # التحقق من البيانات المطلوبة
+        required_fields = ['product_id', 'quantity', 'customer_id', 'seller_id', 'customer_telegram_id']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'{field} is required'}), 400
+        
+        product_id = int(data['product_id'])
+        quantity = int(data['quantity'])
+        customer_id = int(data['customer_id'])
+        seller_id = int(data['seller_id'])
+        customer_telegram_id = int(data['customer_telegram_id'])
+        
+        print(f"📱 API: Buying {quantity} images for product {product_id} by customer {customer_id}")
+        
+        # التحقق من المنتج
+        product = get_product_by_id(product_id)
+        if not product:
+            return jsonify({'error': 'Product not found'}), 404
+        
+        product_name = product[3]
+        price = product[5]
+        available_qty = product[7]
+        
+        if quantity > available_qty:
+            return jsonify({'error': f'Only {available_qty} images available'}), 400
+        
+        # الحصول على صور المنتج من جدول imagestorage
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        if IS_POSTGRES:
+            cursor.execute("""
+                SELECT imageid, filename FROM imagestorage 
+                WHERE productid = %s
+                ORDER BY imageorder ASC
+                LIMIT %s
+            """, (product_id, quantity))
+        else:
+            cursor.execute("""
+                SELECT imageid, filename FROM imagestorage 
+                WHERE productid = ?
+                ORDER BY imageorder
+                LIMIT ?
+            """, (product_id, quantity))
+        
+        images = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        print(f"📸 Found {len(images)} images to delete for product {product_id}")
+        
+        if not images or len(images) < quantity:
+            print(f"⚠️ Not enough images: found {len(images)}, need {quantity}")
+            return jsonify({'error': 'Not enough images available'}), 400
+        
+        # حساب المبلغ الإجمالي
+        total_amount = price * quantity
+        
+        # إضافة المعاملة الائتمانية
+        if not add_credit_transaction(customer_id, seller_id, total_amount, 
+                                     f"شراء {quantity} صورة من منتج: {product_name}"):
+            return jsonify({'error': 'Failed to add credit transaction'}), 500
+        
+        # تحديث كمية المنتج
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        if IS_POSTGRES:
+            cursor.execute(
+                'UPDATE products SET quantity = GREATEST(0, quantity - %s) WHERE productid = %s',
+                (quantity, product_id)
+            )
+        else:
+            cursor.execute(
+                'UPDATE Products SET Quantity = MAX(0, Quantity - ?) WHERE ProductID = ?',
+                (quantity, product_id)
+            )
+        
+        # حذف الصور المشتراة من قاعدة البيانات
+        deleted_count = 0
+        images_to_delete = images[:quantity]
+        
+        print(f"🗑️ Attempting to delete {len(images_to_delete)} images...")
+        
+        for image_id, filename in images_to_delete:
+            # حذف من قاعدة البيانات
+            try:
+                if IS_POSTGRES:
+                    cursor.execute('DELETE FROM imagestorage WHERE imageid = %s', (image_id,))
+                else:
+                    cursor.execute('DELETE FROM imagestorage WHERE imageid = ?', (image_id,))
+                deleted_count += 1
+                print(f"   ✅ Deleted image ID {image_id}: {filename}")
+            except Exception as e:
+                print(f"   ⚠️ Error deleting image {image_id}: {e}")
+            
+            # حذف الملف من القرص المحلي
+            img_path = os.path.join(IMAGES_FOLDER, filename)
+            try:
+                if os.path.exists(img_path):
+                    os.remove(img_path)
+                    print(f"   📁 File deleted: {img_path}")
+            except Exception as e:
+                print(f"   ⚠️ Error deleting file {filename}: {e}")
+        
+        conn.commit()
+        conn.close()
+        
+        print(f"✅ Successfully deleted {deleted_count} images")
+        
+        # حفظ إشعار للعميل
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        if IS_POSTGRES:
+            cursor.execute("SELECT FullName FROM CreditCustomers WHERE CustomerID=%s", (customer_id,))
+        else:
+            cursor.execute("SELECT FullName FROM CreditCustomers WHERE CustomerID=?", (customer_id,))
+        customer_result = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        customer_name = customer_result[0] if customer_result else "عميل"
+        
+        notification_saved = save_notification(
+            customer_telegram_id=customer_telegram_id,
+            notification_type='image_purchase',
+            title='✅ تم شراء الصور',
+            message=f'تم شراء {quantity} صورة من {product_name} بنجاح! المبلغ: {total_amount:,.0f} د.ع',
+            product_names=product_name,
+            total_amount=total_amount,
+            seller_id=seller_id,
+            data=None
+        )
+        
+        print(f"✅ Image purchase completed: {quantity} images, {deleted_count} deleted, notification saved: {notification_saved}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'تم شراء {quantity} صورة بنجاح',
+            'total_amount': total_amount,
+            'deleted_images': deleted_count,
+            'notification_saved': notification_saved
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ API Error in buy-images: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+# Start Flask in a separate thread
+def run_flask():
+    """تشغيل Flask في thread منفصل"""
+    port = int(os.environ.get('API_PORT', 5000))
+    print(f"🌐 Starting Flask API on port {port}...")
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+
+# ================================================================
 
 @bot.message_handler(commands=['sys_info'])
 def sys_info(message):
@@ -2933,14 +3289,72 @@ def get_product_images(product_id):
         """, (product_id,))
     else:
         cursor.execute("""
-            SELECT ImageID, FileName, ImageOrder 
-            FROM ImageStorage 
-            WHERE ProductID=? 
-            ORDER BY ImageOrder, ImageID
+            SELECT imageid, filename, imageorder 
+            FROM imagestorage 
+            WHERE productid=? 
+            ORDER BY imageorder, imageid
         """, (product_id,))
     images = cursor.fetchall()
     conn.close()
     return images
+
+def delete_n_images_from_product(product_id, quantity):
+    """
+    حذف N صورة من أول الصور في المنتج (بناءً على ImageOrder)
+    
+    Returns:
+        tuple: (deleted_count, deleted_images_list)
+    """
+    try:
+        # الحصول على أول N صورة
+        images = get_product_images(product_id)
+        
+        if not images or len(images) < quantity:
+            print(f"⚠️ لا توجد صور كافية: المتاح {len(images)}, المطلوب {quantity}")
+            return 0, []
+        
+        # أخذ أول quantity صورة
+        images_to_delete = images[:quantity]
+        deleted_count = 0
+        deleted_images = []
+        
+        print(f"🗑️ حذف {quantity} صورة من المنتج {product_id}")
+        
+        for image_id, filename, imageorder in images_to_delete:
+            try:
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                
+                # حذف من قاعدة البيانات
+                if IS_POSTGRES:
+                    cursor.execute('DELETE FROM imagestorage WHERE imageid = %s', (image_id,))
+                else:
+                    cursor.execute('DELETE FROM imagestorage WHERE imageid = ?', (image_id,))
+                
+                conn.commit()
+                conn.close()
+                
+                # حذف الملف من القرص
+                img_path = os.path.join(IMAGES_FOLDER, filename)
+                if os.path.exists(img_path):
+                    try:
+                        os.remove(img_path)
+                        print(f"   ✅ حذفت الصورة ID {image_id}: {filename}")
+                    except Exception as e:
+                        print(f"   ⚠️ خطأ في حذف الملف {filename}: {e}")
+                
+                deleted_count += 1
+                deleted_images.append({'image_id': image_id, 'filename': filename})
+                
+            except Exception as e:
+                print(f"   ❌ خطأ في حذف الصورة {image_id}: {e}")
+        
+        print(f"✅ تم حذف {deleted_count} صورة بنجاح من المنتج {product_id}")
+        return deleted_count, deleted_images
+        
+    except Exception as e:
+        print(f"❌ خطأ في delete_n_images_from_product: {e}")
+        return 0, []
 
 def get_customer_by_phone_for_seller(phone_number, seller_id):
     """الحصول على معلومات الزبون من رقم الهاتف والبائع"""
@@ -3395,15 +3809,15 @@ def create_order(buyer_id, seller_id, cart_items, delivery_address=None, notes=N
                 new_qty = 0
             cursor_wrapper.execute("UPDATE Products SET Quantity=? WHERE ProductID=?", (new_qty, pid))
             
-            # 🗑️ حذف الصور من ImageStorage (الصور ترسل للمشتري ثم تُحذف من TELEBOT)
+            # 🗑️ حذف الصور من imagestorage (الصور ترسل للمشتري ثم تُحذف من قاعدة البيانات)
             if IS_POSTGRES:
-                # حذف صور هذا المنتج من ImageStorage
+                # حذف صور هذا المنتج من imagestorage
                 cursor_wrapper.execute("""
                     SELECT filename FROM imagestorage WHERE productid=%s
                 """, (pid,))
             else:
                 cursor_wrapper.execute("""
-                    SELECT FileName FROM imagestorage WHERE ProductID=?
+                    SELECT filename FROM imagestorage WHERE productid=?
                 """, (pid,))
             
             image_paths = cursor_wrapper.fetchall()
@@ -3411,10 +3825,10 @@ def create_order(buyer_id, seller_id, cart_items, delivery_address=None, notes=N
                 if filename:
                     try:
                         if IS_POSTGRES:
-                            cursor_wrapper.execute("DELETE FROM imagestorage WHERE FileName = %s", (filename,))
+                            cursor_wrapper.execute("DELETE FROM imagestorage WHERE filename = %s", (filename,))
                         else:
-                            cursor_wrapper.execute("DELETE FROM imagestorage WHERE FileName = ?", (filename,))
-                        print(f"🗑️ حذفت صورة {filename} من ImageStorage بعد البيع")
+                            cursor_wrapper.execute("DELETE FROM imagestorage WHERE filename = ?", (filename,))
+                        print(f"🗑️ حذفت صورة {filename} من imagestorage بعد البيع")
                     except Exception as del_err:
                         print(f"⚠️ خطأ في حذف الصورة {filename}: {del_err}")
             
@@ -3725,6 +4139,174 @@ def create_message(order_id, seller_id, message_type, message_text):
     conn.commit()
     conn.close()
 
+def save_notification(customer_telegram_id, notification_type, title, message, product_names=None, total_amount=None, seller_id=None, data=None):
+    """
+    حفظ إشعار في جدول Notifications
+    
+    Args:
+        customer_telegram_id: معرف التليجرام للعميل
+        notification_type: نوع الإشعار (مثل 'closed_store_purchase')
+        title: عنوان الإشعار
+        message: محتوى الإشعار
+        product_names: أسماء المنتجات (اختياري)
+        total_amount: المبلغ الإجمالي (اختياري)
+        seller_id: معرف البائع (اختياري)
+        data: بيانات إضافية JSON (اختياري)
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        if IS_POSTGRES:
+            cursor.execute("""
+                INSERT INTO "Notifications" 
+                ("CustomerTelegramID", "SellerID", "Type", "Title", "Message", "ProductNames", "TotalAmount", "Data")
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (customer_telegram_id, seller_id, notification_type, title, message, product_names, total_amount, data))
+        else:
+            cursor.execute("""
+                INSERT INTO Notifications 
+                (CustomerTelegramID, SellerID, Type, Title, Message, ProductNames, TotalAmount, Data)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (customer_telegram_id, seller_id, notification_type, title, message, product_names, total_amount, data))
+        
+        conn.commit()
+        conn.close()
+        print(f"✅ تم حفظ إشعار للعميل {customer_telegram_id}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ خطأ في حفظ الإشعار: {e}")
+        return False
+
+def get_customer_notifications(customer_telegram_id, unread_only=True):
+    """
+    الحصول على الإشعارات للعميل
+    
+    Args:
+        customer_telegram_id: معرف التليجرام للعميل
+        unread_only: هل تحضر الإشعارات غير المقروءة فقط (default: True)
+    
+    Returns:
+        قائمة الإشعارات مع معلوماتها
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        if IS_POSTGRES:
+            if unread_only:
+                query = """
+                    SELECT "NotificationID", "CustomerTelegramID", "SellerID", "Type", "Title", "Message", 
+                           "ProductNames", "TotalAmount", "IsRead", "CreatedAt", "ReadAt", "Data"
+                    FROM "Notifications"
+                    WHERE "CustomerTelegramID" = %s AND "IsRead" = FALSE
+                    ORDER BY "CreatedAt" DESC
+                    LIMIT 50
+                """
+            else:
+                query = """
+                    SELECT "NotificationID", "CustomerTelegramID", "SellerID", "Type", "Title", "Message", 
+                           "ProductNames", "TotalAmount", "IsRead", "CreatedAt", "ReadAt", "Data"
+                    FROM "Notifications"
+                    WHERE "CustomerTelegramID" = %s
+                    ORDER BY "CreatedAt" DESC
+                    LIMIT 50
+                """
+            cursor.execute(query, (customer_telegram_id,))
+        else:
+            if unread_only:
+                query = """
+                    SELECT NotificationID, CustomerTelegramID, SellerID, Type, Title, Message, 
+                           ProductNames, TotalAmount, IsRead, CreatedAt, ReadAt, Data
+                    FROM Notifications
+                    WHERE CustomerTelegramID = ? AND IsRead = 0
+                    ORDER BY CreatedAt DESC
+                    LIMIT 50
+                """
+            else:
+                query = """
+                    SELECT NotificationID, CustomerTelegramID, SellerID, Type, Title, Message, 
+                           ProductNames, TotalAmount, IsRead, CreatedAt, ReadAt, Data
+                    FROM Notifications
+                    WHERE CustomerTelegramID = ?
+                    ORDER BY CreatedAt DESC
+                    LIMIT 50
+                """
+            cursor.execute(query, (customer_telegram_id,))
+        
+        notifications = cursor.fetchall()
+        conn.close()
+        
+        # تحويل النتائج إلى قاموس
+        result = []
+        for notif in notifications:
+            if IS_POSTGRES:
+                result.append({
+                    'notificationId': notif['NotificationID'],
+                    'customerTelegramId': notif['CustomerTelegramID'],
+                    'sellerId': notif['SellerID'],
+                    'type': notif['Type'],
+                    'title': notif['Title'],
+                    'message': notif['Message'],
+                    'productNames': notif['ProductNames'],
+                    'totalAmount': float(notif['TotalAmount']) if notif['TotalAmount'] else 0,
+                    'isRead': notif['IsRead'],
+                    'createdAt': notif['CreatedAt'].isoformat() if notif['CreatedAt'] else None,
+                    'readAt': notif['ReadAt'].isoformat() if notif['ReadAt'] else None,
+                    'data': json.loads(notif['Data']) if notif['Data'] else None
+                })
+            else:
+                result.append({
+                    'notificationId': notif[0],
+                    'customerTelegramId': notif[1],
+                    'sellerId': notif[2],
+                    'type': notif[3],
+                    'title': notif[4],
+                    'message': notif[5],
+                    'productNames': notif[6],
+                    'totalAmount': float(notif[7]) if notif[7] else 0,
+                    'isRead': bool(notif[8]),
+                    'createdAt': notif[9],
+                    'readAt': notif[10],
+                    'data': json.loads(notif[11]) if notif[11] else None
+                })
+        
+        return result
+        
+    except Exception as e:
+        print(f"❌ خطأ في الحصول على الإشعارات: {e}")
+        traceback.print_exc()
+        return []
+
+def mark_notification_as_read(notification_id):
+    """
+    وضع علامة على الإشعار كمقروء
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        if IS_POSTGRES:
+            cursor.execute("""
+                UPDATE "Notifications"
+                SET "IsRead" = TRUE, "ReadAt" = NOW()
+                WHERE "NotificationID" = %s
+            """, (notification_id,))
+        else:
+            cursor.execute("""
+                UPDATE Notifications
+                SET IsRead = 1, ReadAt = datetime('now')
+                WHERE NotificationID = ?
+            """, (notification_id,))
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"❌ خطأ في تحديث الإشعار: {e}")
+        return False
+
 def get_unread_messages(seller_id):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -4015,12 +4597,23 @@ user_states = {}
 carts = {}
 
 def save_photo_from_message(message):
-    """يحفظ الصورة المرسلة - نفس منطق Flutter Desktop"""
+    """
+    يحفظ الصورة المرسلة - يرفعها إلى Firebase بدلاً من PostgreSQL
+    """
     try:
         if not message.photo:
             return None
+        
+        # تحميل الصورة الأصلية
         file_info = bot.get_file(message.photo[-1].file_id)
         downloaded = bot.download_file(file_info.file_path)
+        original_size = len(downloaded) / 1024
+        
+        # ✅ ضغط الصورة (توفير ~80% مساحة)
+        from image_compression import ImageCompressor
+        downloaded_compressed = ImageCompressor.compress_image(downloaded)
+        compressed_size = len(downloaded_compressed) / 1024
+        
         ext = os.path.splitext(file_info.file_path)[1]
         if not ext:
             ext = ".jpg"
@@ -4032,34 +4625,60 @@ def save_photo_from_message(message):
         
         path = os.path.join(IMAGES_FOLDER, filename)
         
-        # Save to Disk (محلي)
+        # ✅ Save to Disk (محلي) - مع الصورة المضغوطة
         with open(path, "wb") as f:
-            f.write(downloaded)
+            f.write(downloaded_compressed)
         
-        # ✅ Upload to PostgreSQL ImageStorage (السحابة)
+        print(f"🖼️  ضغط الصورة: {original_size:.1f} KB → {compressed_size:.1f} KB (توفير {(1-compressed_size/original_size)*100:.1f}%)")
+        
+        # ✅ Upload to Firebase Storage - إذا كان مفعل
+        firebase_url = None
+        if FIREBASE_ENABLED:
+            try:
+                print(f"🔥 [Firebase] Uploading image {filename}...")
+                bucket = storage.bucket()
+                blob = bucket.blob(f'telegram-images/{filename}')
+                blob.upload_from_string(downloaded_compressed, content_type='image/jpeg')
+                
+                # جعل الملف عام
+                blob.make_public()
+                firebase_url = blob.public_url
+                
+                print(f"✅ [Firebase] Uploaded: {firebase_url}")
+            except Exception as fb_e:
+                print(f"⚠️  [Firebase] Upload failed: {fb_e}")
+                firebase_url = None
+        
+        # ✅ Upload to PostgreSQL ImageStorage (كـ fallback)
         if IS_POSTGRES:
             try:
-                print(f"🔄 [Cloud] Attempting to upload image {filename} to ImageStorage ({len(downloaded)} bytes)")
+                print(f"🔄 [Cloud] Attempting to upload image {filename} to PostgreSQL...")
                 conn_pg = get_db_connection()
                 cursor_pg = conn_pg.cursor()
                 
-                # نفس الاستعلام من Flutter
-                # INSERT INTO ImageStorage (FileName, FileData, UploadedAt) VALUES (...) ON CONFLICT ...
-                print(f"📝 [Cloud] SQL: INSERT INTO ImageStorage (FileName, FileData, UploadedAt) VALUES ('{filename}', <{len(downloaded)} bytes>, NOW())")
+                # إذا لدينا رابط Firebase، احفظه مباشرة
+                if firebase_url:
+                    cursor_pg.execute(
+                        '''INSERT INTO imagestorage (filename, url, firebase_filename) 
+                           VALUES (%s, %s, %s) 
+                           ON CONFLICT (filename) DO UPDATE 
+                           SET url = EXCLUDED.url, firebase_filename = EXCLUDED.firebase_filename''',
+                        (filename, firebase_url, filename)
+                    )
+                else:
+                    # بدون Firebase - احفظ البيانات الثنائية كـ fallback
+                    import psycopg2
+                    cursor_pg.execute(
+                        '''INSERT INTO imagestorage (filename, filedata, url) 
+                           VALUES (%s, %s, %s) 
+                           ON CONFLICT (filename) DO UPDATE 
+                           SET filedata = EXCLUDED.filedata''',
+                        (filename, psycopg2.Binary(downloaded_compressed), firebase_url)
+                    )
                 
-                # ✅ استخدم psycopg2.Binary() للبيانات الثنائية
-                import psycopg2
-                cursor_pg.execute(
-                    '''INSERT INTO ImageStorage (FileName, FileData, UploadedAt) 
-                       VALUES (%s, %s, NOW()) 
-                       ON CONFLICT (FileName) DO UPDATE 
-                       SET FileData = EXCLUDED.FileData, UploadedAt = NOW()''',
-                    (filename, psycopg2.Binary(downloaded))
-                )
                 conn_pg.commit()
                 conn_pg.close()
-                print(f"✅ [Cloud] Saved image {filename} to ImageStorage ({len(downloaded)} bytes)")
-                return filename  # ارجع اسم الملف بدلاً من المسار
+                print(f"✅ [Cloud] Saved image {filename} to PostgreSQL")
                 
             except Exception as pg_e:
                 print(f"❌ [Cloud] Upload Failed: {type(pg_e).__name__}: {pg_e}")
@@ -4069,12 +4688,10 @@ def save_photo_from_message(message):
                     try:
                         conn_pg.close()
                     except: pass
-                # حاول الحفظ محلياً على الأقل
-                print(f"⚠️ [Fallback] Saving locally only")
-                return filename
         else:
             print("⚠️ [Local] IS_POSTGRES is False. Using SQLite only.")
-            return filename
+        
+        return filename  # ارجع اسم الملف
         
     except Exception as e:
         print(f"⚠️ خطأ في حفظ الصورة: {e}")
@@ -8949,110 +9566,10 @@ def activate_store_selected(call):
     
     bot.send_message(call.message.chat.id, "✅ تم تنشيط المتجر بنجاح")
 
-# ====== دالة خاصة لمتجر TELEBOT (المتاجر المغلقة) ======
-def send_telebot_catalog(chat_id, customer_telegram_id=None):
-    """
-    إرسال كتالوج متجر TELEBOT - يعرض منتجات المتاجر المغلقة فقط
-    """
-    try:
-        print(f"🔍 send_telebot_catalog: عرض منتجات المتاجر المغلقة")
-        
-        # التأكد من تسجيل الزبون
-        if customer_telegram_id:
-            user = get_user(customer_telegram_id)
-            if not user:
-                add_user(customer_telegram_id, None, 'buyer', None, None)
-        
-        # جلب المنتجات من المتاجر المغلقة (RequireCustomerRegistration = 1)
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        if IS_POSTGRES:
-            query = """
-                SELECT DISTINCT p.ProductID, p.SellerID, p.CategoryID, p.Name, p.Description, 
-                       p.Price, p.WholesalePrice, p.Quantity, p.ImagePath, p.Status,
-                       s.StoreName, s.UserName
-                FROM Products p
-                JOIN Sellers s ON p.SellerID = s.SellerID
-                WHERE s.RequireCustomerRegistration = 1 AND s.Status = 'active' AND p.Status = 'active'
-                ORDER BY s.StoreName, p.ProductID
-            """
-            cursor.execute(query)
-        else:
-            query = """
-                SELECT DISTINCT p.ProductID, p.SellerID, p.CategoryID, p.Name, p.Description, 
-                       p.Price, p.WholesalePrice, p.Quantity, p.ImagePath, p.Status,
-                       s.StoreName, s.UserName
-                FROM Products p
-                JOIN Sellers s ON p.SellerID = s.SellerID
-                WHERE s.RequireCustomerRegistration = 1 AND s.Status = 'active' AND p.Status = 'active'
-                ORDER BY s.StoreName, p.ProductID
-            """
-            cursor.execute(query)
-        
-        products = cursor.fetchall()
-        conn.close()
-        
-        if not products:
-            bot.send_message(chat_id, "📭 لا توجد منتجات في المتاجر المغلقة حالياً.")
-            return
-        
-        # تجميع المنتجات حسب المتجر
-        products_by_store = {}
-        for product in products:
-            seller_id = product[1]
-            store_name = product[10]
-            
-            if seller_id not in products_by_store:
-                products_by_store[seller_id] = {'store_name': store_name, 'products': []}
-            
-            products_by_store[seller_id]['products'].append(product)
-        
-        # إرسال رسالة الترحيب
-        bot.send_message(chat_id, "🏪 **TELEBOT - المتاجر المغلقة**\n\nمنتجات المتاجر المقفولة للزبائن المسجلين:")
-        
-        # إرسال المنتجات لكل متجر
-        for seller_id, store_data in products_by_store.items():
-            store_name = store_data['store_name']
-            store_products = store_data['products']
-            
-            # عنوان المتجر
-            bot.send_message(chat_id, f"\n🏪 **{store_name}** ({len(store_products)} منتج)")
-            
-            # إرسال كل منتج مع صورة واحدة فقط
-            for product in store_products:
-                product_id, seller_id, category_id, name, description, price, wholesale_price, quantity, image_path, status, store_name, username = product
-                
-                text = f"📦 **{name}**\n"
-                if description:
-                    text += f"📝 {description}\n"
-                text += f"💰 السعر: {price:,.0f} IQD\n"
-                text += f"📦 الكمية المتاحة: {quantity}\n"
-                
-                markup = types.InlineKeyboardMarkup()
-                markup.row(
-                    types.InlineKeyboardButton("➕ إضافة للسلة", callback_data=f"addtocart_{product_id}_1"),
-                    types.InlineKeyboardButton("🛒 السلة", callback_data="view_cart")
-                )
-                
-                # ⚡ إرسال رسالة نصية سريعة (بدون صور لتجنب timeout)
-                bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
-        
-    except Exception as e:
-        print(f"❌ خطأ في send_telebot_catalog: {e}")
-        import traceback
-        traceback.print_exc()
-        bot.send_message(chat_id, f"❌ خطأ: {str(e)}")
-
 # ====== معالجة المتاجر والعرض ======
+# تم حذف متجر TELEBOT - الآن يتم الاتصال المباشر مع المتاجر المغلقة
 def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id, customer_telegram_id=None):
     """إرسال كتالوج المتجر - يتطلب تسجيل الزبون في CreditCustomers إذا كان الإعداد مفعلاً"""
-    
-    # معالجة خاصة لمتجر TELEBOT
-    if seller_telegram_id == 999999999:  # TelegramID لـ TELEBOT
-        print(f"🔍 متجر TELEBOT - عرض المتاجر المغلقة")
-        send_telebot_catalog(chat_id, customer_telegram_id)
-        return
     
     try:
         print(f"🔍 send_store_catalog_by_telegram_id: seller_telegram_id={seller_telegram_id}, customer_telegram_id={customer_telegram_id}")
@@ -9792,28 +10309,40 @@ def handle_buy_images(call):
         # حساب المبلغ الإجمالي
         total_amount = price * quantity
         
-        # إرسال الصور للمستخدم
+        # إرسال الصور للمستخدم من قاعدة البيانات
         sent_images = []
         for i in range(quantity):
-            image_path = images[i][1]  # ImagePath
-            
-            # محاولة إرسال الصورة
             try:
-                if os.path.exists(image_path):
-                    with open(image_path, 'rb') as photo:
-                        bot.send_photo(telegram_id, photo)
-                        sent_images.append(image_path)
-                elif IS_POSTGRES:
-                    # محاولة تحميل من السحابة
-                    base_name = os.path.basename(image_path)
-                    if download_image_from_cloud(base_name):
-                        alt_path = os.path.join(IMAGES_FOLDER, base_name)
-                        if os.path.exists(alt_path):
-                            with open(alt_path, 'rb') as photo:
-                                bot.send_photo(telegram_id, photo)
-                                sent_images.append(base_name)
+                image_id = images[i][0]  # ImageID
+                image_filename = images[i][1]  # اسم الملف
+                
+                # جلب بيانات الصورة من قاعدة البيانات
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                
+                if IS_POSTGRES:
+                    cursor.execute("SELECT filedata FROM imagestorage WHERE imageid=%s", (image_id,))
+                else:
+                    cursor.execute("SELECT filedata FROM imagestorage WHERE ImageID=?", (image_id,))
+                
+                result = cursor.fetchone()
+                conn.close()
+                
+                if result and result[0]:
+                    file_data = result[0]
+                    # إنشاء file-like object من البيانات الثنائية
+                    from io import BytesIO
+                    photo_buffer = BytesIO(file_data)
+                    photo_buffer.name = image_filename
+                    
+                    # إرسال الصورة للمستخدم
+                    bot.send_photo(telegram_id, photo_buffer)
+                    sent_images.append(image_filename)
+                    print(f"✅ Image {i+1} sent: {image_filename}")
             except Exception as e:
-                print(f"Error sending image {i+1}: {e}")
+                print(f"❌ Error sending image {i+1}: {e}")
+                import traceback
+                traceback.print_exc()
         
         if not sent_images:
             bot.answer_callback_query(call.id, "❌ فشل إرسال الصور")
@@ -9828,9 +10357,15 @@ def handle_buy_images(call):
             if IS_POSTGRES:
                 cursor.execute("UPDATE Products SET Quantity = GREATEST(0, Quantity - %s) WHERE ProductID = %s", (quantity, product_id))
             else:
-                cursor.execute("UPDATE Products SET Quantity = MAX(0, Quantity - ?) WHERE ProductID = ?", (quantity, product_id))
+                # SQLite: استخدم CASE بدل MAX
+                cursor.execute("UPDATE Products SET Quantity = CASE WHEN Quantity - ? < 0 THEN 0 ELSE Quantity - ? END WHERE ProductID = ?", (quantity, quantity, product_id))
             conn.commit()
             conn.close()
+            
+            # ✅ حذف الصور المشتراة من قاعدة البيانات باستخدام الدالة الجديدة
+            print(f"🗑️ حذف {quantity} صور من ProductID {product_id}")
+            deleted_count, deleted_images = delete_n_images_from_product(product_id, quantity)
+            print(f"✅ تم حذف {deleted_count} صورة: {deleted_images}")
             
             # إرسال رسالة للمستخدم
             bot.send_message(telegram_id,
@@ -9845,7 +10380,8 @@ def handle_buy_images(call):
             seller = get_seller_by_id(seller_id)
             if seller:
                 seller_telegram_id = seller[1]
-                images_list = "\n".join([f"• {os.path.basename(img)}" for img in sent_images])
+                # sent_images تحتوي على أسماء الملفات مباشرة
+                images_list = "\n".join([f"• {img}" for img in sent_images])
                 
                 bot.send_message(seller_telegram_id,
                     f"🛒 **طلب شراء صور**\n\n"
@@ -10027,19 +10563,12 @@ def handle_manage_product_images(call):
         
         print(f"[DEBUG] Product seller: seller_id={seller[0]}")
         
-        # للمتاجر العادية: تحقق من الملكية
-        # للمتجر TELEBOT: السماح للجميع بالعرض
-        is_telebot = seller[0] == 27  # SellerID من TELEBOT
-        
-        if not is_telebot:
-            # هذا متجر عادي - تحقق من الملكية
-            user_seller = get_seller_by_telegram(telegram_id)
-            if not user_seller or product[1] != user_seller[0]:
-                print(f"[DEBUG] Permission denied: not the owner")
-                bot.answer_callback_query(call.id, "⛔ ليس لديك صلاحية لتعديل هذا المنتج")
-                return
-        else:
-            print(f"[DEBUG] TELEBOT product - allowing view without restrictions")
+        # تحقق من ملكية المنتج
+        user_seller = get_seller_by_telegram(telegram_id)
+        if not user_seller or product[1] != user_seller[0]:
+            print(f"[DEBUG] Permission denied: not the owner")
+            bot.answer_callback_query(call.id, "⛔ ليس لديك صلاحية لتعديل هذا المنتج")
+            return
         
         # الحصول على الصور
         product_name = product[3]
@@ -10565,6 +11094,99 @@ def update_cart_view(chat_id, message_id, user_id):
         traceback.print_exc()
 
 
+def delete_product_images_for_closed_store(seller_id, items_list):
+    """
+    حذف صور المنتجات من المتجر المغلق بناءً على الكمية المشتراة فقط
+    
+    Args:
+        seller_id: معرّف البائع
+        items_list: قائمة المنتجات المشتراة [(product_id, quantity, price, name), ...]
+    """
+    try:
+        if not items_list:
+            print("⚠️ لا توجد منتجات للحذف")
+            return 0
+        
+        print(f"🔍 DEBUG: البدء بحذف الصور للمنتجات: {len(items_list)}")
+        for idx, item in enumerate(items_list):
+            print(f"   [{idx}] {item}")
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        deleted_count = 0
+        
+        for product_id, quantity, price, name in items_list:
+            try:
+                # تحويل إلى int للتأكد
+                quantity = int(quantity)
+                product_id = int(product_id)
+                
+                print(f"🔧 معالجة منتج: {product_id} (الكمية: {quantity})")
+                
+                # الحصول على قائمة صور المنتج (مرتبة بالترتيب)
+                if IS_POSTGRES:
+                    cursor.execute(
+                        'SELECT imageid, filename FROM imagestorage WHERE productid = %s ORDER BY imageorder ASC',
+                        (product_id,)
+                    )
+                else:
+                    cursor.execute(
+                        'SELECT imageid, filename FROM imagestorage WHERE productid = ? ORDER BY imageorder ASC',
+                        (product_id,)
+                    )
+                
+                images = cursor.fetchall()
+                print(f"   ✓ وجدنا {len(images)} صور للمنتج {product_id}")
+                
+                # حذف فقط الصور المشتراة (بالكمية المطلوبة)
+                images_to_delete = images[:quantity]  # أول N صورة حيث N = الكمية المشتراة
+                
+                print(f"📸 المنتج {product_id}: حذف {len(images_to_delete)} صورة من {len(images)} صور (الكمية المشتراة: {quantity})")
+                
+                for img_row in images_to_delete:
+                    image_id, filename = img_row
+                    img_path = os.path.join(IMAGES_FOLDER, filename)
+                    
+                    try:
+                        # حذف الملف من القرص المحلي
+                        if os.path.exists(img_path):
+                            os.remove(img_path)
+                            print(f"🗑️  حذف ملف الصورة: {filename}")
+                            deleted_count += 1
+                    except Exception as e:
+                        print(f"⚠️  خطأ في حذف الملف {filename}: {e}")
+                    
+                    # حذف من قاعدة البيانات
+                    try:
+                        if IS_POSTGRES:
+                            cursor.execute(
+                                'DELETE FROM imagestorage WHERE imageid = %s',
+                                (image_id,)
+                            )
+                        else:
+                            cursor.execute(
+                                'DELETE FROM imagestorage WHERE imageid = ?',
+                                (image_id,)
+                            )
+                    except Exception as e:
+                        print(f"⚠️  خطأ في حذف الصورة من قاعدة البيانات {image_id}: {e}")
+                
+            except Exception as e:
+                print(f"❌ خطأ في معالجة صور المنتج {product_id}: {e}")
+        
+        conn.commit()
+        conn.close()
+        
+        print(f"✅ تم حذف {deleted_count} صورة من متجر مغلق (seller_id={seller_id})")
+        return deleted_count
+        
+    except Exception as e:
+        print(f"❌ خطأ في حذف صور المتجر المغلق: {e}")
+        traceback.print_exc()
+        return 0
+
+
 def create_confirmed_order_for_closed_store(message, telegram_id, seller_id, seller_data, user_info):
     """
     For closed (registration-required) stores: Create ONLY a Message, NO Order.
@@ -10615,84 +11237,98 @@ def create_confirmed_order_for_closed_store(message, telegram_id, seller_id, sel
         else:
             print(f"⚠️ Warning: Could not find customer ID for telegram {telegram_id}")
         
-        # 📤 SEND PRODUCTS TO CUSTOMER FROM TELEBOT
+        # 📤 SEND PRODUCTS WITH IMAGES TO CUSTOMER (Show images immediately)
         print(f"📸 Sending product images to customer {telegram_id}...")
+        print(f"🔍 DEBUG: telegram_id = {telegram_id}, type = {type(telegram_id)}")
         conn = get_db_connection()
         cursor = conn.cursor()
+        
+        # Build a message with all products and their images
+        sent_images_count = 0
         
         for product_id, quantity, price, name in seller_data['items']:
             try:
                 # Get product details from Products table
-                cursor.execute("""
-                    SELECT ProductID, ProductName, Description 
-                    FROM Products 
-                    WHERE ProductID=?
-                """, (product_id,))
+                if IS_POSTGRES:
+                    cursor.execute("""
+                        SELECT "productid", "name", "description" 
+                        FROM products 
+                        WHERE "productid"=%s
+                    """, (product_id,))
+                else:
+                    cursor.execute("""
+                        SELECT ProductID, ProductName, Description 
+                        FROM Products 
+                        WHERE ProductID=?
+                    """, (product_id,))
                 product = cursor.fetchone()
                 
                 if product:
                     prod_id, prod_name, prod_desc = product
                     
-                    # جرّب الحصول على صورة المنتج الأساسية أولاً ثم الصور العامة
-                    cursor.execute("""
-                        SELECT FileName FROM imagestorage 
-                        WHERE ProductID = ?
-                        ORDER BY imageorder
-                        LIMIT 1
-                    """, (product_id,))
-                    img_result = cursor.fetchone()
-                    
-                    # إذا لم توجد صورة للمنتج، حاول الصور العامة
-                    if not img_result:
+                    # جرّب الحصول على صور المنتج (بالعدد المطلوب شراؤه)
+                    if IS_POSTGRES:
+                        cursor.execute("""
+                            SELECT filename FROM imagestorage 
+                            WHERE productid = %s
+                            ORDER BY imageorder ASC
+                            LIMIT %s
+                        """, (product_id, quantity))
+                    else:
                         cursor.execute("""
                             SELECT FileName FROM imagestorage 
-                            WHERE ProductID IS NULL
-                            LIMIT 1
-                        """)
-                        img_result = cursor.fetchone()
+                            WHERE ProductID = ?
+                            ORDER BY imageorder
+                            LIMIT ?
+                        """, (product_id, quantity))
                     
-                    if img_result:
-                        img_filename = img_result[0]
-                        img_path = os.path.join(IMAGES_FOLDER, img_filename)
-                        print(f"[DEBUG] Using image: {img_filename} for product {prod_id}")
+                    images = cursor.fetchall()
+                    
+                    if images:
+                        print(f"📸 Sending {len(images)} images for product {prod_id} to customer {telegram_id}")
                         
-                        # Send product image
-                        try:
-                            print(f"  Sending image for product {prod_id}: {img_filename}")
-                            with open(img_path, 'rb') as photo:
-                                bot.send_photo(
+                        # Send each image to the customer immediately
+                        for img_row in images:
+                            img_filename = img_row[0]
+                            img_path = os.path.join(IMAGES_FOLDER, img_filename)
+                            
+                            try:
+                                if os.path.exists(img_path):
+                                    with open(img_path, 'rb') as photo:
+                                        bot.send_photo(
+                                            telegram_id,
+                                            photo,
+                                            caption=f"📦 {escape_markdown_v1(prod_name)}\n💰 السعر: {price} د.ع\n📊 الكمية: {quantity}\n\n✅ تم شراؤها بنجاح!",
+                                            parse_mode='Markdown'
+                                        )
+                                        sent_images_count += 1
+                                        print(f"✅ Image sent to customer: {img_filename}")
+                                else:
+                                    print(f"⚠️ Image file not found: {img_path}")
+                                    # Send text version as fallback
+                                    bot.send_message(
+                                        telegram_id,
+                                        f"📦 *{escape_markdown_v1(prod_name)}*\n\n💰 السعر: {price} د.ع\n📊 الكمية: {quantity}\n\n✅ تم شراؤها بنجاح!",
+                                        parse_mode='Markdown'
+                                    )
+                            except Exception as e:
+                                print(f"❌ Error sending photo to customer: {type(e).__name__}: {str(e)}")
+                                # Send text version as fallback
+                                bot.send_message(
                                     telegram_id,
-                                    photo,
-                                    caption=f"Product: {prod_name}\n\nPrice: {price}\nQuantity: {quantity}",
+                                    f"📦 *{escape_markdown_v1(prod_name)}*\n\n💰 السعر: {price} د.ع\n📊 الكمية: {quantity}\n\n✅ تم شراؤها بنجاح!",
                                     parse_mode='Markdown'
                                 )
-                                print(f"  Image sent successfully!")
-                        except FileNotFoundError:
-                            print(f"  WARNING: Image file not found: {img_path}")
-                            # Send text version
-                            bot.send_message(
-                                telegram_id,
-                                f"Product: {prod_name}\n\nPrice: {price}\nQuantity: {quantity}",
-                                parse_mode='Markdown'
-                            )
-                        except Exception as e:
-                            print(f"  ERROR sending photo: {type(e).__name__}: {str(e)}")
-                            # Send text version as fallback
-                            bot.send_message(
-                                telegram_id,
-                                f"Product: {prod_name}\n\nPrice: {price}\nQuantity: {quantity}",
-                                parse_mode='Markdown'
-                            )
                     else:
-                        # No image available
-                        print(f"  No images available in TELEBOT")
+                        # No images available, send text only
+                        print(f"⚠️ No images found for product {product_id}")
                         bot.send_message(
                             telegram_id,
-                            f"Product: {prod_name}\n\nPrice: {price}\nQuantity: {quantity}",
+                            f"📦 *{escape_markdown_v1(prod_name)}*\n\n💰 السعر: {price} د.ع\n📊 الكمية: {quantity}\n\n✅ تم شراؤها بنجاح!",
                             parse_mode='Markdown'
                         )
             except Exception as e:
-                print(f"ERROR processing product: {type(e).__name__}: {str(e)}")
+                print(f"❌ Error processing product {product_id}: {type(e).__name__}: {str(e)}")
                 traceback.print_exc()
         
         cursor.close()
@@ -10722,6 +11358,21 @@ def create_confirmed_order_for_closed_store(message, telegram_id, seller_id, sel
         # Create message in Messages table
         create_message(None, seller_id, 'closed_store_purchase', message_text)
         
+        # 📱 SAVE NOTIFICATION FOR APP
+        product_names = ", ".join([name for _, _, _, name in seller_data['items']])
+        print(f"💾 حفظ إشعار في قاعدة البيانات للعميل {telegram_id}")
+        notification_saved = save_notification(
+            customer_telegram_id=telegram_id,
+            notification_type='closed_store_purchase',
+            title=f"✅ تم تأكيد طلبك",
+            message=f"تم شراء {len(seller_data['items'])} منتج(ات) بنجاح! المبلغ: {total_amount} د.ع",
+            product_names=product_names,
+            total_amount=total_amount,
+            seller_id=seller_id,
+            data=None
+        )
+        print(f"✅ تم حفظ الإشعار: {notification_saved}")
+        
         # Send notification to seller with message (no order reference)
         seller_notification = (
             f"📬 *رسالة جديدة - شراء من متجر مغلق*\n\n"
@@ -10732,6 +11383,16 @@ def create_confirmed_order_for_closed_store(message, telegram_id, seller_id, sel
         )
         
         bot.send_message(seller_telegram_id, seller_notification, parse_mode='Markdown')
+        
+        # 🗑️ حذف تلقائي لصور المنتجات المشتراة من المتجر المغلق (بناءً على الكمية فقط)
+        deleted_count = delete_product_images_for_closed_store(seller_id, seller_data['items'])
+        
+        if deleted_count > 0:
+            bot.send_message(
+                seller_telegram_id,
+                f"🗑️ تم حذف {deleted_count} صور من المنتجات المشتراة (توفير مساحة في قاعدة البيانات)",
+                parse_mode='Markdown'
+            )
         
         print(f"✅ Closed store purchase recorded as MESSAGE (no order) - notifications sent!")
         return True
@@ -10811,7 +11472,9 @@ def handle_checkout_cart(call):
                 all_sellers_closed = False
                 break
             
-            require_registration = seller[9] if len(seller) > 9 else 0
+            # seller columns: sellerid, telegramid, username, storename, createdat, status, suspensionreason, suspendedby, suspendedat, imagepath, requirecustomerregistration
+            # index:           0          1             2         3           4         5       6                  7            8           9           10
+            require_registration = seller[10] if len(seller) > 10 else 0
             if not require_registration:
                 # متجر مفتوح
                 all_sellers_closed = False
@@ -11624,7 +12287,7 @@ def create_order_for_guest(buyer_id, seller_id, cart_items, delivery_address=Non
             new_qty = 0
         cursor.execute("UPDATE Products SET Quantity=? WHERE ProductID=?", (new_qty, pid))
         
-        # 🗑️ حذف الصور من ImageStorage (الصور ترسل للمشتري ثم تُحذف من TELEBOT)
+        # 🗑️ حذف الصور من ImageStorage (الصور ترسل للمشتري ثم تُحذف من قاعدة البيانات)
         if IS_POSTGRES:
             cursor.execute("""
                 SELECT filename FROM imagestorage WHERE productid=%s
@@ -14172,28 +14835,33 @@ if __name__ == "__main__":
         
         # Initialize Auction Store
         print("[INFO] Initializing Auction Store...")
-        initialize_auction_store()
-        print("[OK] Auction Store Initialized Successfully")
+        try:
+            initialize_auction_store()
+            print("[OK] Auction Store Initialized Successfully")
+        except Exception as auction_err:
+            print(f"[WARN] Auction Store initialization failed (non-critical): {auction_err}")
         
         # Debug: Check products count after initialization
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM Products")
-        result = cursor.fetchone()
-        product_count = result[0] if result else 0
-        print(f"[INFO] Total products in database: {product_count}")
-        
-        cursor.execute("SELECT COUNT(*) FROM Products WHERE Quantity > 0 AND Status='active'")
-        result = cursor.fetchone()
-        active_product_count = result[0] if result else 0
-        print(f"[INFO] Active products with Quantity > 0: {active_product_count}")
-        
-        conn.close()
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM Products")
+            result = cursor.fetchone()
+            product_count = result[0] if result else 0
+            print(f"[INFO] Total products in database: {product_count}")
+            
+            cursor.execute("SELECT COUNT(*) FROM Products WHERE Quantity > 0 AND Status='active'")
+            result = cursor.fetchone()
+            active_product_count = result[0] if result else 0
+            print(f"[INFO] Active products with Quantity > 0: {active_product_count}")
+            
+            conn.close()
+        except Exception as db_check_err:
+            print(f"[WARN] Database check failed (non-critical): {db_check_err}")
     except Exception as e:
-        print(f"[ERROR] CRITICAL DATABASE ERROR: {e}")
+        print(f"[ERROR] DATABASE INITIALIZATION ERROR: {e}")
         traceback.print_exc()
-        # Non-fatal? Maybe allow bot to try starting anyway, or fail loud?
-        # For now, let's fail loud but AFTER printing the error.
+        print("[WARN] Attempting to continue anyway...")
     try:
         print("[INFO] Clearing Webhooks...")
         bot.remove_webhook()
@@ -14253,20 +14921,126 @@ if __name__ == "__main__":
     cursor.close()
     conn.close()
     
+    # Start Flask API in a separate thread
+    print("[INFO] Starting Flask API server in background...")
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    time.sleep(2)  # Give Flask time to start
+    print("✅ Flask API started successfully")
+    
     if polling_disabled:
         print("[WARN] POLLING DISABLED - Bot is in standby mode (Railway instance is active)")
         print("[INFO] To re-enable polling locally, run: python enable_local_polling.py")
-        # Keep the process alive but don't start polling
-        while True:
-            time.sleep(60)
-    else:
-        # Infinite loop to auto-restart on crashes/connection errors
-        while True:
+# ===================== خادم التطبيق الخلفي (Background Monitoring) =====================
+
+import threading
+
+def cleanup_purchased_images():
+    """
+    خادم خلفي يراقب الصور المباعة ويحذفها تلقائياً
+    يتحقق كل 30 ثانية
+    """
+    print("🔄 تم بدء خادم تنظيف الصور الخلفي...")
+    
+    while True:
+        try:
+            print("\n🔍 فحص الصور المباعة...")
+            
+            # للمنتجات المشترية، نحتاج لحذف الصور
+            # نحن نراقب النتاجات في جدول CustomerCredit ذات TransactionType='Purchase'
+            # ونرى إذا كانت الصور لهذا المنتج موجودة
+            
             try:
-                # infinity_polling handles many errors internally, but this loop catches the rest
-                bot.infinity_polling(timeout=60, long_polling_timeout=60, allowed_updates=['message', 'callback_query', 'my_chat_member'])
-            except Exception as e:
-                print(f"[WARN] Polling Error (Restarting in 5s): {e}")
-                time.sleep(5)
-            continue
+                conn = get_db_connection()
+            except Exception as db_err:
+                print(f"⚠️ خطأ في الاتصال بقاعدة البيانات: {db_err}")
+                time.sleep(60)
+                continue
+            
+            cursor = conn.cursor()
+            
+            # الحصول على آخر 20 معاملة شراء
+            try:
+                if IS_POSTGRES:
+                    cursor.execute("""
+                        SELECT DISTINCT productid FROM imagestorage 
+                        WHERE productid IS NOT NULL
+                        LIMIT 50
+                    """)
+                else:
+                    cursor.execute("""
+                        SELECT DISTINCT productid FROM imagestorage
+                    """)
+                
+                products_with_images = cursor.fetchall()
+            except Exception as query_err:
+                print(f"⚠️ خطأ في استعلام قاعدة البيانات: {query_err}")
+                conn.close()
+                time.sleep(60)
+                continue
+            
+            if products_with_images:
+                print(f"📦 عدد المنتجات المشترية التي قد تحتوي على صور: {len(products_with_images)}")
+            
+            conn.close()
+            
+            # نتحقق من كل منتج
+            for (product_id,) in products_with_images:
+                try:
+                    images = get_product_images(product_id)
+                    product = get_product_by_id(product_id)
+                    
+                    if not product:
+                        continue
+                    
+                    # إذا كانت الكمية = 0 والصور موجودة، نحذفها
+                    available_qty = product[7]
+                    image_count = len(images) if images else 0
+                    
+                    if available_qty == 0 and image_count > 0:
+                        print(f"🗑️ حذف {image_count} صور من المنتج {product_id} (الكمية=0)")
+                        delete_n_images_from_product(product_id, image_count)
+                    
+                except Exception as e:
+                    print(f"⚠️ خطأ في معالجة المنتج {product_id}: {e}")
+            
+            # الانتظار 30 ثانية قبل الفحص التالي
+            time.sleep(30)
+            
+        except Exception as e:
+            print(f"❌ خطأ في خادم التنظيف الخلفي: {e}")
+            import traceback
+            traceback.print_exc()
+            time.sleep(60)
+            # تابع الحلقة
+# بدء خادم التنظيف في thread منفصل
+cleanup_thread = threading.Thread(target=cleanup_purchased_images, daemon=True)
+cleanup_thread.start()
+print("✅ تم بدء خادم التنظيف الخلفي في thread منفصل")
+
+# ===================== بدء البوت =====================
+# Infinite loop to auto-restart on crashes/connection errors
+print("🚀 جاري بدء البوت...")
+try:
+    while True:
+        try:
+            # infinity_polling handles many errors internally, but this loop catches the rest
+            print("📡 جاري الاتصال بـ Telegram...")
+            bot.infinity_polling(timeout=60, long_polling_timeout=60, allowed_updates=['message', 'callback_query', 'my_chat_member'])
+        except KeyboardInterrupt:
+            print("\n⚠️ تم إيقاف البوت من قبل المستخدم")
+            break
+        except Exception as e:
+            print(f"[WARN] Polling Error (Restarting in 5s): {e}")
+            import traceback
+            traceback.print_exc()
+            time.sleep(5)
+except Exception as main_err:
+    print(f"❌ خطأ رئيسي: {main_err}")
+    import traceback
+    traceback.print_exc()
+finally:
+    print("🛑 تم إغلاق البوت")
+
+
 

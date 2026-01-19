@@ -9,6 +9,7 @@ import 'store_detail_screen.dart';
 import 'cart_screen.dart';
 import 'messages_screen.dart';
 import 'orders_screen.dart';
+import 'notifications_screen.dart';
 import 'components/store_form_dialog.dart';
 import 'server_settings_screen.dart';
 
@@ -122,6 +123,7 @@ class _HomeScreenState extends State<HomeScreen> {
       {'icon': Icons.dashboard, 'label': 'لوحة التحكم'},
       if (widget.isAdmin || widget.isSeller) {'icon': Icons.store, 'label': 'متجري', 'count': _counts['products']},
       {'icon': Icons.shopping_cart, 'label': 'سلة المشتريات 🛒', 'count': _counts['cart']},
+      {'icon': Icons.notifications, 'label': 'الإشعارات 📬', 'count': _counts['notifications'] ?? 0},
       {'icon': Icons.settings, 'label': 'الاعدادات'},
       if (widget.isAdmin || widget.isSeller) {'icon': Icons.shopping_bag, 'label': 'الطلبات', 'count': _counts['orders']},
       if (widget.isAdmin || widget.isSeller) {'icon': Icons.message, 'label': 'الرسائل', 'count': _counts['messages']},
@@ -354,6 +356,8 @@ class _HomeScreenState extends State<HomeScreen> {
       return AdminStoreLoader(currentUserId: widget.currentUserId); 
     } else if (_selectedIndex == 2) {
       return CartScreen(userId: widget.currentUserId); 
+    } else if (_selectedIndex == 3) {
+      return NotificationsScreen(customerId: widget.currentUserId);
     } else if (_selectedIndex == 4 && (widget.isAdmin || widget.isSeller)) {
       return AdminOrdersLoader(currentUserId: widget.currentUserId);
     } else if (_selectedIndex == 5 && (widget.isAdmin || widget.isSeller)) {

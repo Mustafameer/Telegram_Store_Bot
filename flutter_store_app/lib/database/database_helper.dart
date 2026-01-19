@@ -67,12 +67,11 @@ class DatabaseHelper {
     return await _cloudHelper.getCategories(sellerId,
         forceRefresh: forceRefresh);
   }
-
   Future<void> ensureCategorySchema() async {
     return await _cloudHelper.ensureCategorySchema();
   }
 
-  Future<void> addCategory(Category category) async {
+  Future<int?> addCategory(Category category) async {
     return await _cloudHelper.addCategory(category);
   }
 
@@ -353,6 +352,10 @@ class DatabaseHelper {
 
   Future<Uint8List?> getImageData(String fileName) async {
     return await _cloudHelper.getImageData(fileName);
+  }
+
+  Future<String?> getImageUrl(String fileName) async {
+    return await _cloudHelper.getImageUrl(fileName);
   }
 
   // ==================== Compatibility Methods (Legacy SQLite) ====================

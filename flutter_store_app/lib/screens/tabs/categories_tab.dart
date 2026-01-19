@@ -1,7 +1,9 @@
 
 import 'package:flutter/material.dart';
+import 'dart:typed_data';
 import '../../database/database_helper.dart';
 import '../../models/database_models.dart';
+import '../../services/postgres_service.dart';
 
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
@@ -75,27 +77,49 @@ class _CategoriesTabState extends State<CategoriesTab> {
     showDialog(
       context: context,
       builder: (context) => CategoryFormDialog(
+        categoryId: category?.categoryId,
         initialName: category?.name,
         initialImagePath: category?.imagePath,
-        onSave: (name, imagePath) async {
+        isEditable: widget.isEditable,
+        onSave: (name, imagePath, imageBytes) async {
           final newCategory = Category(
             categoryId: category?.categoryId ?? 0,
             sellerId: widget.sellerId,
             name: name,
             orderIndex: category?.orderIndex ?? 0,
             imagePath: imagePath,
+            imageFileName: category?.imageFileName,
+            imageUrl: category?.imageUrl,
           );
 
           try {
             print('🔄 [CategoriesTab] Starting category save...');
             if (category == null) {
               print('📝 [CategoriesTab] Adding new category: $name');
-              await DatabaseHelper.instance.addCategory(newCategory);
-              print('✅ [CategoriesTab] New category added successfully');
+              final newCategoryId = await DatabaseHelper.instance.addCategory(newCategory);
+              print('✅ [CategoriesTab] New category added successfully (ID: $newCategoryId)');
+              
+              // Save image to database if provided
+              if (imageBytes != null && newCategoryId != null) {
+                final fileName = 'category_${newCategoryId}_${DateTime.now().millisecondsSinceEpoch}.jpg';
+                final saved = await PostgresService().saveCategoryImage(newCategoryId, imageBytes, fileName);
+                if (saved) {
+                  print('✅ Category image saved to database');
+                } else {
+                  print('⚠️ Failed to save category image');
+                }
+              }
             } else {
               print('✏️ [CategoriesTab] Updating category: $name');
               await DatabaseHelper.instance.updateCategory(newCategory);
               print('✅ [CategoriesTab] Category updated successfully');
+              
+              // Save image to database if provided
+              if (imageBytes != null) {
+                final fileName = 'category_${category.categoryId}_${DateTime.now().millisecondsSinceEpoch}.jpg';
+                await PostgresService().saveCategoryImage(category.categoryId, imageBytes, fileName);
+                print('✅ Category image updated in database');
+              }
             }
           } catch (e) {
             print('❌ [CategoriesTab] Error saving category: $e');
@@ -169,8 +193,7 @@ class _CategoriesTabState extends State<CategoriesTab> {
                   child: ListTile(
                     leading: CircleAvatar(
                       backgroundColor: Theme.of(context).primaryColor.withValues(alpha: 0.1),
-                      backgroundImage: category.imagePath != null ? FileImage(File(category.imagePath!)) : null,
-                      child: category.imagePath == null ? const Icon(Icons.category, color: Color(0xFF2A9D8F)) : null,
+                      child: _CategoryImageBuilder(categoryId: category.categoryId),
                     ),
                     title: Text(category.name, style: const TextStyle(fontWeight: FontWeight.bold)),
                     trailing: widget.isEditable 
@@ -206,14 +229,18 @@ class _CategoriesTabState extends State<CategoriesTab> {
 }
 
 class CategoryFormDialog extends StatefulWidget {
+  final int? categoryId;
   final String? initialName;
   final String? initialImagePath;
-  final Future<void> Function(String name, String? imagePath) onSave;
+  final bool isEditable;
+  final Future<void> Function(String name, String? imagePath, Uint8List? imageBytes) onSave;
 
   const CategoryFormDialog({
-    super.key, 
+    super.key,
+    this.categoryId,
     this.initialName, 
-    this.initialImagePath, 
+    this.initialImagePath,
+    this.isEditable = true,
     required this.onSave
   });
 
@@ -224,6 +251,7 @@ class CategoryFormDialog extends StatefulWidget {
 class _CategoryFormDialogState extends State<CategoryFormDialog> {
   late TextEditingController _nameController;
   String? _imagePath;
+  Uint8List? _imageBytes;
 
   @override
   void initState() {
@@ -235,8 +263,11 @@ class _CategoryFormDialogState extends State<CategoryFormDialog> {
   Future<void> _pickImage() async {
     FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.image);
     if (result != null) {
+      final file = File(result.files.single.path!);
+      final bytes = await file.readAsBytes();
       setState(() {
         _imagePath = result.files.single.path;
+        _imageBytes = bytes;
       });
     }
   }
@@ -244,30 +275,47 @@ class _CategoryFormDialogState extends State<CategoryFormDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(widget.initialName == null ? 'إضافة فئة' : 'تعديل الفئة'),
+      title: Row(
+        children: [
+          Expanded(
+            child: Text(widget.initialName == null ? 'إضافة فئة' : 'تعديل الفئة'),
+          ),
+          if (!widget.isEditable)
+            const Icon(Icons.lock, color: Colors.red, size: 20),
+        ],
+      ),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           GestureDetector(
-            onTap: _pickImage,
+            onTap: widget.isEditable ? _pickImage : null,
             child: Container(
               height: 120,
               width: double.infinity,
               decoration: BoxDecoration(
                 color: Colors.grey[200],
-                border: Border.all(color: Colors.grey),
+                border: Border.all(color: widget.isEditable ? Colors.grey : Colors.red),
                 borderRadius: BorderRadius.circular(8),
                 image: _imagePath != null 
                   ? DecorationImage(image: FileImage(File(_imagePath!)), fit: BoxFit.cover)
                   : null,
               ),
               child: _imagePath == null 
-                ? const Column(
+                ? Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.add_a_photo, size: 40, color: Colors.grey),
-                      SizedBox(height: 8),
-                      Text('اضغط لإضافة صورة', style: TextStyle(color: Colors.grey)),
+                      Icon(
+                        widget.isEditable ? Icons.add_a_photo : Icons.lock,
+                        size: 40,
+                        color: widget.isEditable ? Colors.grey : Colors.red,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        widget.isEditable ? 'اضغط لإضافة صورة' : '🔒 لا يمكن التعديل',
+                        style: TextStyle(
+                          color: widget.isEditable ? Colors.grey : Colors.red,
+                        ),
+                      ),
                     ],
                   )
                 : null,
@@ -276,32 +324,62 @@ class _CategoryFormDialogState extends State<CategoryFormDialog> {
           const SizedBox(height: 16),
           TextField(
             controller: _nameController,
-            decoration: const InputDecoration(labelText: 'اسم الفئة'),
+            enabled: widget.isEditable,
+            decoration: InputDecoration(
+              labelText: 'اسم الفئة',
+              suffixIcon: !widget.isEditable ? const Icon(Icons.lock, color: Colors.red) : null,
+            ),
           ),
         ],
       ),
       actions: [
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
         FilledButton(
-          onPressed: () async {
-            if (_nameController.text.isNotEmpty) {
-              try {
-                await widget.onSave(_nameController.text, _imagePath);
-                if (context.mounted) {
-                  // انتظر قليلاً لضمان تحديث البيانات
-                  await Future.delayed(const Duration(milliseconds: 500));
-                  if (context.mounted) Navigator.pop(context);
-                }
-              } catch (e) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red));
-                }
+          onPressed: widget.isEditable && _nameController.text.isNotEmpty ? () async {
+            try {
+              await widget.onSave(_nameController.text, _imagePath, _imageBytes);
+              if (context.mounted) {
+                await Future.delayed(const Duration(milliseconds: 500));
+                if (context.mounted) Navigator.pop(context);
+              }
+            } catch (e) {
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red));
               }
             }
-          },
-          child: const Text('حفظ'),
+          } : null,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (!widget.isEditable) const Icon(Icons.lock, size: 16),
+              const SizedBox(width: 4),
+              const Text('حفظ'),
+            ],
+          ),
         ),
       ],
+    );
+  }
+}
+// Widget لعرض صورة الفئة من قاعدة البيانات
+class _CategoryImageBuilder extends StatelessWidget {
+  final int categoryId;
+
+  const _CategoryImageBuilder({required this.categoryId});
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Uint8List?>(
+      future: PostgresService().getCategoryImageData(categoryId),
+      builder: (context, snapshot) {
+        if (snapshot.hasData && snapshot.data != null) {
+          return Image.memory(
+            snapshot.data!,
+            fit: BoxFit.cover,
+          );
+        }
+        return const Icon(Icons.category, color: Color(0xFF2A9D8F));
+      },
     );
   }
 }

@@ -326,24 +326,14 @@ class _ProductsTabState extends State<ProductsTab> {
                             final product = productsInCat[index];
                             return _buildProductCard(product);
                           }, childCount: productsInCat.length),
-                          gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-                            maxCrossAxisExtent:
+                          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount:
                                 MediaQuery.of(context).size.width < 600
-                                ? (MediaQuery.of(context).size.width - 32) /
-                                      2 // Mobile: 2 columns مع padding
-                                : 250, // Desktop: fixed size
-                            childAspectRatio: () {
-                              // جميع البطاقات مربعة (1.0)
-                              return 1.0;
-                            }(),
-                            crossAxisSpacing:
-                                MediaQuery.of(context).size.width < 600
-                                ? 12
-                                : 16,
-                            mainAxisSpacing:
-                                MediaQuery.of(context).size.width < 600
-                                ? 12
-                                : 16,
+                                ? 2 // Mobile: 2 columns
+                                : 6, // Desktop: 6 columns
+                            childAspectRatio: 0.85,
+                            crossAxisSpacing: 8,
+                            mainAxisSpacing: 8,
                           ),
                         ),
                       ],
@@ -374,18 +364,14 @@ class _ProductsTabState extends State<ProductsTab> {
                         final product = uncategorized[index];
                         return _buildProductCard(product);
                       }, childCount: uncategorized.length),
-                      gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-                        maxCrossAxisExtent:
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount:
                             MediaQuery.of(context).size.width < 600
-                            ? (MediaQuery.of(context).size.width - 32) /
-                                  2 // Mobile: 2 columns مع padding
-                            : 378, // Desktop: 10 سم = 378 بكسل
-                        childAspectRatio: 1.0, // مربع: 10 × 10 سم
-                        crossAxisSpacing:
-                            MediaQuery.of(context).size.width < 600 ? 12 : 16,
-                        mainAxisSpacing: MediaQuery.of(context).size.width < 600
-                            ? 12
-                            : 16,
+                            ? 2 // Mobile: 2 columns
+                            : 6, // Desktop: 6 columns
+                        childAspectRatio: 0.85,
+                        crossAxisSpacing: 8,
+                        mainAxisSpacing: 8,
                       ),
                     ),
                   ],

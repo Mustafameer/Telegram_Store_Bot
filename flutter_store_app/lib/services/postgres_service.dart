@@ -198,7 +198,7 @@ class PostgresService {
       late final List<postgres.ResultRow> results;
       try {
         results = await _connection!.execute(
-          'SELECT "CategoryID", "SellerID", "Name", "OrderIndex", "ImagePath" FROM "Categories" WHERE "SellerID" = \$1 ORDER BY "OrderIndex" LIMIT 100',
+          'SELECT "CategoryID", "SellerID", "Name", "OrderIndex", "ImagePath", "ImageFileName", "ImageUrl" FROM "Categories" WHERE "SellerID" = \$1 ORDER BY "OrderIndex" LIMIT 100',
           parameters: [sellerId],
         ).timeout(const Duration(seconds: 10));
       } on TimeoutException {
@@ -214,6 +214,8 @@ class PostgresService {
           name: map['Name'] as String,
           orderIndex: map['OrderIndex'] as int? ?? 0,
           imagePath: map['ImagePath'] as String?,
+          imageFileName: map['ImageFileName'] as String?,
+          imageUrl: map['ImageUrl'] as String?,
         );
       }).toList();
     } catch (e) {
@@ -240,6 +242,8 @@ class PostgresService {
         name: map['Name'] as String,
         orderIndex: map['OrderIndex'] as int? ?? 0,
         imagePath: map['ImagePath'] as String?,
+        imageFileName: map['ImageFileName'] as String?,
+        imageUrl: map['ImageUrl'] as String?,
       );
     } catch (e) {
       print('❌ Error getting category: $e');
@@ -263,23 +267,113 @@ class PostgresService {
     }
   }
 
-  Future<void> addCategory(int sellerId, String name) async {
+  Future<int?> addCategory(int sellerId, String name) async {
     try {
       print('📡 Ensuring PostgreSQL connection...');
       await _ensureConnection();
       print('✅ Connection verified');
       
       print('📁 Preparing INSERT query for category: "$name" (SellerID: $sellerId)');
-      await _connection!.execute(
-        'INSERT INTO "Categories" ("SellerID", "Name", "OrderIndex") VALUES (\$1, \$2, 0)',
+      final result = await _connection!.execute(
+        'INSERT INTO "Categories" ("SellerID", "Name", "OrderIndex") VALUES (\$1, \$2, 0) RETURNING "CategoryID"',
         parameters: [sellerId, name],
       );
       
-      print('✅ Category added successfully: $name');
+      if (result.isNotEmpty) {
+        final categoryId = result.first.toColumnMap()['CategoryID'] as int;
+        print('✅ Category added successfully: $name (ID: $categoryId)');
+        return categoryId;
+      }
+      return null;
     } catch (e) {
       print('❌ Error adding category: $e');
       print('   Error type: ${e.runtimeType}');
       rethrow;
+    }
+  }
+
+  // ==================== Category Image Functions ====================
+
+  /// حفظ صورة الفئة في قاعدة البيانات
+  Future<bool> saveCategoryImage(int categoryId, Uint8List imageData, String fileName) async {
+    try {
+      await _ensureConnection();
+      
+      print('💾 Saving category image: $fileName (CategoryID: $categoryId)');
+      
+      // تحويل البيانات إلى hex
+      String hexData = imageData.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+      
+      // تحديث جدول Categories مع بيانات الصورة
+      await _connection!.execute(
+        '''UPDATE "Categories" 
+           SET "ImageFileName" = \$1, "ImageData" = decode(\$2, 'hex')
+           WHERE "CategoryID" = \$3''',
+        parameters: [fileName, hexData, categoryId],
+      );
+      
+      print('✅ Category image saved: $fileName');
+      return true;
+    } catch (e) {
+      print('❌ Error saving category image: $e');
+      return false;
+    }
+  }
+
+  /// الحصول على بيانات صورة الفئة
+  Future<Uint8List?> getCategoryImageData(int categoryId) async {
+    try {
+      await _ensureConnection();
+      
+      final results = await _connection!.execute(
+        'SELECT encode("ImageData", \'hex\') as imagedata FROM "Categories" WHERE "CategoryID" = \$1',
+        parameters: [categoryId],
+      );
+      
+      if (results.isEmpty) {
+        print('⚠️ No image data for category: $categoryId');
+        return null;
+      }
+      
+      final row = results.first.toColumnMap();
+      final hexData = row['imagedata'];
+      
+      if (hexData == null) {
+        print('⚠️ Image data is null for category: $categoryId');
+        return null;
+      }
+      
+      try {
+        final uint8Bytes = _hexToBytes(hexData.toString());
+        print('✅ Category image loaded: $categoryId (${uint8Bytes.length} bytes)');
+        return uint8Bytes;
+      } catch (e) {
+        print('❌ Error converting hex: $e');
+        return null;
+      }
+    } catch (e) {
+      print('❌ Error getting category image: $e');
+      return null;
+    }
+  }
+
+  /// حذف صورة الفئة
+  Future<bool> deleteCategoryImage(int categoryId) async {
+    try {
+      await _ensureConnection();
+      
+      await _connection!.execute(
+        '''UPDATE "Categories" 
+           SET "ImageFileName" = NULL, "ImageData" = NULL
+           WHERE "CategoryID" = \$1''',
+        parameters: [categoryId],
+      );
+      
+      print('✅ Category image deleted: $categoryId');
+      return true;
+    } catch (e) {
+      print('❌ Error deleting category image: $e');
+      return false;
     }
   }
 
@@ -501,9 +595,9 @@ class PostgresService {
       
       await _ensureConnection();
       
-      // استرجاع البيانات بصيغة base64 (أسرع من hex)
+      // استرجاع البيانات بصيغة hex (متوافق مع البيانات الخام من البوت)
       final results = await _connection!.execute(
-        'SELECT encode(filedata, \'base64\') as filedata FROM imagestorage WHERE filename = \$1',
+        'SELECT encode(filedata, \'hex\') as filedata FROM imagestorage WHERE filename = \$1',
         parameters: [fileName],
       );
       
@@ -513,16 +607,16 @@ class PostgresService {
       }
       
       final row = results.first.toColumnMap();
-      final base64Data = row['filedata'];
+      final hexData = row['filedata'];
       
-      if (base64Data == null) {
+      if (hexData == null) {
         print('⚠️ بيانات الصورة فارغة: $fileName');
         return null;
       }
 
       try {
-        // تحويل base64 string إلى bytes (أسرع بكثير من hex)
-        final uint8Bytes = base64Decode(base64Data.toString());
+        // تحويل hex string إلى bytes
+        final uint8Bytes = _hexToBytes(hexData.toString());
         
         // احفظ في الـ cache
         _imageCache[fileName] = uint8Bytes;
@@ -530,11 +624,53 @@ class PostgresService {
         
         return uint8Bytes;
       } catch (e) {
-        print('❌ خطأ في تحويل base64: $e');
+        print('❌ خطأ في تحويل hex: $e');
         return null;
       }
     } catch (e) {
       print('❌ خطأ في جلب بيانات الصورة: $e');
+      return null;
+    }
+  }
+
+  // تحويل hex إلى bytes
+  Uint8List _hexToBytes(String hex) {
+    final bytes = <int>[];
+    for (var i = 0; i < hex.length; i += 2) {
+      bytes.add(int.parse(hex.substring(i, i + 2), radix: 16));
+    }
+    return Uint8List.fromList(bytes);
+  }
+
+  // 🔥 Firebase Image URL - الحصول على رابط الصورة
+  Future<String?> getImageUrl(String fileName) async {
+    try {
+      if (fileName.isEmpty) {
+        print('❌ اسم الملف فارغ');
+        return null;
+      }
+      
+      await _ensureConnection();
+      
+      // جرّب الحصول على رابط Firebase أولاً
+      final results = await _connection!.execute(
+        'SELECT url FROM imagestorage WHERE filename = \$1',
+        parameters: [fileName],
+      );
+      
+      if (results.isNotEmpty) {
+        final url = results.first.toColumnMap()['url'];
+        if (url != null && url.toString().isNotEmpty) {
+          print('🔥 Firebase URL: ${url.toString()}');
+          return url.toString();
+        }
+      }
+      
+      print('⚠️  لم يتم العثور على رابط Firebase: $fileName');
+      return null;
+      
+    } catch (e) {
+      print('❌ خطأ في getImageUrl: $e');
       return null;
     }
   }
