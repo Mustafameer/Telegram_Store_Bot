@@ -5437,11 +5437,11 @@ def show_buyer_main_menu(message=None, chat_id=None, user_id=None):
     
     user = get_user(telegram_id)
     
-    # For all buyers show the same buttons regardless of registration status
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
-    markup.row("تصفح المتاجر 🛍️")
-    markup.row("سلة المشتريات 🛒") 
-    markup.row("👤 تعديل بياناتي")
+    # Show full buyer menu with all options
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False, row_width=2)
+    markup.row("تصفح المنتجات ✨", "عرض السلة 🛒")
+    markup.row("تتبع طلباتي 📦", "إنشاء متجر خاص بي 🏪")
+    markup.row("الاتصال بالدعم 📞", "تسجيل حساب جديد 👤")
 
     # التحقق إذا كان المستخدم زائراً (غير مسجل)
     if telegram_id in user_states and user_states.get(telegram_id, {}).get('is_guest'):
@@ -15017,6 +15017,127 @@ def cleanup_purchased_images():
 cleanup_thread = threading.Thread(target=cleanup_purchased_images, daemon=True)
 cleanup_thread.start()
 print("✅ تم بدء خادم التنظيف الخلفي في thread منفصل")
+
+# ===================== معالجات أزرار المشتري الجديدة =====================
+@bot.message_handler(func=lambda message: message.text in ["تصفح المنتجات ✨", "تصفح المنتجات"])
+def browse_products_handler(message):
+    bot.send_message(message.chat.id, "🛍️ **قريباً: تصفح المنتجات**\n\nيتم تطوير هذه الميزة.")
+    show_buyer_main_menu(message)
+
+@bot.message_handler(func=lambda message: message.text in ["عرض السلة 🛒", "عرض السلة"])
+def view_cart_handler(message):
+    bot.send_message(message.chat.id, "🛒 **قريباً: عرض السلة**\n\nيتم تطوير هذه الميزة.")
+    show_buyer_main_menu(message)
+
+@bot.message_handler(func=lambda message: message.text in ["تتبع طلباتي 📦", "تتبع الطلبات"])
+def track_orders_handler(message):
+    bot.send_message(message.chat.id, "📦 **قريباً: تتبع الطلبات**\n\nيتم تطوير هذه الميزة.")
+    show_buyer_main_menu(message)
+
+@bot.message_handler(func=lambda message: message.text in ["إنشاء متجر خاص بي 🏪", "إنشاء متجر خاص بي"])
+def create_store_handler(message):
+    telegram_id = message.from_user.id
+    username = message.from_user.username or message.from_user.first_name
+    
+    user_states[telegram_id] = {"step": "create_store_name"}
+    
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add("ارجع للقائمة الرئيسية")
+    
+    bot.send_message(message.chat.id,
+                    "🏪 **إنشاء متجر جديد**\n\n"
+                    "يرجى إدخال اسم متجرك:", reply_markup=markup)
+
+@bot.message_handler(func=lambda message: message.from_user.id in user_states and 
+                     user_states[message.from_user.id].get("step") == "create_store_name")
+def process_store_name_handler(message):
+    if message.text == "ارجع للقائمة الرئيسية":
+        user_id = message.from_user.id
+        if user_id in user_states:
+            del user_states[user_id]
+        show_buyer_main_menu(message)
+        return
+    
+    telegram_id = message.from_user.id
+    username = message.from_user.username or message.from_user.first_name
+    store_name = message.text.strip()
+    
+    if not store_name:
+        bot.send_message(message.chat.id, "❌ اسم المتجر مطلوب.")
+        return
+    
+    # إضافة البائع
+    add_seller(telegram_id, username, store_name)
+    
+    # تحديث نوع المستخدم
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE Users SET UserType = 'seller' WHERE TelegramID = ?", (telegram_id,))
+    conn.commit()
+    conn.close()
+    
+    bot.send_message(message.chat.id,
+                    f"✅ **تم إنشاء متجرك بنجاح!**\n\n"
+                    f"🏪 اسم المتجر: {store_name}\n\n"
+                    f"يمكنك الآن البدء بإضافة المنتجات وإدارة متجرك.")
+    
+    if telegram_id in user_states:
+        del user_states[telegram_id]
+    
+    show_buyer_main_menu(message)
+
+@bot.message_handler(func=lambda message: message.text in ["الاتصال بالدعم 📞", "الاتصال بالدعم"])
+def contact_support_handler(message):
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("📧 إرسال رسالة للدعم", callback_data="send_support_message"))
+    
+    bot.send_message(message.chat.id,
+                    "📞 **الاتصال بالدعم**\n\n"
+                    "يمكنك التواصل معنا من خلال الخيارات أعلاه.",
+                    reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data == "send_support_message")
+def send_support_message_callback(call):
+    user_id = call.from_user.id
+    user_states[user_id] = {"step": "support_message"}
+    
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add("ارجع للقائمة الرئيسية")
+    
+    bot.send_message(call.message.chat.id,
+                    "📝 **أرسل رسالتك للدعم:**\n\n"
+                    "اكتب رسالتك بالتفصيل:", reply_markup=markup)
+    bot.answer_callback_query(call.id)
+
+@bot.message_handler(func=lambda message: message.from_user.id in user_states and 
+                     user_states[message.from_user.id].get("step") == "support_message")
+def process_support_message_handler(message):
+    if message.text == "ارجع للقائمة الرئيسية":
+        user_id = message.from_user.id
+        if user_id in user_states:
+            del user_states[user_id]
+        show_buyer_main_menu(message)
+        return
+    
+    user_id = message.from_user.id
+    username = message.from_user.username or message.from_user.first_name
+    support_msg = message.text.strip()
+    
+    # إرسال الرسالة للمسؤول
+    try:
+        admin_msg = f"📧 **رسالة دعم جديدة**\n\nمن: {username} (ID: {user_id})\n\nالرسالة:\n{support_msg}"
+        bot.send_message(BOT_ADMIN_ID, admin_msg)
+    except:
+        pass
+    
+    bot.send_message(message.chat.id,
+                    "✅ **تم إرسال رسالتك بنجاح!**\n\n"
+                    "سيتم الرد عليك قريباً من قبل فريق الدعم.")
+    
+    if user_id in user_states:
+        del user_states[user_id]
+    
+    show_buyer_main_menu(message)
 
 # ===================== بدء البوت =====================
 # Infinite loop to auto-restart on crashes/connection errors
