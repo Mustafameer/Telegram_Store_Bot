@@ -14439,59 +14439,9 @@ def cancel_auction_process(message):
 # حالات المشترين في المزادات
 bidder_states = {}
 
-@bot.message_handler(func=lambda message: "تصفح المتاجر 🛍️" in message.text)
-def browse_stores_with_auctions(message):
-    """معالج تصفح المتاجر والمزادات"""
-    telegram_id = message.from_user.id
-    
-    # جلب قائمة المتاجر والمزادات
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # جلب المتاجر العادية
-    cursor.execute("""
-        SELECT DISTINCT SellerID, StoreName FROM Sellers 
-        WHERE Status = 'active' AND RequireCustomerRegistration != 1
-        ORDER BY StoreName
-    """)
-    
-    stores = cursor.fetchall()
-    
-    # جلب متجر المزادات إن وجد مع عدد المزادات النشطة
-    cursor.execute("""
-        SELECT s.SellerID, s.StoreName, COUNT(a.AuctionID) 
-        FROM Sellers s
-        LEFT JOIN Auctions a ON s.SellerID = a.AuctionStoreID AND a.Status = 'active'
-        WHERE s.StoreName = 'المزادات'
-        GROUP BY s.SellerID, s.StoreName
-    """)
-    
-    auction_store = cursor.fetchone()
-    conn.close()
-    
-    if not stores and not auction_store:
-        bot.send_message(message.chat.id, "❌ لا توجد متاجر متاحة حالياً")
-        return
-    
-    # إنشاء قائمة الأزرار
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    
-    # عرض متجر المزادات في الأعلى إن وجد مزادات
-    if auction_store and auction_store[2] > 0:
-        markup.add(f"🔨 المزادات ({auction_store[2]} مزاد نشط)")
-    elif auction_store:
-        markup.add(f"🔨 المزادات (بدون مزادات)")
-    
-    # عرض المتاجر الأخرى
-    for store_id, store_name in stores:
-        markup.add(f"🏪 {store_name}")
-    
-    markup.add("🏠 الرئيسية")
-    
-    msg = "🏪 **اختر المتجر:**\n\n"
-    msg += "يمكنك تصفح المتاجر العادية أو المزادات"
-    
-    bot.send_message(message.chat.id, msg, reply_markup=markup)
+# DISABLED: This handler conflicts with the main browse_stores handler at line 9732
+# @bot.message_handler(func=lambda message: "تصفح المتاجر 🛍️" in message.text)
+# USE THE HANDLER AT LINE 9732 INSTEAD
 
 @bot.message_handler(func=lambda message: "🔨 المزادات" in message.text)
 def browse_auctions(message):
