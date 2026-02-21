@@ -1,4 +1,5 @@
 worker: python bot.py
-# Redeploy v4 - 128d1a8
+# Redeploy v5 - c29a369 - Simplified Flutter-like pattern
+
 
 
