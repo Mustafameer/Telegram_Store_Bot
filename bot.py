@@ -13996,7 +13996,11 @@ def send_welcome(message):
         full_name = message.from_user.full_name
         
         text = message.text or ""
+        print(f"\n{'='*60}")
         print(f"📍 /start handler - User: {telegram_id}, Text: {text}")
+        print(f"🔍 BOT_ADMIN_ID = {BOT_ADMIN_ID}")
+        print(f"✅ is_bot_admin({telegram_id}) = {is_bot_admin(telegram_id)}")
+        print(f"{'='*60}\n")
         
         # ===== معالجة رابط المتجر (store_SELLER_ID) =====
         if "store_" in text:
