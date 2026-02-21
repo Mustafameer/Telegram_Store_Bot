@@ -14036,12 +14036,7 @@ def send_welcome(message):
                 pass
 
         # ===== معالجة المستخدمين الآخرين =====
-        if is_bot_admin(telegram_id):
-            add_user(telegram_id, username, "bot_admin")
-            show_bot_admin_menu(message)
-            return
-        
-        # تسجيل المستخدم إذا لم يكن مسجلاً
+        # أولاً: تسجيل المستخدم إذا لم يكن موجوداً
         user = get_user(telegram_id)
         if not user:
             # تسجيل المستخدمين الجدد كـ sellers (بائعين) افتراضياً
@@ -14054,42 +14049,25 @@ def send_welcome(message):
             except Exception as e:
                 print(f"⚠️ Could not create seller account: {e}")
         
-        user = get_user(telegram_id)
-        user_type = user[3] if user else "customer"
-        print(f"📍 User Type: {user_type}")
-        
-        # ===== التحقق من كون المستخدم بائع =====
-        seller = get_seller_by_telegram(telegram_id)
-        
+        # ثانياً: التحقق من الصلاحيات
         if is_bot_admin(telegram_id):
+            # إذا كنت Admin - عرض قائمة Admin الكاملة (أولوية عليا)
+            print(f"👑 Showing ADMIN menu for {telegram_id}")
+            add_user(telegram_id, username, "bot_admin")
             show_bot_admin_menu(message)
-        elif seller and is_seller_active(telegram_id):
-            # إذا كان بائعاً، عرض قائمة البائع (الافتراضية)
+            return
+        
+        # ثالثاً: التحقق من كون المستخدم بائع
+        seller = get_seller_by_telegram(telegram_id)
+        if seller and is_seller_active(telegram_id):
+            # إذا كان بائعاً نشطاً - عرض قائمة البائع
             print(f"🏪 Showing SELLER menu for {telegram_id}")
             show_seller_menu(message)
-        elif user_type == 'bot_admin':
-            show_bot_admin_menu(message)
-        elif user_type == 'seller' or seller:
-            # إذا كان بائعاً
-            print(f"🏪 Showing seller menu for {telegram_id}")
-            show_seller_menu(message)
-        else:
-            # عرض قائمة المشتري (أو خيار التسجيل للمستخدم الجديد)
-            if not user:
-                # للمستخدمين الجدد - نسجلهم كزوار مباشرة وندخلهم وضع المشتري
-                telegram_id = message.from_user.id
-                # حذف أي حالة قديمة
-                if telegram_id in user_states:
-                    del user_states[telegram_id]
-                # إنشاء حالة جديدة كزائر
-                user_states[telegram_id] = {
-                    'is_guest': True,
-                    'name': message.from_user.first_name,
-                    'username': message.from_user.username
-                }
-                show_buyer_main_menu(message=message)
-            else:
-                show_buyer_main_menu(message=message)
+            return
+        
+        # رابعاً: عرض قائمة المشتري للآخرين
+        print(f"🛍️ Showing BUYER menu for {telegram_id}")
+        show_buyer_main_menu(message=message)
         
     except Exception as e:
         print(f"❌ Error in start command: {e}")
