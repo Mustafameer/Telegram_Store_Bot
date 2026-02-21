@@ -14044,16 +14044,33 @@ def send_welcome(message):
         # تسجيل المستخدم إذا لم يكن مسجلاً
         user = get_user(telegram_id)
         if not user:
-            add_user(telegram_id, username, "customer", None, full_name)
-            print(f"✅ New user registered: {full_name}")
+            # تسجيل المستخدمين الجدد كـ sellers (بائعين) افتراضياً
+            add_user(telegram_id, username, "seller", None, full_name)
+            print(f"✅ New user registered as SELLER: {full_name}")
+            # إنشاء حساب بائع تلقائي
+            try:
+                add_seller(telegram_id, username, f"متجر {username}")
+                print(f"✅ Seller account created for {telegram_id}")
+            except Exception as e:
+                print(f"⚠️ Could not create seller account: {e}")
         
         user = get_user(telegram_id)
         user_type = user[3] if user else "customer"
         print(f"📍 User Type: {user_type}")
         
-        if user_type == 'bot_admin':
+        # ===== التحقق من كون المستخدم بائع =====
+        seller = get_seller_by_telegram(telegram_id)
+        
+        if is_bot_admin(telegram_id):
             show_bot_admin_menu(message)
-        elif user_type == 'seller':
+        elif seller and is_seller_active(telegram_id):
+            # إذا كان بائعاً، عرض قائمة البائع (الافتراضية)
+            print(f"🏪 Showing SELLER menu for {telegram_id}")
+            show_seller_menu(message)
+        elif user_type == 'bot_admin':
+            show_bot_admin_menu(message)
+        elif user_type == 'seller' or seller:
+            # إذا كان بائعاً
             print(f"🏪 Showing seller menu for {telegram_id}")
             show_seller_menu(message)
         else:
