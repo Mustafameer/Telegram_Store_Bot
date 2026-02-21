@@ -9731,15 +9731,25 @@ def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id, customer_tele
             traceback.print_exc()
 
 
+# ====== زر الرجوع إلى الوضع الإداري ======
+@bot.message_handler(func=lambda message: message.text == "الرجوع إلى الوضع الإداري 👑" and is_bot_admin(message.from_user.id))
+def return_to_admin_mode(message):
+    """العودة من وضع المشتري إلى قائمة الـ Admin"""
+    telegram_id = message.from_user.id
+    print(f"👑 Admin {telegram_id} returning to admin mode")
+    show_bot_admin_menu(message)
+
+
 @bot.message_handler(func=lambda message: message.text == "تصفح المتاجر 🛍️")
 def browse_stores(message):
     # ====== التعديل الجديد ======
     # التحقق إذا كان المستخدم زائراً (غير مسجل)
     telegram_id = message.from_user.id
+    is_admin = is_bot_admin(telegram_id)
     is_guest = telegram_id in user_states and user_states.get(telegram_id, {}).get('is_guest', False)
     
     # إذا كان المستخدم جديداً (لم يختر تسجيل أو تصفح بدون تسجيل)، نسجله كزائر
-    if not is_guest and telegram_id not in user_states:
+    if not is_guest and telegram_id not in user_states and not is_admin:
         user = get_user(telegram_id)
         if not user:
             # المستخدم جديد تماماً، نسجله كزائر
@@ -9789,10 +9799,18 @@ def browse_stores(message):
     
     try:
         bot.send_message(message.chat.id, "🛍️ **المتاجر المتاحة:**", reply_markup=markup)
-        # إرسال رسالة إضافية بالأزرار الرئيسية
-        markup2 = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup2.row("تصفح المتاجر 🛍️", "سلة المشتريات 🛒")
-        markup2.row("👤 تعديل بياناتي")
+        
+        # الأزرار تختلف حسب نوع المستخدم
+        if is_admin:
+            # زر الرجوع للوضع الإداري للـ admin
+            markup2 = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            markup2.row("الرجوع إلى الوضع الإداري 👑")
+        else:
+            # أزرار المشتري العادي
+            markup2 = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            markup2.row("تصفح المتاجر 🛍️", "سلة المشتريات 🛒")
+            markup2.row("👤 تعديل بياناتي")
+        
         bot.send_message(message.chat.id, "👇 استخدم الأزرار أدناه:", reply_markup=markup2)
     except Exception as e:
         print(f"Error sending stores list: {e}")
