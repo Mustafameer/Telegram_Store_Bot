@@ -1,5 +1,6 @@
 worker: python bot.py
-# Redeploy v6 - db3263b - Admin check first
+# Redeploy v7 - c91b906 - Debug logging
+
 
 
 
