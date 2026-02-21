@@ -14020,12 +14020,15 @@ def send_welcome(message):
         text = message.text or ""
         
         print(f"\n{'='*60}")
-        print(f"📍 /start handler - User: {telegram_id}, BOT_ADMIN_ID={BOT_ADMIN_ID}")
+        print(f"📍 /start handler")
+        print(f"   telegram_id: {telegram_id} (type: {type(telegram_id).__name__})")
+        print(f"   BOT_ADMIN_ID: {BOT_ADMIN_ID} (type: {type(BOT_ADMIN_ID).__name__})")
+        print(f"   Match: {telegram_id == BOT_ADMIN_ID}")
         print(f"{'='*60}\n")
         
         # ===== أولاً: التحقق من كون المستخدم ADMIN =====
         if telegram_id == BOT_ADMIN_ID:
-            print(f"👑 ADMIN DETECTED ({telegram_id}) - showing admin menu")
+            print(f"✅ ADMIN DETECTED - showing admin menu")
             show_bot_admin_menu(message)
             return
         
