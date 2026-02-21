@@ -1,5 +1,6 @@
 worker: python bot.py
-# Redeploy v5 - c29a369 - Simplified Flutter-like pattern
+# Redeploy v6 - db3263b - Admin check first
+
 
 
 
