@@ -13986,6 +13986,17 @@ print("   [OK] Register account anytime")
 print("   [OK] Different rules for guests and registered users")
 
 
+# ====== PRIORITY Handler for ADMIN - يجب أن يكون قبل جميع الـ handlers ======
+@bot.message_handler(func=lambda message: is_bot_admin(message.from_user.id) and message.text in ["🏠 الرئيسية", "/start"])
+def admin_priority_menu(message):
+    """مرحب الـ admin بأولوية عليا قبل أي handler آخر"""
+    telegram_id = message.from_user.id
+    print(f"\n{'='*60}")
+    print(f"👑 PRIORITY ADMIN HANDLER: User {telegram_id}")
+    print(f"{'='*60}\n")
+    show_bot_admin_menu(message)
+
+
 # ====== Start Command ======
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
