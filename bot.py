@@ -2951,7 +2951,9 @@ def update_user_info(telegram_id, phone_number=None, full_name=None):
     conn.close()
 
 def is_bot_admin(telegram_id):
-    return telegram_id == BOT_ADMIN_ID
+    result = telegram_id == BOT_ADMIN_ID
+    print(f"[DEBUG] is_bot_admin({telegram_id}): checking {telegram_id} == {BOT_ADMIN_ID} = {result}")
+    return result
 
 def add_seller(telegram_id, username, store_name):
     conn = get_db_connection()
@@ -13987,17 +13989,17 @@ print("   [OK] Different rules for guests and registered users")
 
 
 # ====== PRIORITY Handler for ADMIN - يجب أن يكون قبل جميع الـ handlers ======
-@bot.message_handler(func=lambda message: is_bot_admin(message.from_user.id) and message.text in ["🏠 الرئيسية", "/start"])
-def admin_priority_menu(message):
-    """مرحب الـ admin بأولوية عليا قبل أي handler آخر"""
+# أولاً: handler للـ admin في الـ /start command
+@bot.message_handler(func=lambda message: message.text.lower().startswith('/start') and is_bot_admin(message.from_user.id))
+def admin_start_handler(message):
+    """معالج /start للـ admin بأولوية عليا"""
     telegram_id = message.from_user.id
-    print(f"\n{'='*60}")
-    print(f"👑 PRIORITY ADMIN HANDLER: User {telegram_id}")
-    print(f"{'='*60}\n")
+    print(f"\n👑 ADMIN /START HANDLER: User {telegram_id}")
     show_bot_admin_menu(message)
+    return
 
 
-# ====== Start Command ======
+# ====== Start Command (للمستخدمين العاديين) ======
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     """معالج أمر /start - يدعم روابط المتاجر"""
