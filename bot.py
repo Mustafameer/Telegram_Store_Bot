@@ -14010,27 +14010,24 @@ print("   [OK] Different rules for guests and registered users")
 # أولاً: handler للـ admin في الـ /start command
 @bot.message_handler(func=lambda message: message.text.lower().startswith('/start') and is_bot_admin(message.from_user.id))
 def admin_start_handler(message):
-    """معالج /start للـ admin بأولوية عليا"""
+    """معالج /start للـ admin بأولوية عليا - مثل تطبيق Flutter"""
     telegram_id = message.from_user.id
-    print(f"\n👑 ADMIN /START HANDLER: User {telegram_id}")
+    print(f"\n👑 ADMIN /START DETECTED: {telegram_id} == {BOT_ADMIN_ID}")
     show_bot_admin_menu(message)
-    return
 
 
 # ====== Start Command (للمستخدمين العاديين) ======
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    """معالج أمر /start - يدعم روابط المتاجر"""
+    """معالج أمر /start - نسخة مبسطة من تطبيق Flutter"""
     try:
         telegram_id = message.from_user.id
         username = message.from_user.username or message.from_user.first_name
         full_name = message.from_user.full_name
-        
         text = message.text or ""
+        
         print(f"\n{'='*60}")
-        print(f"📍 /start handler - User: {telegram_id}, Text: {text}")
-        print(f"🔍 BOT_ADMIN_ID = {BOT_ADMIN_ID}")
-        print(f"✅ is_bot_admin({telegram_id}) = {is_bot_admin(telegram_id)}")
+        print(f"📍 GENERIC /start handler - User: {telegram_id}")
         print(f"{'='*60}\n")
         
         # ===== معالجة رابط المتجر (store_SELLER_ID) =====
@@ -14041,69 +14038,40 @@ def send_welcome(message):
                 token = token.split()[0]
                 seller_telegram_id = int(token)
                 
-                # التحقق إذا كان المستخدم الحالي هو صاحب المتجر
                 if telegram_id == seller_telegram_id:
-                    # إذا كان صاحب المتجر، نعرض له قائمة البائع
                     seller = get_seller_by_telegram(telegram_id)
-                    if seller:
-                        if is_seller_active(telegram_id):
-                            show_seller_menu(message)
-                        else:
-                            bot.send_message(message.chat.id,
-                                            "⛔ **حسابك معطل**\n\n"
-                                            "لا يمكنك الوصول إلى هذه الصفحة لأن حسابك معطل.\n"
-                                            "يرجى التواصل مع الإدارة.")
+                    if seller and is_seller_active(telegram_id):
+                        show_seller_menu(message)
                     else:
-                        bot.send_message(message.chat.id,
-                                        "⚠️ **لست مسجلاً كبائع**\n\n"
-                                        "يبدو أنك لست مسجلاً كصاحب متجر.\n"
-                                        "يرجى التواصل مع الإدارة.")
+                        bot.send_message(message.chat.id, "⛔ **حسابك معطل أو غير مسجل كبائع**")
                 else:
-                    # إذا كان زائراً للمتجر، نعرض له المنتجات
-                    print(f"🔍 DEBUG: Handling store link for customer {telegram_id} visiting store {seller_telegram_id}")
                     send_store_catalog_by_telegram_id(message.chat.id, seller_telegram_id, telegram_id)
-                    print(f"✅ DEBUG: Store catalog sent")
                 return
             except Exception as e:
                 print(f"⚠️ خطأ في فتح رابط المتجر: {e}")
-                import traceback
-                traceback.print_exc()
                 pass
 
-        # ===== معالجة المستخدمين الآخرين =====
-        # أولاً: تسجيل المستخدم إذا لم يكن موجوداً
+        # ===== تسجيل المستخدم الجديد (مثل Flutter) =====
         user = get_user(telegram_id)
         if not user:
-            # تسجيل المستخدمين الجدد كـ sellers (بائعين) افتراضياً
             add_user(telegram_id, username, "seller", None, full_name)
-            print(f"✅ New user registered as SELLER: {full_name}")
-            # إنشاء حساب بائع تلقائي
             try:
                 add_seller(telegram_id, username, f"متجر {username}")
-                print(f"✅ Seller account created for {telegram_id}")
             except Exception as e:
-                print(f"⚠️ Could not create seller account: {e}")
+                print(f"⚠️ خطأ في إنشاء حساب بائع: {e}")
         
-        # ثانياً: التحقق من الصلاحيات
-        print(f"🔍 DEBUG: Checking admin status for {telegram_id}, BOT_ADMIN_ID={BOT_ADMIN_ID}")
-        if is_bot_admin(telegram_id):
-            # إذا كنت Admin - عرض قائمة Admin الكاملة (أولوية عليا)
-            print(f"👑 Showing ADMIN menu for {telegram_id}")
-            add_user(telegram_id, username, "bot_admin")
-            show_bot_admin_menu(message)
-            return
-        
-        # ثالثاً: التحقق من كون المستخدم بائع
+        # ===== المنطق البسيط (مثل Flutter) =====
+        # 1. التحقق: هل هو بائع؟ (يجب أن يكون موجود في جدول Sellers)
         seller = get_seller_by_telegram(telegram_id)
         if seller and is_seller_active(telegram_id):
-            # إذا كان بائعاً نشطاً - عرض قائمة البائع
-            print(f"🏪 Showing SELLER menu for {telegram_id}")
+            print(f"🏪 User {telegram_id} is SELLER - showing seller menu")
             show_seller_menu(message)
             return
         
-        # رابعاً: عرض قائمة المشتري للآخرين
-        print(f"🛍️ Showing BUYER menu for {telegram_id}")
-        show_buyer_main_menu(message=message)
+        # 2. إذا لم يكن بائع وليس admin -> أخطأ! (مثل Flutter)
+        # (لا نعرض قائمة مشتري في الواقع)
+        print(f"❌ User {telegram_id} is NOT seller and NOT admin")
+        bot.send_message(message.chat.id, "❌ لم يتم العثور على حساب.\n\nيرجى التواصل مع الإدارة.")
         
     except Exception as e:
         print(f"❌ Error in start command: {e}")
