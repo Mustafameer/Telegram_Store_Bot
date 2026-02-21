@@ -14050,6 +14050,7 @@ def send_welcome(message):
                 print(f"⚠️ Could not create seller account: {e}")
         
         # ثانياً: التحقق من الصلاحيات
+        print(f"🔍 DEBUG: Checking admin status for {telegram_id}, BOT_ADMIN_ID={BOT_ADMIN_ID}")
         if is_bot_admin(telegram_id):
             # إذا كنت Admin - عرض قائمة Admin الكاملة (أولوية عليا)
             print(f"👑 Showing ADMIN menu for {telegram_id}")
