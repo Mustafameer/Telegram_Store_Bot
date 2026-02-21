@@ -14007,16 +14007,9 @@ print("   [OK] Different rules for guests and registered users")
 
 
 # ====== PRIORITY Handler for ADMIN - يجب أن يكون قبل جميع الـ handlers ======
-# أولاً: handler للـ admin في الـ /start command
-@bot.message_handler(func=lambda message: message.text.lower().startswith('/start') and is_bot_admin(message.from_user.id))
-def admin_start_handler(message):
-    """معالج /start للـ admin بأولوية عليا - مثل تطبيق Flutter"""
-    telegram_id = message.from_user.id
-    print(f"\n👑 ADMIN /START DETECTED: {telegram_id} == {BOT_ADMIN_ID}")
-    show_bot_admin_menu(message)
+# (تم دمج منطق الـ admin مباشرة داخل send_welcome)
 
 
-# ====== Start Command (للمستخدمين العاديين) ======
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     """معالج أمر /start - نسخة مبسطة من تطبيق Flutter"""
@@ -14027,8 +14020,14 @@ def send_welcome(message):
         text = message.text or ""
         
         print(f"\n{'='*60}")
-        print(f"📍 GENERIC /start handler - User: {telegram_id}")
+        print(f"📍 /start handler - User: {telegram_id}, BOT_ADMIN_ID={BOT_ADMIN_ID}")
         print(f"{'='*60}\n")
+        
+        # ===== أولاً: التحقق من كون المستخدم ADMIN =====
+        if telegram_id == BOT_ADMIN_ID:
+            print(f"👑 ADMIN DETECTED ({telegram_id}) - showing admin menu")
+            show_bot_admin_menu(message)
+            return
         
         # ===== معالجة رابط المتجر (store_SELLER_ID) =====
         if "store_" in text:
