@@ -2951,7 +2951,9 @@ def update_user_info(telegram_id, phone_number=None, full_name=None):
     conn.close()
 
 def is_bot_admin(telegram_id):
-    return telegram_id == BOT_ADMIN_ID
+    result = telegram_id == BOT_ADMIN_ID
+    print(f"[DEBUG] is_bot_admin({telegram_id}): checking {telegram_id} == {BOT_ADMIN_ID} = {result}")
+    return result
 
 def add_seller(telegram_id, username, store_name):
     conn = get_db_connection()
@@ -5437,11 +5439,10 @@ def show_buyer_main_menu(message=None, chat_id=None, user_id=None):
     
     user = get_user(telegram_id)
     
-    # For all buyers show the same buttons regardless of registration status
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
-    markup.row("تصفح المتاجر 🛍️")
-    markup.row("سلة المشتريات 🛒") 
-    markup.row("👤 تعديل بياناتي")
+    # Show buyer menu with original buttons
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False, row_width=3)
+    # الأزرار الأصلية
+    markup.row("تصفح المتاجر 🛍️", "سلة المشتريات 🛒", "👤 تعديل بياناتي")
 
     # التحقق إذا كان المستخدم زائراً (غير مسجل)
     if telegram_id in user_states and user_states.get(telegram_id, {}).get('is_guest'):
@@ -9730,15 +9731,25 @@ def send_store_catalog_by_telegram_id(chat_id, seller_telegram_id, customer_tele
             traceback.print_exc()
 
 
+# ====== زر الرجوع إلى الوضع الإداري ======
+@bot.message_handler(func=lambda message: message.text == "الرجوع إلى الوضع الإداري 👑" and is_bot_admin(message.from_user.id))
+def return_to_admin_mode(message):
+    """العودة من وضع المشتري إلى قائمة الـ Admin"""
+    telegram_id = message.from_user.id
+    print(f"👑 Admin {telegram_id} returning to admin mode")
+    show_bot_admin_menu(message)
+
+
 @bot.message_handler(func=lambda message: message.text == "تصفح المتاجر 🛍️")
 def browse_stores(message):
     # ====== التعديل الجديد ======
     # التحقق إذا كان المستخدم زائراً (غير مسجل)
     telegram_id = message.from_user.id
+    is_admin = is_bot_admin(telegram_id)
     is_guest = telegram_id in user_states and user_states.get(telegram_id, {}).get('is_guest', False)
     
     # إذا كان المستخدم جديداً (لم يختر تسجيل أو تصفح بدون تسجيل)، نسجله كزائر
-    if not is_guest and telegram_id not in user_states:
+    if not is_guest and telegram_id not in user_states and not is_admin:
         user = get_user(telegram_id)
         if not user:
             # المستخدم جديد تماماً، نسجله كزائر
@@ -9788,10 +9799,18 @@ def browse_stores(message):
     
     try:
         bot.send_message(message.chat.id, "🛍️ **المتاجر المتاحة:**", reply_markup=markup)
-        # إرسال رسالة إضافية بالأزرار الرئيسية
-        markup2 = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup2.row("تصفح المتاجر 🛍️", "سلة المشتريات 🛒")
-        markup2.row("👤 تعديل بياناتي")
+        
+        # الأزرار تختلف حسب نوع المستخدم
+        if is_admin:
+            # زر الرجوع للوضع الإداري للـ admin
+            markup2 = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            markup2.row("الرجوع إلى الوضع الإداري 👑")
+        else:
+            # أزرار المشتري العادي
+            markup2 = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            markup2.row("تصفح المتاجر 🛍️", "سلة المشتريات 🛒")
+            markup2.row("👤 تعديل بياناتي")
+        
         bot.send_message(message.chat.id, "👇 استخدم الأزرار أدناه:", reply_markup=markup2)
     except Exception as e:
         print(f"Error sending stores list: {e}")
@@ -13987,17 +14006,31 @@ print("   [OK] Register account anytime")
 print("   [OK] Different rules for guests and registered users")
 
 
-# ====== Start Command ======
+# ====== PRIORITY Handler for ADMIN - يجب أن يكون قبل جميع الـ handlers ======
+# (تم دمج منطق الـ admin مباشرة داخل send_welcome)
+
+
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    """معالج أمر /start - يدعم روابط المتاجر"""
+    """معالج أمر /start - نسخة مبسطة من تطبيق Flutter"""
     try:
         telegram_id = message.from_user.id
         username = message.from_user.username or message.from_user.first_name
         full_name = message.from_user.full_name
-        
         text = message.text or ""
-        print(f"📍 /start handler - User: {telegram_id}, Text: {text}")
+        
+        print(f"\n{'='*60}")
+        print(f"📍 /start handler")
+        print(f"   telegram_id: {telegram_id} (type: {type(telegram_id).__name__})")
+        print(f"   BOT_ADMIN_ID: {BOT_ADMIN_ID} (type: {type(BOT_ADMIN_ID).__name__})")
+        print(f"   Match: {telegram_id == BOT_ADMIN_ID}")
+        print(f"{'='*60}\n")
+        
+        # ===== أولاً: التحقق من كون المستخدم ADMIN =====
+        if telegram_id == BOT_ADMIN_ID:
+            print(f"✅ ADMIN DETECTED - showing admin menu")
+            show_bot_admin_menu(message)
+            return
         
         # ===== معالجة رابط المتجر (store_SELLER_ID) =====
         if "store_" in text:
@@ -14007,73 +14040,40 @@ def send_welcome(message):
                 token = token.split()[0]
                 seller_telegram_id = int(token)
                 
-                # التحقق إذا كان المستخدم الحالي هو صاحب المتجر
                 if telegram_id == seller_telegram_id:
-                    # إذا كان صاحب المتجر، نعرض له قائمة البائع
                     seller = get_seller_by_telegram(telegram_id)
-                    if seller:
-                        if is_seller_active(telegram_id):
-                            show_seller_menu(message)
-                        else:
-                            bot.send_message(message.chat.id,
-                                            "⛔ **حسابك معطل**\n\n"
-                                            "لا يمكنك الوصول إلى هذه الصفحة لأن حسابك معطل.\n"
-                                            "يرجى التواصل مع الإدارة.")
+                    if seller and is_seller_active(telegram_id):
+                        show_seller_menu(message)
                     else:
-                        bot.send_message(message.chat.id,
-                                        "⚠️ **لست مسجلاً كبائع**\n\n"
-                                        "يبدو أنك لست مسجلاً كصاحب متجر.\n"
-                                        "يرجى التواصل مع الإدارة.")
+                        bot.send_message(message.chat.id, "⛔ **حسابك معطل أو غير مسجل كبائع**")
                 else:
-                    # إذا كان زائراً للمتجر، نعرض له المنتجات
-                    print(f"🔍 DEBUG: Handling store link for customer {telegram_id} visiting store {seller_telegram_id}")
                     send_store_catalog_by_telegram_id(message.chat.id, seller_telegram_id, telegram_id)
-                    print(f"✅ DEBUG: Store catalog sent")
                 return
             except Exception as e:
                 print(f"⚠️ خطأ في فتح رابط المتجر: {e}")
-                import traceback
-                traceback.print_exc()
                 pass
 
-        # ===== معالجة المستخدمين الآخرين =====
-        if is_bot_admin(telegram_id):
-            add_user(telegram_id, username, "bot_admin")
-            show_bot_admin_menu(message)
-            return
-        
-        # تسجيل المستخدم إذا لم يكن مسجلاً
+        # ===== تسجيل المستخدم الجديد (مثل Flutter) =====
         user = get_user(telegram_id)
         if not user:
-            add_user(telegram_id, username, "customer", None, full_name)
-            print(f"✅ New user registered: {full_name}")
+            add_user(telegram_id, username, "seller", None, full_name)
+            try:
+                add_seller(telegram_id, username, f"متجر {username}")
+            except Exception as e:
+                print(f"⚠️ خطأ في إنشاء حساب بائع: {e}")
         
-        user = get_user(telegram_id)
-        user_type = user[3] if user else "customer"
-        print(f"📍 User Type: {user_type}")
-        
-        if user_type == 'bot_admin':
-            show_bot_admin_menu(message)
-        elif user_type == 'seller':
-            print(f"🏪 Showing seller menu for {telegram_id}")
+        # ===== المنطق البسيط (مثل Flutter) =====
+        # 1. التحقق: هل هو بائع؟ (يجب أن يكون موجود في جدول Sellers)
+        seller = get_seller_by_telegram(telegram_id)
+        if seller and is_seller_active(telegram_id):
+            print(f"🏪 User {telegram_id} is SELLER - showing seller menu")
             show_seller_menu(message)
-        else:
-            # عرض قائمة المشتري (أو خيار التسجيل للمستخدم الجديد)
-            if not user:
-                # للمستخدمين الجدد - نسجلهم كزوار مباشرة وندخلهم وضع المشتري
-                telegram_id = message.from_user.id
-                # حذف أي حالة قديمة
-                if telegram_id in user_states:
-                    del user_states[telegram_id]
-                # إنشاء حالة جديدة كزائر
-                user_states[telegram_id] = {
-                    'is_guest': True,
-                    'name': message.from_user.first_name,
-                    'username': message.from_user.username
-                }
-                show_buyer_main_menu(message=message)
-            else:
-                show_buyer_main_menu(message=message)
+            return
+        
+        # 2. إذا لم يكن بائع وليس admin -> أخطأ! (مثل Flutter)
+        # (لا نعرض قائمة مشتري في الواقع)
+        print(f"❌ User {telegram_id} is NOT seller and NOT admin")
+        bot.send_message(message.chat.id, "❌ لم يتم العثور على حساب.\n\nيرجى التواصل مع الإدارة.")
         
     except Exception as e:
         print(f"❌ Error in start command: {e}")
@@ -14440,59 +14440,9 @@ def cancel_auction_process(message):
 # حالات المشترين في المزادات
 bidder_states = {}
 
-@bot.message_handler(func=lambda message: "تصفح المتاجر 🛍️" in message.text)
-def browse_stores_with_auctions(message):
-    """معالج تصفح المتاجر والمزادات"""
-    telegram_id = message.from_user.id
-    
-    # جلب قائمة المتاجر والمزادات
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # جلب المتاجر العادية
-    cursor.execute("""
-        SELECT DISTINCT SellerID, StoreName FROM Sellers 
-        WHERE Status = 'active' AND RequireCustomerRegistration != 1
-        ORDER BY StoreName
-    """)
-    
-    stores = cursor.fetchall()
-    
-    # جلب متجر المزادات إن وجد مع عدد المزادات النشطة
-    cursor.execute("""
-        SELECT s.SellerID, s.StoreName, COUNT(a.AuctionID) 
-        FROM Sellers s
-        LEFT JOIN Auctions a ON s.SellerID = a.AuctionStoreID AND a.Status = 'active'
-        WHERE s.StoreName = 'المزادات'
-        GROUP BY s.SellerID, s.StoreName
-    """)
-    
-    auction_store = cursor.fetchone()
-    conn.close()
-    
-    if not stores and not auction_store:
-        bot.send_message(message.chat.id, "❌ لا توجد متاجر متاحة حالياً")
-        return
-    
-    # إنشاء قائمة الأزرار
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    
-    # عرض متجر المزادات في الأعلى إن وجد مزادات
-    if auction_store and auction_store[2] > 0:
-        markup.add(f"🔨 المزادات ({auction_store[2]} مزاد نشط)")
-    elif auction_store:
-        markup.add(f"🔨 المزادات (بدون مزادات)")
-    
-    # عرض المتاجر الأخرى
-    for store_id, store_name in stores:
-        markup.add(f"🏪 {store_name}")
-    
-    markup.add("🏠 الرئيسية")
-    
-    msg = "🏪 **اختر المتجر:**\n\n"
-    msg += "يمكنك تصفح المتاجر العادية أو المزادات"
-    
-    bot.send_message(message.chat.id, msg, reply_markup=markup)
+# DISABLED: This handler conflicts with the main browse_stores handler at line 9732
+# @bot.message_handler(func=lambda message: "تصفح المتاجر 🛍️" in message.text)
+# USE THE HANDLER AT LINE 9732 INSTEAD
 
 @bot.message_handler(func=lambda message: "🔨 المزادات" in message.text)
 def browse_auctions(message):
