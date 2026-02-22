@@ -14020,7 +14020,7 @@ def send_welcome(message):
         text = message.text or ""
         
         print(f"\n{'='*60}")
-        print(f"📍 /start handler")
+        print(f"📍 /start handler [UPDATED DEBUG]")
         print(f"   telegram_id: {telegram_id} (type: {type(telegram_id).__name__})")
         print(f"   BOT_ADMIN_ID: {BOT_ADMIN_ID} (type: {type(BOT_ADMIN_ID).__name__})")
         print(f"   Match: {telegram_id == BOT_ADMIN_ID}")
@@ -14064,15 +14064,20 @@ def send_welcome(message):
         
         # ===== المنطق البسيط (مثل Flutter) =====
         # 1. التحقق: هل هو بائع؟ (يجب أن يكون موجود في جدول Sellers)
+        print(f"🔍 Checking if seller...")
         seller = get_seller_by_telegram(telegram_id)
-        if seller and is_seller_active(telegram_id):
+        print(f"   seller object: {seller}")
+        is_active = is_seller_active(telegram_id) if seller else False
+        print(f"   is_seller_active: {is_active}")
+        
+        if seller and is_active:
             print(f"🏪 User {telegram_id} is SELLER - showing seller menu")
             show_seller_menu(message)
             return
         
         # 2. إذا لم يكن بائع وليس admin -> أخطأ! (مثل Flutter)
         # (لا نعرض قائمة مشتري في الواقع)
-        print(f"❌ User {telegram_id} is NOT seller and NOT admin")
+        print(f"❌ User {telegram_id} is NOT seller (seller={seller}, active={is_active})")
         bot.send_message(message.chat.id, "❌ لم يتم العثور على حساب.\n\nيرجى التواصل مع الإدارة.")
         
     except Exception as e:
