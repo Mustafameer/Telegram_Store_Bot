@@ -14027,10 +14027,9 @@ def send_welcome(message):
         print(f"{'='*60}\n")
         
         # ===== أولاً: التحقق من كون المستخدم ADMIN =====
-        if telegram_id == BOT_ADMIN_ID:
-            print(f"✅ ADMIN DETECTED - showing admin menu")
-            show_bot_admin_menu(message)
-            return
+        is_admin = (telegram_id == BOT_ADMIN_ID)
+        if is_admin:
+            print(f"✅ ADMIN DETECTED - user {telegram_id} is admin")
         
         # ===== معالجة رابط المتجر (store_SELLER_ID) =====
         if "store_" in text:
@@ -14075,8 +14074,13 @@ def send_welcome(message):
             show_seller_menu(message)
             return
         
-        # 2. إذا لم يكن بائع وليس admin -> أخطأ! (مثل Flutter)
-        # (لا نعرض قائمة مشتري في الواقع)
+        # إذا كان admin، أرسل قائمة admin
+        if is_admin:
+            print(f"👑 Showing admin menu for {telegram_id}")
+            show_bot_admin_menu(message)
+            return
+        
+        # 2. إذا لم يكن بائع وليس admin -> أخطأ!
         print(f"❌ User {telegram_id} is NOT seller (seller={seller}, active={is_active})")
         bot.send_message(message.chat.id, "❌ لم يتم العثور على حساب.\n\nيرجى التواصل مع الإدارة.")
         
